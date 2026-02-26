@@ -87,9 +87,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
-    <!-- IIMS CUBES ICON - Using new color palette -->
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 640 640'%3E%3Cpath fill='%231A3263' d='M348 62.7C330.7 52.7 309.3 52.7 292 62.7L207.8 111.3C190.5 121.3 179.8 139.8 179.8 159.8L179.8 261.7L91.5 312.7C74.2 322.7 63.5 341.2 63.5 361.2L63.5 458.5C63.5 478.5 74.2 497 91.5 507L175.8 555.6C193.1 565.6 214.5 565.6 231.8 555.6L320.1 504.6L408.4 555.6C425.7 565.6 447.1 565.6 464.4 555.6L548.5 507C565.8 497 576.5 478.5 576.5 458.5L576.5 361.2C576.5 341.2 565.8 322.7 548.5 312.7L460.2 261.7L460.2 159.8C460.2 139.8 449.5 121.3 432.2 111.3L348 62.7zM296 356.6L296 463.1L207.7 514.1C206.5 514.8 205.1 515.2 203.7 515.2L203.7 409.9L296 356.6zM527.4 357.2C528.1 358.4 528.5 359.8 528.5 361.2L528.5 458.5C528.5 461.4 527 464 524.5 465.4L440.2 514C439 514.7 437.6 515.1 436.2 515.1L436.2 409.8L527.4 357.2zM412.3 159.8L412.3 261.7L320 315L320 208.5L411.2 155.9C411.9 157.1 412.3 158.5 412.3 159.9z'/%3E%3C/svg%3E">
-    <link rel="shortcut icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 640 640'%3E%3Cpath fill='%231A3263' d='M348 62.7C330.7 52.7 309.3 52.7 292 62.7L207.8 111.3C190.5 121.3 179.8 139.8 179.8 159.8L179.8 261.7L91.5 312.7C74.2 322.7 63.5 341.2 63.5 361.2L63.5 458.5C63.5 478.5 74.2 497 91.5 507L175.8 555.6C193.1 565.6 214.5 565.6 231.8 555.6L320.1 504.6L408.4 555.6C425.7 565.6 447.1 565.6 464.4 555.6L548.5 507C565.8 497 576.5 478.5 576.5 458.5L576.5 361.2C576.5 341.2 565.8 322.7 548.5 312.7L460.2 261.7L460.2 159.8C460.2 139.8 449.5 121.3 432.2 111.3L348 62.7zM296 356.6L296 463.1L207.7 514.1C206.5 514.8 205.1 515.2 203.7 515.2L203.7 409.9L296 356.6zM527.4 357.2C528.1 358.4 528.5 359.8 528.5 361.2L528.5 458.5C528.5 461.4 527 464 524.5 465.4L440.2 514C439 514.7 437.6 515.1 436.2 515.1L436.2 409.8L527.4 357.2zM412.3 159.8L412.3 261.7L320 315L320 208.5L411.2 155.9C411.9 157.1 412.3 158.5 412.3 159.9z'/%3E%3C/svg%3E">
+    <!-- IMS CUBES ICON - Updated with new color palette -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 640 640'%3E%3Cpath fill='%236B8CFF' d='M348 62.7C330.7 52.7 309.3 52.7 292 62.7L207.8 111.3C190.5 121.3 179.8 139.8 179.8 159.8L179.8 261.7L91.5 312.7C74.2 322.7 63.5 341.2 63.5 361.2L63.5 458.5C63.5 478.5 74.2 497 91.5 507L175.8 555.6C193.1 565.6 214.5 565.6 231.8 555.6L320.1 504.6L408.4 555.6C425.7 565.6 447.1 565.6 464.4 555.6L548.5 507C565.8 497 576.5 478.5 576.5 458.5L576.5 361.2C576.5 341.2 565.8 322.7 548.5 312.7L460.2 261.7L460.2 159.8C460.2 139.8 449.5 121.3 432.2 111.3L348 62.7zM296 356.6L296 463.1L207.7 514.1C206.5 514.8 205.1 515.2 203.7 515.2L203.7 409.9L296 356.6zM527.4 357.2C528.1 358.4 528.5 359.8 528.5 361.2L528.5 458.5C528.5 461.4 527 464 524.5 465.4L440.2 514C439 514.7 437.6 515.1 436.2 515.1L436.2 409.8L527.4 357.2zM412.3 159.8L412.3 261.7L320 315L320 208.5L411.2 155.9C411.9 157.1 412.3 158.5 412.3 159.9z'/%3E%3C/svg%3E">
+    <link rel="shortcut icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 640 640'%3E%3Cpath fill='%236B8CFF' d='M348 62.7C330.7 52.7 309.3 52.7 292 62.7L207.8 111.3C190.5 121.3 179.8 139.8 179.8 159.8L179.8 261.7L91.5 312.7C74.2 322.7 63.5 341.2 63.5 361.2L63.5 458.5C63.5 478.5 74.2 497 91.5 507L175.8 555.6C193.1 565.6 214.5 565.6 231.8 555.6L320.1 504.6L408.4 555.6C425.7 565.6 447.1 565.6 464.4 555.6L548.5 507C565.8 497 576.5 478.5 576.5 458.5L576.5 361.2C576.5 341.2 565.8 322.7 548.5 312.7L460.2 261.7L460.2 159.8C460.2 139.8 449.5 121.3 432.2 111.3L348 62.7zM296 356.6L296 463.1L207.7 514.1C206.5 514.8 205.1 515.2 203.7 515.2L203.7 409.9L296 356.6zM527.4 357.2C528.1 358.4 528.5 359.8 528.5 361.2L528.5 458.5C528.5 461.4 527 464 524.5 465.4L440.2 514C439 514.7 437.6 515.1 436.2 515.1L436.2 409.8L527.4 357.2zM412.3 159.8L412.3 261.7L320 315L320 208.5L411.2 155.9C411.9 157.1 412.3 158.5 412.3 159.9z'/%3E%3C/svg%3E">
     
     <!-- Add pop animation to the favicon -->
     <style>
@@ -109,11 +109,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         
         /* Add glow effect with new accent color */
         link[rel="icon"] {
-            filter: drop-shadow(0 0 5px #FAB95B);
+            filter: drop-shadow(0 0 5px #F8B0C0);
             transition: all 0.3s ease;
         }
         
-        /* Login page styles with new color palette */
+        /* Login page styles with professional color palette */
         * {
             margin: 0;
             padding: 0;
@@ -122,7 +122,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         }
         
         body {
-            background: linear-gradient(135deg, #1A3263 0%, #547792 100%);
+            background: linear-gradient(135deg, #2C3E50 0%, #34495E 100%);
             height: 100vh;
             display: flex;
             align-items: center;
@@ -132,19 +132,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         
         .login-container {
             background: #FFFFFF;
-            border-radius: 20px;
-            box-shadow: 0 20px 40px rgba(26, 50, 99, 0.2);
-            width: 450px;
-            padding: 40px;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            width: 420px;
+            padding: 35px;
             text-align: center;
             animation: slideIn 0.5s ease;
-            border-top: 4px solid #FAB95B;
+            border: 1px solid #E0E0E0;
         }
         
         @keyframes slideIn {
             from {
                 opacity: 0;
-                transform: translateY(-20px);
+                transform: translateY(-15px);
             }
             to {
                 opacity: 1;
@@ -153,12 +153,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         }
         
         .logo {
-            margin-bottom: 30px;
+            margin-bottom: 25px;
         }
         
         .logo i {
-            font-size: 60px;
-            color: #1A3263;
+            font-size: 55px;
+            color: #6B8CFF;
             animation: pulse 2s infinite;
         }
         
@@ -168,25 +168,25 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             }
             50% {
                 transform: scale(1.05);
-                color: #FAB95B;
+                color: #F8B0C0;
             }
             100% {
                 transform: scale(1);
-                color: #1A3263;
+                color: #6B8CFF;
             }
         }
         
         .logo h1 {
-            color: #1A3263;
-            margin-top: 10px;
-            font-size: 32px;
-            font-weight: 700;
-            letter-spacing: 1px;
+            color: #3A3A3A;
+            margin-top: 8px;
+            font-size: 28px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
         }
         
         .logo p {
-            color: #547792;
-            font-size: 14px;
+            color: #6B6B6B;
+            font-size: 13px;
             margin-top: 5px;
         }
         
@@ -197,15 +197,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         
         .form-group label {
             display: block;
-            margin-bottom: 8px;
-            color: #1A3263;
+            margin-bottom: 6px;
+            color: #3A3A3A;
             font-weight: 500;
             font-size: 14px;
         }
         
         .form-group label i {
-            color: #547792;
+            color: #6B8CFF;
             margin-right: 5px;
+            font-size: 13px;
         }
         
         .input-icon {
@@ -217,33 +218,37 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             left: 12px;
             top: 50%;
             transform: translateY(-50%);
-            color: #547792;
+            color: #9E9E9E;
             transition: color 0.3s;
+            font-size: 14px;
         }
         
         .input-icon input {
             width: 100%;
             padding: 12px 15px 12px 40px;
-            border: 2px solid #E8E2DB;
+            border: 1px solid #E0E0E0;
             border-radius: 8px;
             font-size: 14px;
             transition: all 0.3s;
-            color: #1A3263;
+            color: #3A3A3A;
+            background-color: #FAFAFA;
         }
         
         .input-icon input:focus {
             outline: none;
-            border-color: #FAB95B;
-            box-shadow: 0 0 0 3px rgba(250, 185, 91, 0.1);
+            border-color: #6B8CFF;
+            background-color: #FFFFFF;
+            box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.05);
         }
         
         .input-icon input:focus + i {
-            color: #FAB95B;
+            color: #6B8CFF;
         }
         
         .input-icon input::placeholder {
-            color: #547792;
-            opacity: 0.6;
+            color: #9E9E9E;
+            opacity: 0.7;
+            font-size: 13px;
         }
         
         .password-field {
@@ -253,22 +258,25 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         .password-field input {
             width: 100%;
             padding: 12px 40px 12px 40px;
-            border: 2px solid #E8E2DB;
+            border: 1px solid #E0E0E0;
             border-radius: 8px;
             font-size: 14px;
             transition: all 0.3s;
-            color: #1A3263;
+            color: #3A3A3A;
+            background-color: #FAFAFA;
         }
         
         .password-field input:focus {
             outline: none;
-            border-color: #FAB95B;
-            box-shadow: 0 0 0 3px rgba(250, 185, 91, 0.1);
+            border-color: #6B8CFF;
+            background-color: #FFFFFF;
+            box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.05);
         }
         
         .password-field input::placeholder {
-            color: #547792;
-            opacity: 0.6;
+            color: #9E9E9E;
+            opacity: 0.7;
+            font-size: 13px;
         }
         
         .password-field .lock-icon {
@@ -276,7 +284,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             left: 12px;
             top: 50%;
             transform: translateY(-50%);
-            color: #547792;
+            color: #9E9E9E;
+            font-size: 14px;
         }
         
         .password-field .toggle-password {
@@ -284,50 +293,36 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             right: 12px;
             top: 50%;
             transform: translateY(-50%);
-            color: #547792;
+            color: #9E9E9E;
             cursor: pointer;
             transition: color 0.3s;
+            font-size: 14px;
         }
         
         .password-field .toggle-password:hover {
-            color: #FAB95B;
+            color: #6B8CFF;
         }
         
         .btn-login {
             width: 100%;
-            padding: 14px;
-            background: linear-gradient(135deg, #1A3263 0%, #547792 100%);
+            padding: 12px;
+            background: #6B8CFF;
             color: white;
             border: none;
             border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
+            font-size: 15px;
+            font-weight: 500;
             cursor: pointer;
             transition: all 0.3s;
             position: relative;
             overflow: hidden;
+            margin-top: 10px;
         }
         
         .btn-login:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(26, 50, 99, 0.3);
-        }
-        
-        .btn-login:hover::after {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(250, 185, 91, 0.2), transparent);
-            animation: shine 1.5s infinite;
-        }
-        
-        @keyframes shine {
-            to {
-                left: 100%;
-            }
+            background: #8FB5FF;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(107, 140, 255, 0.2);
         }
         
         .btn-login:active {
@@ -339,19 +334,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         }
         
         .btn-login:disabled {
-            opacity: 0.7;
+            opacity: 0.6;
             cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
         }
         
         .error {
-            background-color: #f8d7da;
-            color: #721c24;
-            padding: 12px;
+            background-color: #FFEBEE;
+            color: #C62828;
+            padding: 12px 15px;
             border-radius: 8px;
             margin-bottom: 20px;
-            font-size: 14px;
+            font-size: 13px;
             text-align: left;
-            border-left: 4px solid #dc3545;
+            border-left: 3px solid #f44336;
             animation: shake 0.5s;
             display: flex;
             align-items: center;
@@ -359,82 +356,85 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         }
         
         .error i {
-            font-size: 18px;
+            font-size: 16px;
         }
         
         @keyframes shake {
             0%, 100% { transform: translateX(0); }
-            10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
-            20%, 40%, 60%, 80% { transform: translateX(5px); }
+            10%, 30%, 50%, 70%, 90% { transform: translateX(-3px); }
+            20%, 40%, 60%, 80% { transform: translateX(3px); }
         }
         
         .remember-me {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin-bottom: 20px;
+            margin: 15px 0;
         }
         
         .remember-me label {
             display: flex;
             align-items: center;
-            gap: 8px;
-            color: #547792;
-            font-size: 14px;
+            gap: 6px;
+            color: #6B6B6B;
+            font-size: 13px;
             cursor: pointer;
         }
         
         .remember-me input[type="checkbox"] {
-            width: 16px;
-            height: 16px;
+            width: 14px;
+            height: 14px;
             cursor: pointer;
-            accent-color: #FAB95B;
+            accent-color: #6B8CFF;
         }
         
         .forgot-password {
-            color: #1A3263;
+            color: #6B8CFF;
             text-decoration: none;
-            font-size: 14px;
+            font-size: 13px;
             transition: color 0.3s;
             font-weight: 500;
         }
         
         .forgot-password:hover {
-            color: #FAB95B;
+            color: #8FB5FF;
             text-decoration: underline;
         }
         
         .footer {
-            margin-top: 30px;
-            color: #547792;
+            margin-top: 25px;
+            color: #9E9E9E;
             font-size: 12px;
-            border-top: 1px solid #E8E2DB;
+            border-top: 1px solid #F0F0F0;
             padding-top: 20px;
         }
         
         .footer p {
-            margin: 5px 0;
+            margin: 3px 0;
         }
         
         .demo-credentials {
-            background-color: #E8E2DB;
+            background-color: #F8F9FA;
             padding: 15px;
             border-radius: 10px;
             margin: 20px 0 10px;
             font-size: 12px;
+            border: 1px solid #E0E0E0;
         }
         
         .demo-credentials h4 {
-            color: #1A3263;
-            margin-bottom: 10px;
-            font-size: 14px;
+            color: #3A3A3A;
+            margin-bottom: 12px;
+            font-size: 13px;
+            font-weight: 600;
             display: flex;
             align-items: center;
             gap: 5px;
+            justify-content: center;
         }
         
         .demo-credentials h4 i {
-            color: #FAB95B;
+            color: #F8B0C0;
         }
         
         .demo-grid {
@@ -449,38 +449,43 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             border-radius: 6px;
             cursor: pointer;
             transition: all 0.3s;
-            border: 1px solid transparent;
+            border: 1px solid #E0E0E0;
             display: flex;
             align-items: center;
             gap: 5px;
         }
         
         .demo-item:hover {
-            border-color: #FAB95B;
-            transform: translateY(-2px);
-            box-shadow: 0 3px 10px rgba(250, 185, 91, 0.2);
-            background-color: #FAB95B;
+            border-color: #F8B0C0;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(248, 176, 192, 0.15);
+            background: #F8B0C0;
         }
         
         .demo-item:hover i,
         .demo-item:hover span,
         .demo-item:hover small {
-            color: #1A3263;
+            color: white;
         }
         
         .demo-item i {
-            color: #1A3263;
+            color: #6B8CFF;
             font-size: 14px;
+            transition: color 0.3s;
         }
         
         .demo-item span {
-            font-weight: 600;
-            color: #1A3263;
+            font-weight: 500;
+            color: #3A3A3A;
+            font-size: 12px;
+            transition: color 0.3s;
         }
         
         .demo-item small {
-            color: #547792;
+            color: #9E9E9E;
             margin-left: auto;
+            font-size: 11px;
+            transition: color 0.3s;
         }
         
         .spinner {
@@ -489,8 +494,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             height: 16px;
             border: 2px solid rgba(255,255,255,0.3);
             border-radius: 50%;
-            border-top-color: #FAB95B;
-            animation: spin 1s ease-in-out infinite;
+            border-top-color: white;
+            animation: spin 0.8s linear infinite;
         }
         
         @keyframes spin {
@@ -499,11 +504,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         
         @media (max-width: 480px) {
             .login-container {
-                padding: 30px 20px;
+                padding: 25px 20px;
+                width: 100%;
             }
             
             .demo-grid {
                 grid-template-columns: 1fr;
+            }
+            
+            .logo i {
+                font-size: 50px;
+            }
+            
+            .logo h1 {
+                font-size: 24px;
             }
         }
     </style>
@@ -558,7 +572,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             
             <div class="remember-me">
                 <label>
-                    <input type="checkbox" name="remember"> Remember me for 30 days
+                    <input type="checkbox" name="remember"> Remember me
                 </label>
                 <a href="#" class="forgot-password" onclick="alert('Please contact your system administrator to reset your password.'); return false;">
                     Forgot Password?
@@ -633,22 +647,28 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             const usernameField = document.getElementById('username');
             const passwordField = document.getElementById('password');
             
-            usernameField.style.borderColor = '#FAB95B';
-            passwordField.style.borderColor = '#FAB95B';
+            usernameField.style.borderColor = '#6B8CFF';
+            passwordField.style.borderColor = '#6B8CFF';
+            usernameField.style.backgroundColor = '#FFFFFF';
+            passwordField.style.backgroundColor = '#FFFFFF';
             
             // Add success effect to demo item
             const demoItems = document.querySelectorAll('.demo-item');
             demoItems.forEach(item => {
-                item.style.backgroundColor = '';
+                item.style.background = '';
+                item.style.borderColor = '#E0E0E0';
             });
             
             // Find and highlight clicked item
-            event.currentTarget.style.backgroundColor = '#FAB95B';
+            event.currentTarget.style.background = '#F8B0C0';
+            event.currentTarget.style.borderColor = '#F8B0C0';
             
             setTimeout(() => {
-                usernameField.style.borderColor = '#E8E2DB';
-                passwordField.style.borderColor = '#E8E2DB';
-            }, 1000);
+                usernameField.style.borderColor = '#E0E0E0';
+                passwordField.style.borderColor = '#E0E0E0';
+                usernameField.style.backgroundColor = '#FAFAFA';
+                passwordField.style.backgroundColor = '#FAFAFA';
+            }, 1500);
         }
         
         // Add loading state to button

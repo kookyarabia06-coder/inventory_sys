@@ -23,30 +23,16 @@ if (!$currentUser) {
     exit();
 }
 
-$user_id = (int)$currentUser['id']; // Cast to integer for security
+$user_id = (int)$currentUser['id'];
 
 $page_title = 'My Dashboard';
 $page_description = 'Overview of your issued items and available inventory';
 
-// Get user's issued items count with error handling
+// Get user's issued items count
 $issued_count = 0;
 $result = $conn->query("SELECT COUNT(*) as count FROM user_inventory WHERE user_id = $user_id AND status = 'active'");
 if ($result && $row = $result->fetch_assoc()) {
     $issued_count = $row['count'];
-}
-
-// Get overdue items count
-$overdue_count = 0;
-$result = $conn->query("
-    SELECT COUNT(*) as count 
-    FROM equipment_issuance ei
-    JOIN user_inventory ui ON ei.id = ui.issuance_id
-    WHERE ui.user_id = $user_id 
-    AND ei.status = 'issued' 
-    AND ei.expected_return < CURDATE()
-");
-if ($result && $row = $result->fetch_assoc()) {
-    $overdue_count = $row['count'];
 }
 
 // Get total items ever issued to user
@@ -56,7 +42,7 @@ if ($result && $row = $result->fetch_assoc()) {
     $total_issued = $row['count'];
 }
 
-// Get user's currently issued items
+// Get user's currently issued items - REMOVED expected_return from SELECT and ORDER BY
 $current_items = $conn->query("
     SELECT 
         ui.*,
@@ -66,7 +52,6 @@ $current_items = $conn->query("
         i.uom,
         i.unit_value,
         ei.issued_date,
-        ei.expected_return,
         ei.purpose,
         ei.condition_on_issue,
         CONCAT(u.firstname, ' ', u.lastname) as issued_by_name
@@ -75,11 +60,10 @@ $current_items = $conn->query("
     JOIN equipment_issuance ei ON ui.issuance_id = ei.id
     JOIN users u ON ei.issued_by = u.id
     WHERE ui.user_id = $user_id AND ui.status = 'active'
-    ORDER BY ei.expected_return ASC
+    ORDER BY ei.issued_date DESC
 ");
 
 if (!$current_items) {
-    // If query fails, create an empty result set
     $current_items = $conn->query("SELECT * FROM user_inventory WHERE 1=0");
 }
 
@@ -156,17 +140,6 @@ include INCLUDE_PATH . '/header.php';
     
     <div class="card">
         <div class="card-icon">
-            <i class="fas fa-clock"></i>
-        </div>
-        <h3>Overdue Items</h3>
-        <div class="card-value <?php echo $overdue_count > 0 ? 'text-danger' : ''; ?>">
-            <?php echo $overdue_count; ?>
-        </div>
-        <div class="card-label">Need to return</div>
-    </div>
-    
-    <div class="card">
-        <div class="card-icon">
             <i class="fas fa-history"></i>
         </div>
         <h3>Total Issued</h3>
@@ -202,16 +175,13 @@ include INCLUDE_PATH . '/header.php';
                             <th>Property No.</th>
                             <th>Quantity</th>
                             <th>Issue Date</th>
-                            <th>Due Date</th>
                             <th>Status</th>
                             <th>Action</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php while($item = $current_items->fetch_assoc()): 
-                            $is_overdue = strtotime($item['expected_return']) < time();
-                        ?>
-                        <tr class="<?php echo $is_overdue ? 'stock-alert-row' : ''; ?>">
+                        <?php while($item = $current_items->fetch_assoc()): ?>
+                        <tr>
                             <td>
                                 <strong><?php echo htmlspecialchars($item['article_name']); ?></strong>
                                 <br><small><?php echo htmlspecialchars(substr($item['description'] ?? '', 0, 50)) . '...'; ?></small>
@@ -220,26 +190,11 @@ include INCLUDE_PATH . '/header.php';
                             <td><?php echo $item['quantity_assigned'] . ' ' . ($item['uom'] ?? ''); ?></td>
                             <td><?php echo formatDate($item['issued_date']); ?></td>
                             <td>
-                                <?php echo formatDate($item['expected_return']); ?>
-                                <?php if ($is_overdue): ?>
-                                    <br><span class="badge badge-danger">Overdue</span>
-                                <?php endif; ?>
-                            </td>
-                            <td>
-                                <?php 
-                                if ($is_overdue) {
-                                    echo '<span class="badge badge-danger">Overdue</span>';
-                                } else {
-                                    echo '<span class="badge badge-success">Active</span>';
-                                }
-                                ?>
+                                <span class="badge badge-success">Active</span>
                             </td>
                             <td>
                                 <button class="btn btn-sm btn-primary" onclick="viewItemDetails(<?php echo $item['inventory_id']; ?>)">
-                                    <i class="fas fa-eye"></i>
-                                </button>
-                                <button class="btn btn-sm btn-success" onclick="requestExtension(<?php echo $item['issuance_id']; ?>)">
-                                    <i class="fas fa-clock"></i>
+                                    <i class="fas fa-eye"></i> View
                                 </button>
                             </td>
                         </tr>
@@ -305,7 +260,7 @@ include INCLUDE_PATH . '/header.php';
                         </div>
                         <div class="activity-time">
                             <i class="far fa-clock"></i> 
-                            <?php echo formatDate($activity['date_created']); ?>
+                            <?php echo formatDateTime($activity['date_created']); ?>
                         </div>
                     </div>
                 </div>
@@ -358,42 +313,6 @@ include INCLUDE_PATH . '/header.php';
                 <p>No items available at the moment</p>
             </div>
         <?php endif; ?>
-    </div>
-</div>
-
-<!-- Request Extension Modal -->
-<div id="extensionModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h2>Request Extension</h2>
-            <span class="modal-close">&times;</span>
-        </div>
-        <div class="modal-body">
-            <form id="extensionForm" onsubmit="submitExtension(event)">
-                <input type="hidden" id="extension_issuance_id" name="issuance_id">
-                
-                <div class="form-group">
-                    <label>Current Due Date</label>
-                    <p id="current_due_date" style="font-weight: bold; padding: 10px; background: var(--light); border-radius: 6px;"></p>
-                </div>
-                
-                <div class="form-group">
-                    <label for="new_return_date">New Return Date *</label>
-                    <input type="date" class="form-control" id="new_return_date" name="new_return_date" 
-                           min="<?php echo date('Y-m-d', strtotime('+1 day')); ?>" required>
-                </div>
-                
-                <div class="form-group">
-                    <label for="extension_reason">Reason for Extension *</label>
-                    <textarea class="form-control" id="extension_reason" name="reason" rows="3" required></textarea>
-                </div>
-                
-                <div style="display: flex; gap: 10px; justify-content: flex-end;">
-                    <button type="button" class="btn btn-secondary" onclick="closeModal('extensionModal')">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Submit Request</button>
-                </div>
-            </form>
-        </div>
     </div>
 </div>
 
@@ -488,38 +407,6 @@ function requestItem(itemId) {
     window.location.href = '<?php echo SITE_URL; ?>/user/view_inventory?request=' + itemId;
 }
 
-function requestExtension(issuanceId) {
-    ajaxRequest('<?php echo SITE_URL; ?>/api/get_issuance_details.php?id=' + issuanceId, 'GET', null, function(err, response) {
-        if (!err && response) {
-            document.getElementById('extension_issuance_id').value = issuanceId;
-            document.getElementById('current_due_date').textContent = formatDate(response.expected_return);
-            document.getElementById('extensionModal').style.display = 'block';
-        } else {
-            alert('Error loading issuance details');
-        }
-    });
-}
-
-function submitExtension(e) {
-    e.preventDefault();
-    
-    let formData = {
-        issuance_id: document.getElementById('extension_issuance_id').value,
-        new_return_date: document.getElementById('new_return_date').value,
-        reason: document.getElementById('extension_reason').value
-    };
-    
-    ajaxRequest('<?php echo SITE_URL; ?>/api/request_extension.php', 'POST', formData, function(err, response) {
-        if (!err && response && response.success) {
-            alert('Extension request submitted successfully!');
-            closeModal('extensionModal');
-            location.reload();
-        } else {
-            alert('Error: ' + (err ? err.message : (response ? response.message : 'Failed to submit request')));
-        }
-    });
-}
-
 function reportIssue() {
     document.getElementById('reportModal').style.display = 'block';
 }
@@ -559,8 +446,13 @@ function formatDate(dateString) {
     return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+function formatDateTime(dateString) {
+    if (!dateString) return 'N/A';
+    let date = new Date(dateString);
+    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
 function showModal(title, content) {
-    // Create modal dynamically if it doesn't exist
     let modalId = 'dynamic-modal';
     let modal = document.getElementById(modalId);
     

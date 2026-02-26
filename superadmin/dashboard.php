@@ -76,12 +76,15 @@ include INCLUDE_PATH . '/header.php';
             <i class="fas fa-users"></i>
         </div>
         <h3>Total Users</h3>
-        <div class="card-value"><?php echo $stats['users']['total_users'] ?? 0; ?></div>
-        <div class="card-label">
-            <span class="badge badge-info">SA: <?php echo $stats['users']['super_admins'] ?? 0; ?></span>
-            <span class="badge badge-primary">A: <?php echo $stats['users']['admins'] ?? 0; ?></span>
-            <span class="badge badge-success">U: <?php echo $stats['users']['regular_users'] ?? 0; ?></span>
-        </div>
+        <div class="card-value">
+    <?php echo $stats['users']['total_users'] ?? 0; ?>
+
+    <span class="badges">
+        <span class="badge badge-info">SA: <?php echo $stats['users']['super_admins'] ?? 0; ?></span>
+        <span class="badge badge-primary">A: <?php echo $stats['users']['admins'] ?? 0; ?></span>
+        <span class="badge badge-success">U: <?php echo $stats['users']['regular_users'] ?? 0; ?></span>
+    </span>
+</div>
     </div>
     
     <div class="card">
@@ -90,7 +93,7 @@ include INCLUDE_PATH . '/header.php';
         </div>
         <h3>Inventory Items</h3>
         <div class="card-value"><?php echo number_format($stats['inventory']['total_items'] ?? 0); ?></div>
-        <div class="card-label">Total Quantity: <?php echo number_format($stats['inventory']['total_quantity'] ?? 0, 2); ?></div>
+        
     </div>
     
     <div class="card">
@@ -99,7 +102,7 @@ include INCLUDE_PATH . '/header.php';
         </div>
         <h3>PHP Version</h3>
         <div class="card-value"><?php echo substr($system_health['php_version'], 0, 3); ?></div>
-        <div class="card-label"><?php echo $system_health['server_software']; ?></div>
+       
     </div>
     
     <div class="card">
@@ -108,7 +111,7 @@ include INCLUDE_PATH . '/header.php';
         </div>
         <h3>Database Size</h3>
         <div class="card-value"><?php echo $system_health['database_size']; ?></div>
-        <div class="card-label">Last Backup: <?php echo $system_health['last_backup']; ?></div>
+       
     </div>
 </div>
 

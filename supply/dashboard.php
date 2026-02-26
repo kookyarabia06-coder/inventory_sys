@@ -42,7 +42,7 @@ include INCLUDE_PATH . '/header.php';
         $total = $result->fetch_assoc()['count'] ?? 0;
         ?>
         <div class="card-value"><?php echo $total; ?></div>
-        <div class="card-label">In inventory</div>
+        
     </div>
 </div>
 

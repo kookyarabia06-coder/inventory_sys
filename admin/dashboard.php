@@ -73,7 +73,7 @@ include INCLUDE_PATH . '/header.php';
         </div>
         <h3>Total Items</h3>
         <div class="card-value"><?php echo number_format($stats['inventory']['total_items'] ?? 0); ?></div>
-        <div class="card-label">Total Quantity: <?php echo number_format($stats['inventory']['total_qty'] ?? 0, 2); ?></div>
+        
     </div>
     
     <div class="card">
@@ -82,7 +82,7 @@ include INCLUDE_PATH . '/header.php';
         </div>
         <h3>Issued Items</h3>
         <div class="card-value"><?php echo $stats['pending_issues']; ?></div>
-        <div class="card-label">Currently issued</div>
+       
     </div>
     
     <div class="card">
@@ -91,16 +91,16 @@ include INCLUDE_PATH . '/header.php';
         </div>
         <h3>Low Stock</h3>
         <div class="card-value text-warning"><?php echo $stats['low_stock']; ?></div>
-        <div class="card-label">Items need reorder</div>
+       
     </div>
     
     <div class="card">
         <div class="card-icon">
-            <i class="fas fa-dollar-sign"></i>
+            <i class="fas fa-peso-sign"></i>
         </div>
         <h3>Total Value</h3>
         <div class="card-value"><?php echo formatCurrency($stats['inventory']['total_value'] ?? 0); ?></div>
-        <div class="card-label">Inventory value</div>
+        
     </div>
 </div>
 

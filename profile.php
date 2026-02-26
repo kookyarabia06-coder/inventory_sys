@@ -145,10 +145,9 @@ include 'includes/header.php';
     </div>
 </div>
 
-<!-- Profile Tabs -->
+<!-- Profile Tabs - Only Profile Info and Issued Items -->
 <div class="tabs">
     <div class="tab active" onclick="showTab('profile')">Profile Information</div>
-    <div class="tab" onclick="showTab('activity')">Activity Log</div>
     <div class="tab" onclick="showTab('issued')">Issued Items</div>
 </div>
 
@@ -227,57 +226,6 @@ include 'includes/header.php';
     </div>
 </div>
 
-<!-- Activity Log Tab -->
-<div id="activity-tab" class="tab-content">
-    <div class="table-container">
-        <div class="table-header">
-            <h2>Your Recent Activity</h2>
-        </div>
-        
-        <table>
-            <thead>
-                <tr>
-                    <th>Date & Time</th>
-                    <th>Action</th>
-                    <th>Item</th>
-                    <th>Details</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php
-                $activities = $conn->query("
-                    SELECT al.*, i.article_name 
-                    FROM activity_log al
-                    LEFT JOIN inventory i ON al.item_id = i.id
-                    WHERE al.user_id = $user_id
-                    ORDER BY al.date_created DESC
-                    LIMIT 50
-                ");
-                
-                if ($activities->num_rows > 0):
-                    while($activity = $activities->fetch_assoc()):
-                ?>
-                <tr>
-                    <td><?php echo date('M d, Y h:i A', strtotime($activity['date_created'])); ?></td>
-                    <td>
-                        <span class="badge badge-info"><?php echo htmlspecialchars($activity['action']); ?></span>
-                    </td>
-                    <td><?php echo htmlspecialchars($activity['article_name'] ?? 'N/A'); ?></td>
-                    <td><?php echo htmlspecialchars($activity['details']); ?></td>
-                </tr>
-                <?php 
-                    endwhile;
-                else:
-                ?>
-                <tr>
-                    <td colspan="4" class="text-center">No activity found</td>
-                </tr>
-                <?php endif; ?>
-            </tbody>
-        </table>
-    </div>
-</div>
-
 <!-- Issued Items Tab -->
 <div id="issued-tab" class="tab-content">
     <div class="table-container">
@@ -310,12 +258,12 @@ include 'includes/header.php';
                     ORDER BY ei.issued_date DESC
                 ");
                 
-                if ($issued_items->num_rows > 0):
+                if ($issued_items && $issued_items->num_rows > 0):
                     while($item = $issued_items->fetch_assoc()):
                 ?>
                 <tr>
                     <td><?php echo htmlspecialchars($item['article_name']); ?></td>
-                    <td><?php echo htmlspecialchars($item['property_no']); ?></td>
+                    <td><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></td>
                     <td><?php echo htmlspecialchars($item['issued_by_name']); ?></td>
                     <td><?php echo date('M d, Y', strtotime($item['issued_date'])); ?></td>
                     <td>
@@ -323,11 +271,11 @@ include 'includes/header.php';
                         if ($item['actual_return']) {
                             echo date('M d, Y', strtotime($item['actual_return']));
                         } else {
-                            echo 'Not returned';
+                            echo '<span class="badge badge-warning">Not returned</span>';
                         }
                         ?>
                     </td>
-                    <td><?php echo $item['quantity_issued'] . ' ' . $item['uom']; ?></td>
+                    <td><?php echo $item['quantity_issued'] . ' ' . ($item['uom'] ?? ''); ?></td>
                     <td><?php echo getStatusBadge($item['status']); ?></td>
                 </tr>
                 <?php 
@@ -387,6 +335,12 @@ document.querySelector('form').addEventListener('submit', function(e) {
             alert('New passwords do not match');
         }
     }
+});
+
+// Set initial active tab
+document.addEventListener('DOMContentLoaded', function() {
+    // Ensure first tab is active
+    document.querySelector('.tab.active').click();
 });
 </script>
 
