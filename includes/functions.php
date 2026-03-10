@@ -159,6 +159,13 @@ function uploadFile($file, $target_dir = 'uploads/') {
  * @param int $per_page
  * @return array
  */
+/**
+ * Pagination helper
+ * @param string $query
+ * @param int $page
+ * @param int $per_page
+ * @return array
+ */
 function paginate($query, $page = 1, $per_page = 10) {
     global $conn;
     
@@ -166,16 +173,38 @@ function paginate($query, $page = 1, $per_page = 10) {
     $per_page = max(1, (int)$per_page);
     $offset = ($page - 1) * $per_page;
     
-    // Get total count
-    $count_query = preg_replace('/SELECT.*?FROM/is', 'SELECT COUNT(*) as total FROM', $query);
-    $count_query = preg_replace('/ORDER BY.*$/is', '', $count_query);
+    // Get total count - improved version that handles subqueries
+    // First, try to wrap the original query as a subquery
+    $count_query = "SELECT COUNT(*) as total FROM ($query) as count_table";
+    
+    // If that fails, try a simpler approach
     $result = $conn->query($count_query);
+    
+    // If the wrapped query fails, fall back to original method
+    if (!$result) {
+        // Clear any error
+        if ($conn->error) {
+            // Reset connection error
+        }
+        
+        // Fallback: try to extract count from original query
+        $count_query = preg_replace('/SELECT.*?FROM/is', 'SELECT COUNT(*) as total FROM', $query);
+        $count_query = preg_replace('/ORDER BY.*$/is', '', $count_query);
+        $count_query = preg_replace('/LIMIT.*$/is', '', $count_query);
+        $count_query = preg_replace('/GROUP BY.*?(\s|$)/is', '', $count_query);
+        
+        // Remove any subqueries in SELECT that might cause issues
+        $count_query = preg_replace('/\(SELECT.*?\)/is', '0', $count_query);
+        
+        $result = $conn->query($count_query);
+    }
+    
     $total_rows = $result ? $result->fetch_assoc()['total'] : 0;
     $total_pages = ceil($total_rows / $per_page);
     
     // Get paginated data
-    $query .= " LIMIT $offset, $per_page";
-    $result = $conn->query($query);
+    $paginated_query = $query . " LIMIT $offset, $per_page";
+    $result = $conn->query($paginated_query);
     
     $data = [];
     if ($result) {

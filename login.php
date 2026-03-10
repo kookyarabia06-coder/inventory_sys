@@ -1,3 +1,4 @@
+<!-- login redirect -->
 <?php
 /**
  * Login Page
@@ -37,11 +38,22 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $password = $_POST['password'];
     $remember = isset($_POST['remember']) ? true : false;
     
-    $result = $conn->query("SELECT * FROM users WHERE username = '$username' AND status = 'active'");
+    // Updated query to get user regardless of status first
+    $result = $conn->query("SELECT * FROM users WHERE username = '$username'");
     
     if ($result && $row = $result->fetch_assoc()) {
-        if (password_verify($password, $row['password'])) {
-            // Set session variables
+        // Check status first
+        if ($row['status'] == 'pending') {
+            $error = 'Your account is pending approval from an administrator. Please try again later.';
+            logActivity('Failed Login', $row['id'], "Login attempt on pending account: $username");
+        } elseif ($row['status'] == 'inactive') {
+            $error = 'Your account has been deactivated. Please contact administrator.';
+            logActivity('Failed Login', $row['id'], "Login attempt on inactive account: $username");
+        } elseif ($row['status'] == 'rejected') {
+            $error = 'Your registration has been rejected. Please contact administrator.';
+            logActivity('Failed Login', $row['id'], "Login attempt on rejected account: $username");
+        } elseif (password_verify($password, $row['password'])) {
+            // Successful login for active accounts
             $_SESSION['user_id'] = $row['id'];
             $_SESSION['user_role'] = $row['role'];
             $_SESSION['user_name'] = $row['firstname'] . ' ' . $row['lastname'];
@@ -65,12 +77,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             }
             exit();
         } else {
-            logActivity('Failed Login', 0, "Failed login attempt for username: $username");
+            logActivity('Failed Login', $row['id'], "Failed login attempt for username: $username");
             $error = 'Invalid password';
         }
     } else {
         logActivity('Failed Login', 0, "Failed login attempt - username not found: $username");
-        $error = 'Username not found or account inactive';
+        $error = 'Username not found';
     }
 }
 ?>
@@ -502,6 +514,29 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             to { transform: rotate(360deg); }
         }
         
+        .register-link {
+            text-align: center;
+            margin: 15px 0 10px;
+            padding: 10px 0;
+            border-top: 1px solid #F0F0F0;
+        }
+        
+        .register-link p {
+            color: #6B6B6B;
+            font-size: 13px;
+        }
+        
+        .register-link a {
+            color: #6B8CFF;
+            text-decoration: none;
+            font-weight: 600;
+            margin-left: 5px;
+        }
+        
+        .register-link a:hover {
+            text-decoration: underline;
+        }
+        
         @media (max-width: 480px) {
             .login-container {
                 padding: 25px 20px;
@@ -583,6 +618,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 <i class="fas fa-sign-in-alt"></i> Login
             </button>
         </form>
+        
+        <!-- Registration Link - Added here -->
+        <div class="register-link">
+            <p>Don't have an account? <a href="<?php echo SITE_URL; ?>/register.php">Register here</a></p>
+        </div>
         
         <div class="demo-credentials">
             <h4>

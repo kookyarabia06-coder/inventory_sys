@@ -32,8 +32,17 @@ include INCLUDE_PATH . '/header.php';
 <div class="table-container">
     <div class="table-header">
         <h2><i class="fas fa-users"></i> System Users</h2>
+        <br>
+          <?php if ($users && $users->num_rows > 0): ?>
+        <label>
+    <input type="username" name="search" placeholder="Search by username..." value="<?php echo isset($_POST['search']) ? htmlspecialchars($_POST['search']) : ''; ?>"
+    filter_name="username" filter_type="like" oninput="filterTable(this)">
+</label>
+<?php endif; ?>
     </div>
-    
+    <button class="btn btn-primary" onclick="addUser()">
+            <i class="fas fa-plus"></i> Add User
+        </button>
     <table>
         <thead>
             <tr>
@@ -87,5 +96,27 @@ include INCLUDE_PATH . '/header.php';
         </tbody>
     </table>
 </div>
+
+
+
+<form action="" method="POST">
+<label class="colspan">
+    <input type="checkbox" name="show_inactive" onchange="this.form.submit()" <?php if (isset($_POST['show_inactive'])) echo 'checked'; ?>>
+    Show Inactive Users
+</label>
+
+
+
+
+         
+</form>
+
+
+<script>
+    function addUser() {
+      window.location.href = 'add_user.php';
+    }
+</script>
+
 
 <?php include INCLUDE_PATH . '/footer.php'; ?>
