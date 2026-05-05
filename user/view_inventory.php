@@ -1,49 +1,118 @@
 <?php
-/**
- * View All Inventory Page (End-User)
- * Allows users to view all available inventory items
- */
-
 $page_title = 'View Inventory';
 $page_description = 'Browse all available inventory items';
 
 require_once '../includes/auth.php';
 requireLogin();
 requireRole('user');
+require_once '../config/database.php';
 
-// Pagination
-$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+// Ensure database connection exists
+if (!isset($conn) || !$conn) {
+    die("Database connection failed. Please check your configuration.");
+}
+
+$conn->set_charset("utf8mb4");
+
+// DEBUG: Check if any result exists before we start
+echo "<!-- Debug: Starting fresh -->\n";
+
+// Sanitize and validate inputs
+$page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
 $per_page = 10;
+$search = isset($_GET['search']) ? trim($_GET['search']) : '';
 
-// Search functionality
-$search = isset($_GET['search']) ? sanitize($_GET['search']) : '';
+// Limit search length to prevent performance issues
+if (strlen($search) > 100) {
+    $search = substr($search, 0, 100);
+}
 
-// Build query
-$query = "
+// Build base query with proper escaping
+$base_query = "
     SELECT 
-        i.*,
+        i.id,
+        i.article_name,
+        i.property_no,
+        i.description,
+        i.category,
+        i.qty_physical_count,
+        i.uom,
+        i.unit_value,
+        i.equipment_id,
+        i.section_id,
         e.name as equipment_name,
-        s.name as section_name,
-        CASE 
-            WHEN i.qty_physical_count > 0 THEN 'Available'
-            ELSE 'Out of Stock'
-        END as stock_status
+        s.name as section_name
     FROM inventory i
     LEFT JOIN equipment e ON i.equipment_id = e.id
     LEFT JOIN sections s ON i.section_id = s.id
     WHERE 1=1
 ";
 
-if ($search) {
-    $query .= " AND (i.article_name LIKE '%$search%' 
-                     OR i.property_no LIKE '%$search%'
-                     OR i.description LIKE '%$search%')";
+// Count query using DISTINCT to avoid JOIN duplication
+$count_query = "SELECT COUNT(DISTINCT i.id) as total FROM inventory i
+                LEFT JOIN equipment e ON i.equipment_id = e.id
+                LEFT JOIN sections s ON i.section_id = s.id
+                WHERE 1=1";
+
+// Add search condition safely
+if (!empty($search)) {
+    $search_escaped = mysqli_real_escape_string($conn, $search);
+    $search_condition = " AND (i.article_name LIKE '%$search_escaped%' 
+                           OR i.property_no LIKE '%$search_escaped%'
+                           OR i.description LIKE '%$search_escaped%')";
+    $base_query .= $search_condition;
+    $count_query .= $search_condition;
 }
 
-$query .= " ORDER BY i.article_name ASC";
+$base_query .= " ORDER BY i.article_name ASC";
 
-// Get paginated results
-$result = paginate($query, $page, $per_page);
+// Get total count
+$count_result = mysqli_query($conn, $count_query);
+if (!$count_result) {
+    error_log("Database error in count query: " . mysqli_error($conn));
+    die("An error occurred while counting records. Please try again later.");
+}
+$total_row = mysqli_fetch_assoc($count_result);
+$total_rows = $total_row['total'];
+
+// Calculate offset and get paginated data
+$offset = ($page - 1) * $per_page;
+$data_query = $base_query . " LIMIT $offset, $per_page";
+$data_result = mysqli_query($conn, $data_query);
+
+if (!$data_result) {
+    error_log("Database error in data query: " . mysqli_error($conn));
+    die("An error occurred while fetching records. Please try again later.");
+}
+
+$data = [];
+while ($row = mysqli_fetch_assoc($data_result)) {
+    $data[] = $row;
+}
+
+// If no data found and not on page 1, redirect to page 1
+if (empty($data) && $page > 1 && $total_rows > 0) {
+    $redirect_url = "?page=1";
+    if ($search) {
+        $redirect_url .= "&search=" . urlencode($search);
+    }
+    header("Location: " . $redirect_url);
+    exit();
+}
+
+// Create the result array
+$result = [
+    'data' => $data,
+    'current_page' => $page,
+    'per_page' => $per_page,
+    'total_rows' => $total_rows,
+    'total_pages' => $total_rows > 0 ? ceil($total_rows / $per_page) : 1,
+    'has_previous' => $page > 1,
+    'has_next' => $page < ceil($total_rows / $per_page)
+];
+
+echo "<!-- Debug: result type = " . gettype($result) . " -->\n";
+echo "<!-- Debug: data count = " . count($result['data']) . " -->\n";
 
 include '../includes/header.php';
 ?>
@@ -72,6 +141,12 @@ include '../includes/header.php';
 <div class="table-container">
     <div class="table-header">
         <h2>Inventory Items</h2>
+        <?php 
+        // SAFETY CHECK: Ensure $result is an array before using it
+        if (!is_array($result)) {
+            die('Error: $result is not an array. Type: ' . gettype($result) . '. Please check your code.');
+        }
+        ?>
         <p>Showing <?php echo count($result['data']); ?> of <?php echo $result['total_rows']; ?> items</p>
     </div>
     

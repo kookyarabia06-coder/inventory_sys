@@ -1,0 +1,587 @@
+/*
+==================================================
+EQUIPMENT TYPE MANAGEMENT - EQUIPMENT_TYPE.CSS
+==================================================
+Matches the main style.css color scheme and design
+*/
+
+/* ================================================
+   1. BUTTON STYLES
+   ================================================ */
+.btn-add {
+    background-color: var(--accent);
+    color: var(--text-primary);
+    padding: 10px 20px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-add:hover {
+    background-color: #E6A0B0;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(248, 176, 192, 0.3);
+}
+
+.btn-edit {
+    background-color: var(--primary);
+    color: var(--text-light);
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+}
+
+.btn-edit:hover {
+    background-color: var(--secondary);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(107, 140, 255, 0.3);
+}
+
+.btn-delete {
+    background-color: var(--danger);
+    color: var(--text-light);
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+}
+
+.btn-delete:hover {
+    background-color: #d32f2f;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(244, 67, 54, 0.3);
+}
+
+.btn-cancel {
+    background-color: #F0F0F0;
+    color: var(--text-primary);
+    padding: 10px 20px;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.btn-cancel:hover {
+    background-color: #E5E5E5;
+    transform: translateY(-1px);
+}
+
+.btn-submit {
+    background-color: var(--primary);
+    color: var(--text-light);
+    padding: 10px 20px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.btn-submit:hover {
+    background-color: var(--secondary);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(107, 140, 255, 0.3);
+}
+
+/* ================================================
+   2. CONTAINER & LAYOUT
+   ================================================ */
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 25px;
+}
+
+.header {
+    background-color: var(--white);
+    padding: 20px 25px;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+    margin-bottom: 25px;
+    border: 1px solid var(--border-light);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.header h1 {
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 5px;
+}
+
+.header p {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+/* ================================================
+   3. CARDS
+   ================================================ */
+.cards-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+    gap: 25px;
+}
+
+.card {
+    background-color: var(--white);
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+    border: 1px solid var(--border-light);
+    overflow: hidden;
+    position: relative;
+}
+
+.card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 4px;
+    height: 100%;
+    background: linear-gradient(135deg, var(--primary), var(--secondary));
+}
+
+.card-header {
+    padding: 20px 25px;
+    border-bottom: 1px solid var(--border-light);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: #F8F9FA;
+}
+
+.card-header h2 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.card-header .btn-add {
+    font-size: 13px;
+    padding: 8px 16px;
+}
+
+/* ================================================
+   4. TABLES
+   ================================================ */
+.table-wrapper {
+    overflow-x: auto;
+    padding: 0;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+thead {
+    background-color: #F8F9FA;
+}
+
+thead tr {
+    border-bottom: 2px solid var(--border-light);
+}
+
+th {
+    padding: 16px 20px;
+    text-align: left;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+tbody tr {
+    border-bottom: 1px solid var(--border-light);
+    transition: background-color 0.2s;
+}
+
+tbody tr:hover {
+    background-color: #F8F9FA;
+}
+
+tbody tr:last-child {
+    border-bottom: none;
+}
+
+td {
+    padding: 16px 20px;
+    font-size: 14px;
+    color: var(--text-secondary);
+    vertical-align: middle;
+}
+
+/* ================================================
+   5. BADGES
+   ================================================ */
+.badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.badge-primary {
+    background-color: #E8EAF6;
+    color: var(--primary);
+}
+
+.badge-success {
+    background-color: var(--success-light);
+    color: var(--success);
+}
+
+.badge-warning {
+    background-color: #FFF3E0;
+    color: #F57C00;
+}
+
+.badge-danger {
+    background-color: #FFEBEE;
+    color: var(--danger);
+}
+
+/* ================================================
+   5. ACTION BUTTONS IN TABLES
+   ================================================ */
+/* For Type of Equipment table - buttons directly in td */
+td .btn-edit,
+td .btn-delete {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 12px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    transition: all 0.2s;
+    gap: 4px;
+    margin-right: 5px;
+}
+
+td .btn-edit {
+    background-color: var(--primary);
+    color: var(--text-light);
+}
+
+td .btn-edit:hover {
+    background-color: var(--secondary);
+    transform: translateY(-1px);
+    box-shadow: 0 3px 8px rgba(107, 140, 255, 0.3);
+}
+
+td .btn-delete {
+    background-color: var(--danger);
+    color: var(--text-light);
+}
+
+td .btn-delete:hover {
+    background-color: #d32f2f;
+    transform: translateY(-1px);
+    box-shadow: 0 3px 8px rgba(244, 67, 54, 0.3);
+}
+
+.action-btn {
+    padding: 6px 12px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.action-btn.edit {
+    background-color: var(--primary);
+    color: var(--text-light);
+}
+
+.action-btn.edit:hover {
+    background-color: var(--secondary);
+    transform: translateY(-1px);
+    box-shadow: 0 3px 8px rgba(107, 140, 255, 0.3);
+}
+
+.action-btn.delete {
+    background-color: var(--danger);
+    color: var(--text-light);
+}
+
+.action-btn.delete:hover {
+    background-color: #d32f2f;
+    transform: translateY(-1px);
+    box-shadow: 0 3px 8px rgba(244, 67, 54, 0.3);
+}
+
+/* ================================================
+   7. MODALS
+   ================================================ */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(3px);
+    animation: fadeIn 0.2s ease;
+}
+
+.modal-content {
+    background-color: var(--white);
+    margin: 5% auto;
+    padding: 0;
+    border-radius: 12px;
+    max-width: 500px;
+    width: 90%;
+    position: relative;
+    box-shadow: 0 15px 40px rgba(0, 0, 0, 0.15);
+    animation: modalSlideIn 0.3s ease;
+}
+
+@keyframes modalSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.modal-header {
+    padding: 20px 25px;
+    border-bottom: 2px solid var(--accent-light);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h2 {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.modal-body {
+    padding: 25px;
+}
+
+.modal-footer {
+    padding: 15px 25px;
+    border-top: 1px solid var(--border-light);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    background-color: #F8F9FA;
+    border-radius: 0 0 12px 12px;
+}
+
+/* ================================================
+   8. FORMS
+   ================================================ */
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+    color: var(--text-primary);
+    font-size: 14px;
+}
+
+.form-group input,
+.form-group select {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    font-size: 14px;
+    color: var(--text-primary);
+    background-color: var(--white);
+    transition: all 0.2s;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.1);
+}
+
+.text-muted {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 5px;
+}
+
+/* ================================================
+   9. ALERTS
+   ================================================ */
+.alert {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    padding: 15px 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    z-index: 9999;
+    animation: slideDown 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 300px;
+    max-width: 500px;
+}
+
+.alert-success {
+    background-color: var(--success-light);
+    color: var(--success);
+    border-left: 4px solid var(--success);
+}
+
+.alert-danger {
+    background-color: #FFEBEE;
+    color: var(--danger);
+    border-left: 4px solid var(--danger);
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* ================================================
+   10. EMPTY STATE
+   ================================================ */
+td[style*="text-align: center"] {
+    text-align: center !important;
+    padding: 40px 20px !important;
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
+/* ================================================
+   11. RESPONSIVE DESIGN
+   ================================================ */
+@media (max-width: 768px) {
+    .container {
+        padding: 15px;
+    }
+
+    .header {
+        flex-direction: column;
+        gap: 15px;
+        text-align: center;
+    }
+
+    .card-header {
+        flex-direction: column;
+        gap: 15px;
+        align-items: flex-start;
+    }
+
+    .action-buttons {
+        flex-direction: column;
+        gap: 5px;
+    }
+
+    .btn-add {
+        width: 100%;
+        justify-content: center;
+    }
+
+    table {
+        font-size: 12px;
+    }
+
+    th, td {
+        padding: 10px;
+    }
+
+    .modal-content {
+        width: 95%;
+        margin: 10% auto;
+    }
+
+    .modal-footer {
+        flex-direction: column;
+    }
+
+    .modal-footer button {
+        width: 100%;
+    }
+}
+
+@media (max-width: 480px) {
+    .action-btn {
+        padding: 5px 8px;
+        font-size: 11px;
+    }
+
+    th, td {
+        padding: 8px 5px;
+        font-size: 11px;
+    }
+
+    .badge {
+        font-size: 10px;
+        padding: 3px 8px;
+    }
+}

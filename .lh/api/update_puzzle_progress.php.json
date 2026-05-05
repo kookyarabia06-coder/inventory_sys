@@ -1,0 +1,22 @@
+{
+    "sourceFile": "api/update_puzzle_progress.php",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 1,
+            "patches": [
+                {
+                    "date": 1777888552895,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                },
+                {
+                    "date": 1777889159960,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -3,19 +3,10 @@\n header('Content-Type: application/json');\r\n \r\n if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['completed'])) {\r\n     $completed = intval($_POST['completed']);\r\n-    \r\n-    // Update session\r\n     $_SESSION['puzzles_completed'] = $completed;\r\n-    \r\n-    echo json_encode([\r\n-        'success' => true,\r\n-        'completed' => $completed\r\n-    ]);\r\n+    echo json_encode(['success' => true, 'completed' => $completed]);\r\n } else {\r\n-    echo json_encode([\r\n-        'success' => false,\r\n-        'message' => 'Invalid request'\r\n-    ]);\r\n+    echo json_encode(['success' => false]);\r\n }\r\n ?>\n\\ No newline at end of file\n"
+                }
+            ],
+            "date": 1777888552895,
+            "name": "Commit-0",
+            "content": "<?php\r\nsession_start();\r\nheader('Content-Type: application/json');\r\n\r\nif ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['completed'])) {\r\n    $completed = intval($_POST['completed']);\r\n    \r\n    // Update session\r\n    $_SESSION['puzzles_completed'] = $completed;\r\n    \r\n    echo json_encode([\r\n        'success' => true,\r\n        'completed' => $completed\r\n    ]);\r\n} else {\r\n    echo json_encode([\r\n        'success' => false,\r\n        'message' => 'Invalid request'\r\n    ]);\r\n}\r\n?>"
+        }
+    ]
+}

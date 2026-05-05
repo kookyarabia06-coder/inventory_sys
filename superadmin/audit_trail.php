@@ -1,148 +1,892 @@
 <?php
 /**
  * Audit Trail Page (Super Admin)
- * View all system changes and activities
+ * Complete history of all system changes and user activities
  */
 
-$page_title = 'Audit Trail';
-$page_description = 'Complete history of all system changes';
+$page_title = 'Audit Trail - Complete Activity Log';
+$page_description = 'Complete history of all system changes and user activities';
 
 require_once '../includes/auth.php';
 requireRole('super_admin');
+
+// Check if audit_trail table exists, if not create it
+$table_check = $conn->query("SHOW TABLES LIKE 'audit_trail'");
+if (!$table_check || $table_check->num_rows == 0) {
+    $create_table = "
+    CREATE TABLE IF NOT EXISTS audit_trail (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        user_id INT NULL,
+        action VARCHAR(50) NOT NULL,
+        action_category VARCHAR(30) NOT NULL,
+        table_name VARCHAR(50) NULL,
+        record_id INT NULL,
+        description TEXT NULL,
+        old_value JSON NULL,
+        new_value JSON NULL,
+        details JSON NULL,
+        ip_address VARCHAR(45) NULL,
+        user_agent TEXT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_user_id (user_id),
+        INDEX idx_action (action),
+        INDEX idx_action_category (action_category),
+        INDEX idx_created_at (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+    
+    $conn->query($create_table);
+}
 
 // Pagination
 $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
 $per_page = 50;
 
 // Filters
+$filter_action_category = isset($_GET['action_category']) ? sanitize($_GET['action_category']) : '';
 $filter_action = isset($_GET['action']) ? sanitize($_GET['action']) : '';
 $filter_table = isset($_GET['table']) ? sanitize($_GET['table']) : '';
 $filter_user = isset($_GET['user_id']) ? (int)$_GET['user_id'] : 0;
 $date_from = isset($_GET['date_from']) ? $_GET['date_from'] : '';
 $date_to = isset($_GET['date_to']) ? $_GET['date_to'] : '';
+$search = isset($_GET['search']) ? sanitize($_GET['search']) : '';
 
 // Build query
+$conditions = [];
+$params = [];
+$types = '';
+
+if ($filter_action_category) {
+    $conditions[] = "at.action_category = ?";
+    $params[] = $filter_action_category;
+    $types .= 's';
+}
+if ($filter_action) {
+    $conditions[] = "at.action = ?";
+    $params[] = $filter_action;
+    $types .= 's';
+}
+if ($filter_table) {
+    $conditions[] = "at.table_name = ?";
+    $params[] = $filter_table;
+    $types .= 's';
+}
+if ($filter_user) {
+    $conditions[] = "at.user_id = ?";
+    $params[] = $filter_user;
+    $types .= 'i';
+}
+if ($date_from) {
+    $conditions[] = "DATE(at.created_at) >= ?";
+    $params[] = $date_from;
+    $types .= 's';
+}
+if ($date_to) {
+    $conditions[] = "DATE(at.created_at) <= ?";
+    $params[] = $date_to;
+    $types .= 's';
+}
+if ($search) {
+    $conditions[] = "(at.action LIKE ? OR at.table_name LIKE ? OR at.description LIKE ? OR at.details LIKE ? OR at.ip_address LIKE ?)";
+    $search_param = "%$search%";
+    $params[] = $search_param;
+    $params[] = $search_param;
+    $params[] = $search_param;
+    $params[] = $search_param;
+    $params[] = $search_param;
+    $types .= 'sssss';
+}
+
+$where_clause = !empty($conditions) ? "WHERE " . implode(" AND ", $conditions) : "";
+
 $query = "
     SELECT at.*, 
            CONCAT(u.firstname, ' ', u.lastname) as user_name,
-           u.username
+           u.username,
+           u.role as user_role
     FROM audit_trail at
     LEFT JOIN users u ON at.user_id = u.id
-    WHERE 1=1
+    $where_clause
+    ORDER BY at.created_at DESC
 ";
 
-if ($filter_action) {
-    $query .= " AND at.action = '$filter_action'";
-}
-if ($filter_table) {
-    $query .= " AND at.table_name = '$filter_table'";
-}
-if ($filter_user) {
-    $query .= " AND at.user_id = $filter_user";
-}
-if ($date_from) {
-    $query .= " AND DATE(at.created_at) >= '$date_from'";
-}
-if ($date_to) {
-    $query .= " AND DATE(at.created_at) <= '$date_to'";
-}
-
-$query .= " ORDER BY at.created_at DESC";
-
 // Get paginated results
-$audit_logs = paginate($query, $page, $per_page);
+$audit_logs = paginate($query, $page, $per_page, $params, $types);
 
-// Get unique actions for filter
-$actions = $conn->query("SELECT DISTINCT action FROM audit_trail ORDER BY action");
-$tables = $conn->query("SELECT DISTINCT table_name FROM audit_trail WHERE table_name IS NOT NULL ORDER BY table_name");
-$users = $conn->query("SELECT id, username, firstname, lastname FROM users ORDER BY username");
+// Get statistics with error handling
+$today = date('Y-m-d');
+$stats_query = "
+    SELECT 
+        COALESCE(COUNT(*), 0) as total_activities,
+        COALESCE(SUM(CASE WHEN action = 'LOGIN' AND DATE(created_at) = '$today' THEN 1 ELSE 0 END), 0) as today_logins,
+        COALESCE(SUM(CASE WHEN action = 'FAILED_LOGIN' AND DATE(created_at) = '$today' THEN 1 ELSE 0 END), 0) as today_failed_logins,
+        COALESCE(SUM(CASE WHEN action = 'ACCOUNT_LOCKED' AND DATE(created_at) = '$today' THEN 1 ELSE 0 END), 0) as today_locks,
+        COALESCE(SUM(CASE WHEN action_category = 'EQUIPMENT' AND DATE(created_at) = '$today' THEN 1 ELSE 0 END), 0) as today_equipment,
+        COALESCE(SUM(CASE WHEN action IN ('ISSUE_EQUIPMENT', 'RETURN_EQUIPMENT') AND DATE(created_at) = '$today' THEN 1 ELSE 0 END), 0) as today_issuance,
+        COALESCE(SUM(CASE WHEN action = 'PRINT_REPORT' AND DATE(created_at) = '$today' THEN 1 ELSE 0 END), 0) as today_reports,
+        COALESCE(SUM(CASE WHEN action IN ('NEW_USER', 'UPDATE_USER', 'DELETE_USER') AND DATE(created_at) = '$today' THEN 1 ELSE 0 END), 0) as today_user_changes,
+        COALESCE(SUM(CASE WHEN action = 'LOGIN' THEN 1 ELSE 0 END), 0) as total_logins,
+        COALESCE(SUM(CASE WHEN action = 'FAILED_LOGIN' THEN 1 ELSE 0 END), 0) as total_failed_logins,
+        COALESCE(SUM(CASE WHEN action = 'ACCOUNT_LOCKED' THEN 1 ELSE 0 END), 0) as total_locks,
+        COALESCE(SUM(CASE WHEN action = 'INSERT' THEN 1 ELSE 0 END), 0) as total_inserts,
+        COALESCE(SUM(CASE WHEN action = 'UPDATE' THEN 1 ELSE 0 END), 0) as total_updates,
+        COALESCE(SUM(CASE WHEN action = 'DELETE' THEN 1 ELSE 0 END), 0) as total_deletes
+    FROM audit_trail
+";
+
+$stats_result = $conn->query($stats_query);
+
+// Initialize stats with default values
+$stats = [
+    'total_activities' => 0,
+    'today_logins' => 0,
+    'today_failed_logins' => 0,
+    'today_locks' => 0,
+    'today_equipment' => 0,
+    'today_issuance' => 0,
+    'today_reports' => 0,
+    'today_user_changes' => 0,
+    'total_logins' => 0,
+    'total_failed_logins' => 0,
+    'total_locks' => 0,
+    'total_inserts' => 0,
+    'total_updates' => 0,
+    'total_deletes' => 0
+];
+
+if ($stats_result && $stats_result->num_rows > 0) {
+    $stats = array_merge($stats, $stats_result->fetch_assoc());
+}
+
+// Get distinct values for filters
+$action_categories = $conn->query("SELECT DISTINCT action_category FROM audit_trail WHERE action_category IS NOT NULL ORDER BY action_category");
+$actions = $conn->query("SELECT DISTINCT action, action_category FROM audit_trail ORDER BY action_category, action");
+$tables = $conn->query("SELECT DISTINCT table_name FROM audit_trail WHERE table_name IS NOT NULL AND table_name != '' ORDER BY table_name");
+$users_list = $conn->query("SELECT id, username, firstname, lastname FROM users ORDER BY username");
 
 // Build filter query string
 function buildFilterQuery() {
     $params = [];
+    if (!empty($_GET['action_category'])) $params[] = 'action_category=' . urlencode($_GET['action_category']);
     if (!empty($_GET['action'])) $params[] = 'action=' . urlencode($_GET['action']);
     if (!empty($_GET['table'])) $params[] = 'table=' . urlencode($_GET['table']);
     if (!empty($_GET['user_id'])) $params[] = 'user_id=' . urlencode($_GET['user_id']);
     if (!empty($_GET['date_from'])) $params[] = 'date_from=' . urlencode($_GET['date_from']);
     if (!empty($_GET['date_to'])) $params[] = 'date_to=' . urlencode($_GET['date_to']);
+    if (!empty($_GET['search'])) $params[] = 'search=' . urlencode($_GET['search']);
     return !empty($params) ? '&' . implode('&', $params) : '';
 }
 
 include '../includes/header.php';
 ?>
 
-<!-- Filters -->
+<style>
+:root {
+    --primary: #6B8CFF;
+    --secondary: #8FB5FF;
+    --accent: #F8B0C0;
+    --accent-light: #FFD8E0;
+    --success-light: #C5E8C5;
+    --light: #F0F0F0;
+    --white: #FFFFFF;
+    --border-light: #E0E0E0;
+    --text-primary: #3A3A3A;
+    --text-secondary: #6B6B6B;
+    --text-muted: #9E9E9E;
+    --text-light: #FFFFFF;
+    --success: #4CAF50;
+    --danger: #f44336;
+    --warning: #FFB74D;
+    --info: #8FB5FF;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    background-color: var(--light);
+    color: var(--text-primary);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Dashboard Cards */
+.dashboard-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+    margin-bottom: 30px;
+}
+
+.card {
+    background: var(--white);
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: 0 2px 8px rgba(107, 140, 255, 0.08);
+    border-left: 4px solid var(--primary);
+    transition: all 0.3s ease;
+}
+
+.card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 20px rgba(107, 140, 255, 0.12);
+}
+
+.card-icon {
+    width: 45px;
+    height: 45px;
+    background: linear-gradient(135deg, var(--accent-light) 0%, var(--white) 100%);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 12px;
+}
+
+.card-icon i {
+    font-size: 22px;
+    color: var(--primary);
+}
+
+.card h3 {
+    color: var(--text-secondary);
+    font-size: 12px;
+    margin-bottom: 8px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.card .card-value {
+    color: var(--primary);
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 5px;
+}
+
+.card .card-label {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+/* Filter Section */
+.filter-section {
+    background: var(--white);
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 30px;
+    box-shadow: 0 2px 8px rgba(107, 140, 255, 0.08);
+}
+
+.filter-section h3 {
+    color: var(--primary);
+    margin-bottom: 20px;
+    font-size: 16px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.filter-section h3 i {
+    color: var(--accent);
+    font-size: 18px;
+}
+
+.filter-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-size: 12px;
+}
+
+.form-group label i {
+    color: var(--primary);
+    margin-right: 6px;
+    width: 16px;
+}
+
+.form-control {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    font-size: 13px;
+    transition: all 0.2s ease;
+    background: var(--white);
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.1);
+}
+
+select.form-control {
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236B6B6B'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 18px;
+}
+
+.filter-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+/* Search Box */
+.search-box {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-light);
+}
+
+.search-box input {
+    flex: 1;
+}
+
+/* Table Container */
+.table-container {
+    background: var(--white);
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 30px;
+    box-shadow: 0 2px 8px rgba(107, 140, 255, 0.08);
+    overflow-x: auto;
+}
+
+.table-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid var(--accent-light);
+    flex-wrap: wrap;
+    gap: 15px;
+}
+
+.table-header h2 {
+    color: var(--primary);
+    font-size: 18px;
+    font-weight: 600;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.table-header h2 i {
+    color: var(--accent);
+    font-size: 20px;
+}
+
+.table-actions {
+    display: flex;
+    gap: 10px;
+}
+
+/* Button Styles */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-decoration: none;
+}
+
+.btn-sm {
+    padding: 6px 12px;
+    font-size: 11px;
+}
+
+.btn-primary {
+    background: var(--primary);
+    color: var(--white);
+}
+
+.btn-primary:hover {
+    background: #5a7ae6;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(107, 140, 255, 0.3);
+}
+
+.btn-secondary {
+    background: var(--secondary);
+    color: var(--white);
+}
+
+.btn-secondary:hover {
+    background: #7a9fe6;
+    transform: translateY(-1px);
+}
+
+.btn-outline {
+    background: transparent;
+    border: 1px solid var(--border-light);
+    color: var(--text-secondary);
+}
+
+.btn-outline:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+}
+
+/* Table Styles */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 1000px;
+}
+
+thead tr {
+    background: linear-gradient(135deg, var(--light) 0%, var(--white) 100%);
+    border-bottom: 2px solid var(--accent-light);
+}
+
+th {
+    padding: 14px 12px;
+    text-align: left;
+    color: var(--primary);
+    font-weight: 600;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+td {
+    padding: 12px;
+    border-bottom: 1px solid var(--border-light);
+    color: var(--text-secondary);
+    font-size: 12px;
+    vertical-align: middle;
+}
+
+tr:hover {
+    background-color: rgba(107, 140, 255, 0.04);
+}
+
+/* Badges */
+.badge {
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+}
+
+.badge-success { background: var(--success-light); color: var(--success); }
+.badge-danger { background: #FFEBEE; color: var(--danger); }
+.badge-warning { background: #FFF3E0; color: #E65100; }
+.badge-info { background: #E3F2FD; color: #1976D2; }
+.badge-secondary { background: #F5F5F5; color: var(--text-secondary); }
+.badge-primary { background: rgba(107, 140, 255, 0.15); color: var(--primary); }
+
+/* View Details Button */
+.view-details-btn {
+    background: transparent;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: var(--primary);
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.view-details-btn:hover {
+    background: var(--primary);
+    color: var(--white);
+    border-color: var(--primary);
+}
+
+/* Modal Styles */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    animation: modalFadeIn 0.3s ease;
+}
+
+@keyframes modalFadeIn {
+    from { opacity: 0; backdrop-filter: blur(0px); }
+    to { opacity: 1; backdrop-filter: blur(4px); }
+}
+
+.modal-content {
+    background: var(--white);
+    margin: 3% auto;
+    border-radius: 20px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+    max-width: 850px;
+    width: 90%;
+    animation: modalSlideUp 0.3s ease;
+}
+
+@keyframes modalSlideUp {
+    from { transform: translateY(30px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px;
+    border-bottom: 2px solid var(--accent-light);
+    background: linear-gradient(135deg, var(--light) 0%, var(--white) 100%);
+    border-radius: 20px 20px 0 0;
+}
+
+.modal-header h2 {
+    color: var(--primary);
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.modal-header h2 i {
+    color: var(--accent);
+    font-size: 22px;
+}
+
+.modal-close {
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    color: var(--text-muted);
+    transition: all 0.2s;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+}
+
+.modal-close:hover {
+    color: var(--danger);
+    background: rgba(244, 67, 54, 0.1);
+    transform: rotate(90deg);
+}
+
+.modal-body {
+    padding: 24px;
+    max-height: 65vh;
+    overflow-y: auto;
+}
+
+.modal-footer {
+    padding: 16px 24px;
+    border-top: 1px solid var(--border-light);
+    text-align: right;
+    background: var(--light);
+    border-radius: 0 0 20px 20px;
+}
+
+/* Detail Sections */
+.detail-section {
+    margin-bottom: 24px;
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.detail-header {
+    background: var(--light);
+    padding: 12px 16px;
+    font-weight: 600;
+    color: var(--primary);
+    border-bottom: 1px solid var(--border-light);
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.detail-header i {
+    color: var(--accent);
+}
+
+.detail-content {
+    padding: 16px;
+}
+
+.detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+}
+
+.detail-item {
+    border-bottom: 1px dashed var(--border-light);
+    padding: 8px 0;
+}
+
+.detail-item:last-child {
+    border-bottom: none;
+}
+
+.detail-label {
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 5px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.detail-value {
+    color: var(--text-secondary);
+    font-size: 13px;
+    word-break: break-word;
+}
+
+.detail-value code {
+    background: var(--light);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 12px;
+}
+
+pre {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 12px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-size: 11px;
+    font-family: 'Courier New', monospace;
+    margin: 0;
+}
+
+/* Pagination */
+.pagination {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 24px;
+    flex-wrap: wrap;
+}
+
+.pagination a, .pagination span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px;
+    height: 36px;
+    padding: 0 10px;
+    border-radius: 10px;
+    background: var(--white);
+    color: var(--text-secondary);
+    text-decoration: none;
+    border: 1px solid var(--border-light);
+    font-size: 13px;
+    transition: all 0.2s;
+}
+
+.pagination a:hover {
+    background: var(--primary);
+    color: var(--white);
+    border-color: var(--primary);
+    transform: translateY(-1px);
+}
+
+.pagination .active {
+    background: var(--primary);
+    color: var(--white);
+    border-color: var(--primary);
+}
+
+/* Utilities */
+.text-center { text-align: center; }
+.text-muted { color: var(--text-muted); }
+.text-danger { color: var(--danger); }
+.text-success { color: var(--success); }
+.text-warning { color: #E65100; }
+
+/* Responsive */
+@media (max-width: 768px) {
+    .dashboard-cards { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .filter-grid { grid-template-columns: 1fr; }
+    .search-box { flex-direction: column; }
+    .search-box button { width: 100%; }
+    .table-actions { flex-direction: column; width: 100%; }
+    .table-actions .btn { width: 100%; justify-content: center; }
+    .detail-grid { grid-template-columns: 1fr; gap: 12px; }
+    .modal-content { width: 95%; margin: 10% auto; }
+    .modal-body { padding: 16px; }
+}
+</style>
+
+<!-- Statistics Dashboard -->
+<div class="dashboard-cards">
+    <div class="card">
+        <div class="card-icon"><i class="fas fa-sign-in-alt"></i></div>
+        <h3>Today's Logins</h3>
+        <div class="card-value"><?php echo number_format($stats['today_logins'] ?? 0); ?></div>
+        <div class="card-label">Successful logins</div>
+    </div>
+    <div class="card">
+        <div class="card-icon"><i class="fas fa-exclamation-triangle"></i></div>
+        <h3>Failed Logins</h3>
+        <div class="card-value"><?php echo number_format($stats['today_failed_logins'] ?? 0); ?></div>
+        <div class="card-label">Today / Total: <?php echo number_format($stats['total_failed_logins'] ?? 0); ?></div>
+    </div>
+    <div class="card">
+        <div class="card-icon"><i class="fas fa-lock"></i></div>
+        <h3>Account Locks</h3>
+        <div class="card-value"><?php echo number_format($stats['today_locks'] ?? 0); ?></div>
+        <div class="card-label">Today / Total: <?php echo number_format($stats['total_locks'] ?? 0); ?></div>
+    </div>
+    <div class="card">
+        <div class="card-icon"><i class="fas fa-laptop"></i></div>
+        <h3>Equipment</h3>
+        <div class="card-value"><?php echo number_format($stats['today_equipment'] ?? 0); ?></div>
+        <div class="card-label">Changes today</div>
+    </div>
+    <div class="card">
+        <div class="card-icon"><i class="fas fa-exchange-alt"></i></div>
+        <h3>Issuance</h3>
+        <div class="card-value"><?php echo number_format($stats['today_issuance'] ?? 0); ?></div>
+        <div class="card-label">Issued/Returned today</div>
+    </div>
+    <div class="card">
+        <div class="card-icon"><i class="fas fa-users"></i></div>
+        <h3>User Changes</h3>
+        <div class="card-value"><?php echo number_format($stats['today_user_changes'] ?? 0); ?></div>
+        <div class="card-label">Add/Update/Delete today</div>
+    </div>
+</div>
+
+<!-- Advanced Filters -->
 <div class="filter-section">
-    <h3>Filter Audit Trail</h3>
-    <form method="GET" action="" class="filter-grid">
-        <div class="form-group">
-            <label>Action</label>
-            <select name="action" class="form-control">
-                <option value="">All Actions</option>
-                <?php while($action = $actions->fetch_assoc()): ?>
-                <option value="<?php echo $action['action']; ?>" 
-                    <?php echo $filter_action == $action['action'] ? 'selected' : ''; ?>>
-                    <?php echo $action['action']; ?>
-                </option>
-                <?php endwhile; ?>
-            </select>
+    <h3><i class="fas fa-filter"></i> Advanced Filters</h3>
+    <form method="GET" action="">
+        <div class="filter-grid">
+            <div class="form-group">
+                <label><i class="fas fa-tag"></i> Action Category</label>
+                <select name="action_category" class="form-control">
+                    <option value="">All Categories</option>
+                    <?php if ($action_categories && $action_categories->num_rows > 0): ?>
+                    <?php while($cat = $action_categories->fetch_assoc()): ?>
+                    <option value="<?php echo $cat['action_category']; ?>" <?php echo $filter_action_category == $cat['action_category'] ? 'selected' : ''; ?>>
+                        <?php echo ucfirst(str_replace('_', ' ', $cat['action_category'])); ?>
+                    </option>
+                    <?php endwhile; ?>
+                    <?php endif; ?>
+                </select>
+            </div>
+            <div class="form-group">
+                <label><i class="fas fa-cog"></i> Action</label>
+                <select name="action" class="form-control">
+                    <option value="">All Actions</option>
+                    <?php if ($actions && $actions->num_rows > 0): ?>
+                    <?php while($action = $actions->fetch_assoc()): ?>
+                    <option value="<?php echo $action['action']; ?>" <?php echo $filter_action == $action['action'] ? 'selected' : ''; ?>>
+                        <?php echo $action['action']; ?>
+                    </option>
+                    <?php endwhile; ?>
+                    <?php endif; ?>
+                </select>
+            </div>
+            <div class="form-group">
+                <label><i class="fas fa-table"></i> Table/Module</label>
+                <select name="table" class="form-control">
+                    <option value="">All Tables</option>
+                    <?php if ($tables && $tables->num_rows > 0): ?>
+                    <?php while($table = $tables->fetch_assoc()): ?>
+                    <option value="<?php echo $table['table_name']; ?>" <?php echo $filter_table == $table['table_name'] ? 'selected' : ''; ?>>
+                        <?php echo ucfirst(str_replace('_', ' ', $table['table_name'])); ?>
+                    </option>
+                    <?php endwhile; ?>
+                    <?php endif; ?>
+                </select>
+            </div>
+            <div class="form-group">
+                <label><i class="fas fa-user"></i> User</label>
+                <select name="user_id" class="form-control">
+                    <option value="">All Users</option>
+                    <?php if ($users_list && $users_list->num_rows > 0): ?>
+                    <?php while($user = $users_list->fetch_assoc()): ?>
+                    <option value="<?php echo $user['id']; ?>" <?php echo $filter_user == $user['id'] ? 'selected' : ''; ?>>
+                        <?php echo htmlspecialchars($user['firstname'] . ' ' . $user['lastname'] . ' (' . $user['username'] . ')'); ?>
+                    </option>
+                    <?php endwhile; ?>
+                    <?php endif; ?>
+                </select>
+            </div>
+            <div class="form-group">
+                <label><i class="fas fa-calendar"></i> Date From</label>
+                <input type="date" name="date_from" class="form-control" value="<?php echo $date_from; ?>">
+            </div>
+            <div class="form-group">
+                <label><i class="fas fa-calendar"></i> Date To</label>
+                <input type="date" name="date_to" class="form-control" value="<?php echo $date_to; ?>">
+            </div>
         </div>
-        
-        <div class="form-group">
-            <label>Table</label>
-            <select name="table" class="form-control">
-                <option value="">All Tables</option>
-                <?php while($table = $tables->fetch_assoc()): ?>
-                <option value="<?php echo $table['table_name']; ?>" 
-                    <?php echo $filter_table == $table['table_name'] ? 'selected' : ''; ?>>
-                    <?php echo $table['table_name']; ?>
-                </option>
-                <?php endwhile; ?>
-            </select>
-        </div>
-        
-        <div class="form-group">
-            <label>User</label>
-            <select name="user_id" class="form-control">
-                <option value="">All Users</option>
-                <?php while($user = $users->fetch_assoc()): ?>
-                <option value="<?php echo $user['id']; ?>" 
-                    <?php echo $filter_user == $user['id'] ? 'selected' : ''; ?>>
-                    <?php echo htmlspecialchars($user['firstname'] . ' ' . $user['lastname'] . ' (' . $user['username'] . ')'); ?>
-                </option>
-                <?php endwhile; ?>
-            </select>
-        </div>
-        
-        <div class="form-group">
-            <label>Date From</label>
-            <input type="date" name="date_from" class="form-control" value="<?php echo $date_from; ?>">
-        </div>
-        
-        <div class="form-group">
-            <label>Date To</label>
-            <input type="date" name="date_to" class="form-control" value="<?php echo $date_to; ?>">
-        </div>
-        
-        <div class="form-group" style="display: flex; align-items: flex-end;">
-            <button type="submit" class="btn btn-primary">
-                <i class="fas fa-filter"></i> Apply Filters
-            </button>
-            <a href="?" class="btn btn-secondary" style="margin-left: 10px;">
-                <i class="fas fa-times"></i> Clear
-            </a>
+        <div class="filter-actions">
+            <button type="submit" class="btn btn-primary"><i class="fas fa-filter"></i> Apply Filters</button>
+            <a href="?" class="btn btn-outline"><i class="fas fa-times"></i> Clear All</a>
         </div>
     </form>
+    
+    <!-- Search Box -->
+    <div class="search-box">
+        <form method="GET" action="" style="display: flex; gap: 10px; width: 100%;">
+            <input type="text" name="search" class="form-control" placeholder="🔍 Search actions, tables, descriptions, IP addresses..." value="<?php echo htmlspecialchars($search); ?>">
+            <?php foreach(['action_category', 'action', 'table', 'user_id', 'date_from', 'date_to'] as $param): ?>
+                <?php if(!empty($_GET[$param])): ?>
+                    <input type="hidden" name="<?php echo $param; ?>" value="<?php echo htmlspecialchars($_GET[$param]); ?>">
+                <?php endif; ?>
+            <?php endforeach; ?>
+            <button type="submit" class="btn btn-primary"><i class="fas fa-search"></i> Search</button>
+        </form>
+    </div>
 </div>
 
 <!-- Audit Trail Table -->
 <div class="table-container">
     <div class="table-header">
-        <h2>Audit Trail</h2>
-        <div>
-            <button class="btn btn-sm btn-secondary" onclick="exportAuditTrail()">
-                <i class="fas fa-download"></i> Export
-            </button>
+        <h2><i class="fas fa-history"></i> Activity Log</h2>
+        <div class="table-actions">
+            <button class="btn btn-outline" onclick="exportAuditTrail()"><i class="fas fa-download"></i> Export CSV</button>
+            <button class="btn btn-outline" onclick="printAuditTrail()"><i class="fas fa-print"></i> Print</button>
         </div>
     </div>
     
@@ -151,136 +895,324 @@ include '../includes/header.php';
             <tr>
                 <th>Timestamp</th>
                 <th>User</th>
+                <th>Category</th>
                 <th>Action</th>
                 <th>Table</th>
-                <th>Record ID</th>
+                <th>Description</th>
                 <th>IP Address</th>
-                <th>Changes</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
-            <?php if (count($audit_logs['data']) > 0): ?>
+            <?php if (!empty($audit_logs['data']) && count($audit_logs['data']) > 0): ?>
                 <?php foreach ($audit_logs['data'] as $log): ?>
                 <tr>
-                    <td><?php echo date('Y-m-d H:i:s', strtotime($log['created_at'])); ?></td>
+                    <td style="white-space: nowrap;">
+                        <?php echo date('Y-m-d H:i:s', strtotime($log['created_at'])); ?>
+                        <br><small class="text-muted"><?php echo time_ago(strtotime($log['created_at'])); ?></small>
+                    </td>
                     <td>
                         <?php if ($log['user_name']): ?>
                             <strong><?php echo htmlspecialchars($log['user_name']); ?></strong>
-                            <br><small><?php echo htmlspecialchars($log['username']); ?></small>
+                            <br><small class="text-muted"><?php echo htmlspecialchars($log['username']); ?></small>
                         <?php else: ?>
-                            <em>System</em>
+                            <em class="text-muted">System</em>
                         <?php endif; ?>
                     </td>
                     <td>
                         <?php
-                        $action_colors = [
-                            'INSERT' => 'badge-success',
-                            'UPDATE' => 'badge-warning',
-                            'DELETE' => 'badge-danger',
-                            'LOGIN' => 'badge-info'
+                        $cat_colors = [
+                            'AUTHENTICATION' => 'info',
+                            'USER_MANAGEMENT' => 'success',
+                            'EQUIPMENT' => 'warning',
+                            'ISSUANCE' => 'secondary',
+                            'CRUD' => 'primary',
+                            'REPORTS' => 'info',
+                            'SECURITY' => 'danger',
+                            'SYSTEM' => 'secondary'
                         ];
-                        $badge_class = $action_colors[$log['action']] ?? 'badge-secondary';
+                        $color = $cat_colors[$log['action_category']] ?? 'secondary';
                         ?>
-                        <span class="badge <?php echo $badge_class; ?>">
-                            <?php echo htmlspecialchars($log['action']); ?>
+                        <span class="badge badge-<?php echo $color; ?>">
+                            <?php echo ucfirst(str_replace('_', ' ', $log['action_category'] ?? 'OTHER')); ?>
                         </span>
                     </td>
-                    <td><?php echo htmlspecialchars($log['table_name']); ?></td>
-                    <td><?php echo $log['record_id'] ?: '-'; ?></td>
-                    <td><?php echo htmlspecialchars($log['ip_address']); ?></td>
                     <td>
-                        <?php if ($log['old_value'] || $log['new_value']): ?>
-                            <button class="btn btn-sm btn-primary" onclick="viewChanges(<?php echo $log['id']; ?>)">
-                                <i class="fas fa-code"></i> View
-                            </button>
-                        <?php else: ?>
-                            -
-                        <?php endif; ?>
+                        <?php
+                        $action_icons = [
+                            'LOGIN' => '🔐',
+                            'LOGOUT' => '🚪',
+                            'FAILED_LOGIN' => '❌',
+                            'ACCOUNT_LOCKED' => '🔒',
+                            'PASSWORD_CHANGE' => '🔑',
+                            'PROFILE_UPDATE' => '✏️',
+                            'NEW_USER' => '👤+',
+                            'UPDATE_USER' => '✏️👤',
+                            'DELETE_USER' => '🗑️👤',
+                            'INSERT' => '➕',
+                            'UPDATE' => '✏️',
+                            'DELETE' => '🗑️',
+                            'ISSUE_EQUIPMENT' => '📤',
+                            'RETURN_EQUIPMENT' => '📥',
+                            'PRINT_REPORT' => '🖨️'
+                        ];
+                        $icon = $action_icons[$log['action']] ?? '📋';
+                        ?>
+                        <span class="badge badge-secondary"><?php echo $icon; ?> <?php echo htmlspecialchars($log['action']); ?></span>
+                    </td>
+                    <td>
+                        <?php if ($log['table_name']): ?>
+                            <span class="badge badge-secondary"><?php echo htmlspecialchars(ucfirst(str_replace('_', ' ', $log['table_name']))); ?></span>
+                            <?php if ($log['record_id']): ?>
+                                <br><small class="text-muted">ID: <?php echo $log['record_id']; ?></small>
+                            <?php endif; ?>
+                        <?php else: ?>-<?php endif; ?>
+                    </td>
+                    <td style="max-width: 280px;">
+                        <?php 
+                        $desc = htmlspecialchars($log['description'] ?? '');
+                        echo strlen($desc) > 100 ? substr($desc, 0, 100) . '...' : $desc;
+                        ?>
+                    </td>
+                    <td><code><?php echo htmlspecialchars($log['ip_address'] ?? '-'); ?></code></td>
+                    <td>
+                        <button class="view-details-btn" onclick="viewDetails(<?php echo $log['id']; ?>)">
+                            <i class="fas fa-eye"></i> View
+                        </button>
                     </td>
                 </tr>
                 <?php endforeach; ?>
             <?php else: ?>
                 <tr>
-                    <td colspan="7" class="text-center">No audit records found</td>
+                    <td colspan="8" class="text-center" style="padding: 60px;">
+                        <i class="fas fa-inbox" style="font-size: 64px; color: var(--text-muted); margin-bottom: 16px; display: block;"></i>
+                        <h4 style="color: var(--text-secondary);">No audit records found</h4>
+                        <p style="color: var(--text-muted); font-size: 13px; margin-top: 8px;">Activities will appear here once users start interacting with the system.</p>
+                    </td>
                 </tr>
             <?php endif; ?>
         </tbody>
     </table>
     
     <!-- Pagination -->
-    <?php if ($audit_logs['total_pages'] > 1): ?>
-    <div style="display: flex; justify-content: center; margin-top: 20px; gap: 5px;">
+    <?php if (isset($audit_logs['total_pages']) && $audit_logs['total_pages'] > 1): ?>
+    <div class="pagination">
         <?php if ($page > 1): ?>
-            <a href="?page=1<?php echo buildFilterQuery(); ?>" class="btn btn-sm btn-secondary">
-                <i class="fas fa-angle-double-left"></i>
-            </a>
-            <a href="?page=<?php echo $page-1; ?><?php echo buildFilterQuery(); ?>" class="btn btn-sm btn-secondary">
-                <i class="fas fa-angle-left"></i>
-            </a>
+            <a href="?page=1<?php echo buildFilterQuery(); ?>"><i class="fas fa-angle-double-left"></i></a>
+            <a href="?page=<?php echo $page-1; ?><?php echo buildFilterQuery(); ?>"><i class="fas fa-angle-left"></i></a>
         <?php endif; ?>
         
-        <span style="padding: 8px 15px;">
-            Page <?php echo $page; ?> of <?php echo $audit_logs['total_pages']; ?>
-        </span>
+        <?php
+        $start = max(1, $page - 2);
+        $end = min($audit_logs['total_pages'], $page + 2);
+        for ($i = $start; $i <= $end; $i++):
+        ?>
+            <?php if ($i == $page): ?>
+                <span class="active"><?php echo $i; ?></span>
+            <?php else: ?>
+                <a href="?page=<?php echo $i; ?><?php echo buildFilterQuery(); ?>"><?php echo $i; ?></a>
+            <?php endif; ?>
+        <?php endfor; ?>
         
         <?php if ($page < $audit_logs['total_pages']): ?>
-            <a href="?page=<?php echo $page+1; ?><?php echo buildFilterQuery(); ?>" class="btn btn-sm btn-secondary">
-                <i class="fas fa-angle-right"></i>
-            </a>
-            <a href="?page=<?php echo $audit_logs['total_pages']; ?><?php echo buildFilterQuery(); ?>" class="btn btn-sm btn-secondary">
-                <i class="fas fa-angle-double-right"></i>
-            </a>
+            <a href="?page=<?php echo $page+1; ?><?php echo buildFilterQuery(); ?>"><i class="fas fa-angle-right"></i></a>
+            <a href="?page=<?php echo $audit_logs['total_pages']; ?><?php echo buildFilterQuery(); ?>"><i class="fas fa-angle-double-right"></i></a>
         <?php endif; ?>
     </div>
     <?php endif; ?>
+    
+    <div class="text-muted" style="margin-top: 20px; text-align: center; font-size: 12px;">
+        <i class="fas fa-chart-line"></i> Showing <?php echo count($audit_logs['data'] ?? []); ?> of <?php echo number_format($audit_logs['total'] ?? 0); ?> records
+    </div>
 </div>
 
-<!-- Changes Modal -->
-<div id="changesModal" class="modal">
-    <div class="modal-content" style="max-width: 800px;">
+<!-- Details Modal -->
+<div id="detailsModal" class="modal">
+    <div class="modal-content">
         <div class="modal-header">
-            <h2>Change Details</h2>
-            <span class="modal-close">&times;</span>
+            <h2><i class="fas fa-info-circle"></i> Activity Details</h2>
+            <span class="modal-close" onclick="closeModal()">&times;</span>
         </div>
-        <div class="modal-body" id="changesContent">
-            <!-- Content loaded via AJAX -->
+        <div class="modal-body" id="modalBody">
+            <div class="text-center" style="padding: 40px;">
+                <i class="fas fa-spinner fa-spin" style="font-size: 32px; color: var(--primary);"></i>
+                <p style="margin-top: 16px; color: var(--text-muted);">Loading details...</p>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-outline" onclick="closeModal()">Close</button>
         </div>
     </div>
 </div>
 
 <script>
-function viewChanges(logId) {
-    ajaxRequest('/api/get_audit_changes.php?id=' + logId, 'GET', null, function(err, response) {
-        if (!err && response) {
-            let html = '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">';
-            
-            if (response.old_value) {
-                html += '<div><h4>Old Values</h4><pre>' + JSON.stringify(JSON.parse(response.old_value), null, 2) + '</pre></div>';
+function viewDetails(id) {
+    const modal = document.getElementById('detailsModal');
+    const body = document.getElementById('modalBody');
+    modal.style.display = 'block';
+    body.innerHTML = '<div class="text-center" style="padding: 40px;"><i class="fas fa-spinner fa-spin" style="font-size: 32px; color: var(--primary);"></i><p style="margin-top: 16px;">Loading details...</p></div>';
+    
+    fetch('../api/get_audit_details.php?id=' + id)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                let html = `
+                    <div class="detail-section">
+                        <div class="detail-header"><i class="fas fa-info-circle"></i> Basic Information</div>
+                        <div class="detail-content">
+                            <div class="detail-grid">
+                                <div class="detail-item">
+                                    <div class="detail-label"><i class="far fa-calendar-alt"></i> Timestamp</div>
+                                    <div class="detail-value">${data.data.created_at}</div>
+                                </div>
+                                <div class="detail-item">
+                                    <div class="detail-label"><i class="fas fa-user"></i> User</div>
+                                    <div class="detail-value">${data.data.user_name || 'System'} ${data.data.username ? '(' + data.data.username + ')' : ''}</div>
+                                </div>
+                                <div class="detail-item">
+                                    <div class="detail-label"><i class="fas fa-tag"></i> Action Category</div>
+                                    <div class="detail-value"><span class="badge badge-primary">${data.data.action_category || 'N/A'}</span></div>
+                                </div>
+                                <div class="detail-item">
+                                    <div class="detail-label"><i class="fas fa-cog"></i> Action</div>
+                                    <div class="detail-value"><span class="badge badge-secondary">${data.data.action}</span></div>
+                                </div>
+                                <div class="detail-item">
+                                    <div class="detail-label"><i class="fas fa-table"></i> Table/Module</div>
+                                    <div class="detail-value">${data.data.table_name || 'N/A'}</div>
+                                </div>
+                                <div class="detail-item">
+                                    <div class="detail-label"><i class="fas fa-hashtag"></i> Record ID</div>
+                                    <div class="detail-value">${data.data.record_id || 'N/A'}</div>
+                                </div>
+                                <div class="detail-item">
+                                    <div class="detail-label"><i class="fas fa-network-wired"></i> IP Address</div>
+                                    <div class="detail-value"><code>${data.data.ip_address || 'N/A'}</code></div>
+                                </div>
+                                <div class="detail-item">
+                                    <div class="detail-label"><i class="fas fa-globe"></i> User Agent</div>
+                                    <div class="detail-value"><small>${data.data.user_agent || 'N/A'}</small></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                if (data.data.description) {
+                    html += `
+                        <div class="detail-section">
+                            <div class="detail-header"><i class="fas fa-align-left"></i> Description</div>
+                            <div class="detail-content">
+                                <p>${escapeHtml(data.data.description)}</p>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                if (data.data.old_value || data.data.new_value) {
+                    html += `
+                        <div class="detail-section">
+                            <div class="detail-header"><i class="fas fa-code-branch"></i> Data Changes</div>
+                            <div class="detail-content">
+                                <div class="detail-grid">
+                    `;
+                    if (data.data.old_value) {
+                        try {
+                            let oldVal = JSON.parse(data.data.old_value);
+                            html += `<div class="detail-item"><div class="detail-label text-danger">Old Values</div><div class="detail-value"><pre>${JSON.stringify(oldVal, null, 2)}</pre></div></div>`;
+                        } catch(e) {
+                            html += `<div class="detail-item"><div class="detail-label text-danger">Old Values</div><div class="detail-value"><pre>${escapeHtml(data.data.old_value)}</pre></div></div>`;
+                        }
+                    }
+                    if (data.data.new_value) {
+                        try {
+                            let newVal = JSON.parse(data.data.new_value);
+                            html += `<div class="detail-item"><div class="detail-label text-success">New Values</div><div class="detail-value"><pre>${JSON.stringify(newVal, null, 2)}</pre></div></div>`;
+                        } catch(e) {
+                            html += `<div class="detail-item"><div class="detail-label text-success">New Values</div><div class="detail-value"><pre>${escapeHtml(data.data.new_value)}</pre></div></div>`;
+                        }
+                    }
+                    html += `</div></div></div>`;
+                }
+                
+                if (data.data.details) {
+                    html += `
+                        <div class="detail-section">
+                            <div class="detail-header"><i class="fas fa-info-circle"></i> Additional Details</div>
+                            <div class="detail-content">
+                                <pre>${escapeHtml(data.data.details)}</pre>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                body.innerHTML = html;
+            } else {
+                body.innerHTML = `<div class="text-center" style="padding: 40px;"><i class="fas fa-exclamation-triangle" style="font-size: 32px; color: var(--danger);"></i><p style="margin-top: 16px; color: var(--danger);">Error: ${data.message}</p></div>`;
             }
-            
-            if (response.new_value) {
-                html += '<div><h4>New Values</h4><pre>' + JSON.stringify(JSON.parse(response.new_value), null, 2) + '</pre></div>';
-            }
-            
-            html += '</div>';
-            
-            document.getElementById('changesContent').innerHTML = html;
-            document.getElementById('changesModal').style.display = 'block';
-        }
-    });
+        })
+        .catch(error => {
+            body.innerHTML = `<div class="text-center" style="padding: 40px;"><i class="fas fa-exclamation-triangle" style="font-size: 32px; color: var(--danger);"></i><p style="margin-top: 16px; color: var(--danger);">Error loading details</p></div>`;
+        });
 }
 
-function buildFilterQuery() {
-    let params = new URLSearchParams(window.location.search);
-    params.delete('page');
-    let query = params.toString();
-    return query ? '&' + query : '';
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function closeModal() {
+    document.getElementById('detailsModal').style.display = 'none';
 }
 
 function exportAuditTrail() {
     let params = new URLSearchParams(window.location.search);
-    window.location.href = '/api/export_audit.php?' + params.toString();
+    window.location.href = '../api/export_audit.php?' + params.toString();
+}
+
+function printAuditTrail() {
+    let printContent = document.querySelector('.table-container').cloneNode(true);
+    let printWindow = window.open('', '_blank');
+    printWindow.document.write('<html><head><title>Audit Trail Report</title>');
+    printWindow.document.write('<style>');
+    printWindow.document.write('body { font-family: Arial, sans-serif; margin: 20px; }');
+    printWindow.document.write('table { width: 100%; border-collapse: collapse; }');
+    printWindow.document.write('th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }');
+    printWindow.document.write('th { background-color: #f2f2f2; }');
+    printWindow.document.write('.badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; background: #f0f0f0; }');
+    printWindow.document.write('</style>');
+    printWindow.document.write('</head><body>');
+    printWindow.document.write('<h2>Audit Trail Report</h2>');
+    printWindow.document.write('<p>Generated: ' + new Date().toLocaleString() + '</p>');
+    printWindow.document.write(printContent.innerHTML);
+    printWindow.document.write('</body></html>');
+    printWindow.document.close();
+    printWindow.print();
+}
+
+// Close modal on escape key
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeModal();
+});
+
+// Close modal when clicking outside
+window.onclick = function(e) {
+    const modal = document.getElementById('detailsModal');
+    if (e.target === modal) closeModal();
 }
 </script>
 
-<?php include '../includes/footer.php'; ?>
+<?php 
+function time_ago($timestamp) {
+    $time_ago = time() - $timestamp;
+    if ($time_ago < 60) return $time_ago . ' seconds ago';
+    if ($time_ago < 3600) return floor($time_ago / 60) . ' minutes ago';
+    if ($time_ago < 86400) return floor($time_ago / 3600) . ' hours ago';
+    if ($time_ago < 2592000) return floor($time_ago / 86400) . ' days ago';
+    return date('Y-m-d', $timestamp);
+}
+
+include '../includes/footer.php'; 
+?>

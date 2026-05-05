@@ -25,23 +25,34 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $errors = [];
     $updates = [];
     
-    // Update basic info
+    // Update basic info using prepared statement
     if (!empty($firstname) && !empty($lastname) && !empty($email)) {
-        $conn->query("UPDATE users SET firstname = '$firstname', lastname = '$lastname', email = '$email' WHERE id = $user_id");
-        $updates[] = "Profile information updated";
+        $stmt = $conn->prepare("UPDATE users SET firstname = ?, lastname = ?, email = ? WHERE id = ?");
+        $stmt->bind_param("sssi", $firstname, $lastname, $email, $user_id);
+        if ($stmt->execute()) {
+            $updates[] = "Profile information updated";
+        }
+        $stmt->close();
     }
     
     // Handle password change
     if (!empty($current_password) || !empty($new_password) || !empty($confirm_password)) {
-        // Verify current password
-        $result = $conn->query("SELECT password FROM users WHERE id = $user_id");
+        // Verify current password using prepared statement
+        $stmt = $conn->prepare("SELECT password FROM users WHERE id = ?");
+        $stmt->bind_param("i", $user_id);
+        $stmt->execute();
+        $result = $stmt->get_result();
         $db_password = $result->fetch_assoc()['password'];
+        $stmt->close();
         
         if (password_verify($current_password, $db_password)) {
             if ($new_password === $confirm_password) {
                 if (strlen($new_password) >= 6) {
                     $hashed_password = password_hash($new_password, PASSWORD_DEFAULT);
-                    $conn->query("UPDATE users SET password = '$hashed_password' WHERE id = $user_id");
+                    $stmt = $conn->prepare("UPDATE users SET password = ? WHERE id = ?");
+                    $stmt->bind_param("si", $hashed_password, $user_id);
+                    $stmt->execute();
+                    $stmt->close();
                     $updates[] = "Password changed successfully";
                 } else {
                     $errors[] = "New password must be at least 6 characters long";
@@ -58,7 +69,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if (isset($_FILES['avatar']) && $_FILES['avatar']['error'] == UPLOAD_ERR_OK) {
         $avatar = uploadFile($_FILES['avatar'], 'uploads/avatars/');
         if ($avatar) {
-            $conn->query("UPDATE users SET avatar = '$avatar' WHERE id = $user_id");
+            $stmt = $conn->prepare("UPDATE users SET avatar = ? WHERE id = ?");
+            $stmt->bind_param("si", $avatar, $user_id);
+            $stmt->execute();
+            $stmt->close();
             $updates[] = "Avatar updated successfully";
         }
     }
@@ -77,29 +91,29 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     exit();
 }
 
-// Get user statistics
+// Get user statistics using prepared statements
 $stats = [];
 
 // Items currently issued
-$stats['issued'] = $conn->query("
-    SELECT COUNT(*) as count 
-    FROM user_inventory 
-    WHERE user_id = $user_id AND status = 'active'
-")->fetch_assoc()['count'];
+$stmt = $conn->prepare("SELECT COUNT(*) as count FROM user_inventory WHERE user_id = ? AND status = 'active'");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$stats['issued'] = $stmt->get_result()->fetch_assoc()['count'];
+$stmt->close();
 
 // Total items ever issued
-$stats['total_issued'] = $conn->query("
-    SELECT COUNT(*) as count 
-    FROM equipment_issuance 
-    WHERE issued_to = $user_id
-")->fetch_assoc()['count'];
+$stmt = $conn->prepare("SELECT COUNT(*) as count FROM equipment_issuance WHERE issued_to = ?");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$stats['total_issued'] = $stmt->get_result()->fetch_assoc()['count'];
+$stmt->close();
 
 // Items returned
-$stats['returned'] = $conn->query("
-    SELECT COUNT(*) as count 
-    FROM equipment_issuance 
-    WHERE issued_to = $user_id AND status = 'returned'
-")->fetch_assoc()['count'];
+$stmt = $conn->prepare("SELECT COUNT(*) as count FROM equipment_issuance WHERE issued_to = ? AND status = 'returned'");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$stats['returned'] = $stmt->get_result()->fetch_assoc()['count'];
+$stmt->close();
 
 // Member since
 $member_since = date('F Y', strtotime($user['created_at']));
@@ -107,10 +121,340 @@ $member_since = date('F Y', strtotime($user['created_at']));
 include 'includes/header.php';
 ?>
 
+<style>
+/* Profile Header */
+.profile-header {
+    background: white;
+    border-radius: 15px;
+    padding: 30px;
+    text-align: center;
+    margin-bottom: 30px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+}
+
+.profile-avatar {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    margin: 0 auto 20px;
+    overflow: hidden;
+    background: #f0f0f0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 4px solid #6B8CFF;
+}
+
+.profile-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.profile-avatar i {
+    font-size: 60px;
+    color: #ccc;
+}
+
+.profile-name {
+    font-size: 24px;
+    font-weight: 700;
+    color: #333;
+    margin-bottom: 10px;
+}
+
+.profile-role {
+    margin-bottom: 20px;
+}
+
+.profile-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 20px;
+    margin-top: 25px;
+    padding-top: 25px;
+    border-top: 1px solid #eee;
+}
+
+.profile-stat {
+    text-align: center;
+}
+
+.profile-stat-value {
+    font-size: 24px;
+    font-weight: 700;
+    color: #6B8CFF;
+}
+
+.profile-stat-label {
+    font-size: 12px;
+    color: #999;
+    margin-top: 5px;
+}
+
+/* Tabs */
+.tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    background: white;
+    border-radius: 10px;
+    padding: 5px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+
+.tab {
+    flex: 1;
+    padding: 12px 20px;
+    text-align: center;
+    cursor: pointer;
+    border-radius: 8px;
+    font-weight: 500;
+    transition: all 0.3s;
+    color: #666;
+}
+
+.tab:hover {
+    background: #f0f0f0;
+}
+
+.tab.active {
+    background: #6B8CFF;
+    color: white;
+}
+
+/* Tab Content */
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+/* Form Styles */
+.form-container {
+    background: white;
+    border-radius: 15px;
+    padding: 30px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+    color: #333;
+}
+
+.form-control {
+    width: 100%;
+    padding: 12px;
+    border: 2px solid #e0e0e0;
+    border-radius: 8px;
+    font-size: 14px;
+    transition: all 0.3s;
+    box-sizing: border-box;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: #6B8CFF;
+    box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.1);
+}
+
+.form-control:disabled {
+    background: #f5f5f5;
+    cursor: not-allowed;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+
+/* Avatar Upload */
+.image-upload {
+    border: 2px dashed #ccc;
+    border-radius: 10px;
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s;
+    margin-bottom: 10px;
+}
+
+.image-upload:hover {
+    border-color: #6B8CFF;
+    background: #f8f9ff;
+}
+
+.image-upload i {
+    font-size: 32px;
+    color: #ccc;
+    margin-bottom: 10px;
+}
+
+.image-upload p {
+    font-size: 13px;
+    color: #999;
+    margin: 0;
+}
+
+#avatar_preview {
+    text-align: center;
+    margin-top: 15px;
+}
+
+#avatar_preview img {
+    width: 100px;
+    height: 100px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 3px solid #6B8CFF;
+}
+
+/* Table Styles */
+.table-container {
+    background: white;
+    border-radius: 15px;
+    padding: 20px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    overflow-x: auto;
+}
+
+.table-header {
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid #FFD8E0;
+}
+
+.table-header h2 {
+    color: #6B8CFF;
+    font-size: 18px;
+    margin: 0;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 900px;
+}
+
+th {
+    padding: 12px 10px;
+    text-align: left;
+    background: #f8f9ff;
+    color: #6B8CFF;
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 2px solid #e0e0e0;
+}
+
+td {
+    padding: 12px 10px;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 13px;
+    color: #555;
+}
+
+tr:hover td {
+    background: #fafbff;
+}
+
+.text-center {
+    text-align: center;
+}
+
+.text-muted {
+    color: #999;
+}
+
+/* Badges */
+.badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.badge-danger {
+    background: #ffebee;
+    color: #f44336;
+}
+
+.badge-warning {
+    background: #fff3e0;
+    color: #ff9800;
+}
+
+.badge-success {
+    background: #e8f5e9;
+    color: #4caf50;
+}
+
+.badge-info {
+    background: #e3f2fd;
+    color: #2196f3;
+}
+
+.badge-secondary {
+    background: #f0f0f0;
+    color: #666;
+}
+
+/* Button */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 24px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.btn-primary {
+    background: #F8B0C0;
+    color: #333;
+}
+
+.btn-primary:hover {
+    background: #e69eb0;
+    transform: translateY(-2px);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .form-row {
+        grid-template-columns: 1fr;
+    }
+    
+    .profile-stats {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    
+    table {
+        min-width: 600px;
+    }
+}
+</style>
+
 <div class="profile-header">
     <div class="profile-avatar">
         <?php if ($user['avatar'] && file_exists('uploads/avatars/' . $user['avatar'])): ?>
-            <img src="/uploads/avatars/<?php echo $user['avatar']; ?>" alt="Avatar" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">
+            <img src="uploads/avatars/<?php echo htmlspecialchars($user['avatar']); ?>" alt="Avatar">
         <?php else: ?>
             <i class="fas fa-user"></i>
         <?php endif; ?>
@@ -145,10 +489,10 @@ include 'includes/header.php';
     </div>
 </div>
 
-<!-- Profile Tabs - Only Profile Info and Issued Items -->
+<!-- Profile Tabs -->
 <div class="tabs">
-    <div class="tab active" onclick="showTab('profile')">Profile Information</div>
-    <div class="tab" onclick="showTab('issued')">Issued Items</div>
+    <div class="tab active" data-tab="profile">Profile Information</div>
+    <div class="tab" data-tab="issued">Issued Items</div>
 </div>
 
 <!-- Profile Information Tab -->
@@ -156,17 +500,17 @@ include 'includes/header.php';
     <div class="form-container">
         <h2 style="margin-bottom: 20px;">Edit Profile</h2>
         
-        <form method="POST" action="" enctype="multipart/form-data">
+        <form method="POST" action="" enctype="multipart/form-data" id="profileForm">
             <div class="form-group">
                 <label for="avatar">Profile Picture</label>
                 <div class="image-upload" onclick="document.getElementById('avatar').click();">
                     <i class="fas fa-camera"></i>
-                    <p>Click to upload new avatar</p>
+                    <p>Click to upload new avatar (Max 2MB, JPG/PNG)</p>
                 </div>
                 <input type="file" id="avatar" name="avatar" accept="image/*" style="display: none;" onchange="previewAvatar(this)">
-                <div id="avatar_preview" style="margin-top: 10px; text-align: center;">
+                <div id="avatar_preview">
                     <?php if ($user['avatar'] && file_exists('uploads/avatars/' . $user['avatar'])): ?>
-                        <img src="/uploads/avatars/<?php echo $user['avatar']; ?>" style="max-width: 100px; max-height: 100px; border-radius: 50%;">
+                        <img src="uploads/avatars/<?php echo htmlspecialchars($user['avatar']); ?>" alt="Avatar">
                     <?php endif; ?>
                 </div>
             </div>
@@ -208,12 +552,12 @@ include 'includes/header.php';
             <div class="form-row">
                 <div class="form-group">
                     <label for="new_password">New Password</label>
-                    <input type="password" class="form-control" id="new_password" name="new_password">
+                    <input type="password" class="form-control" id="new_password" name="new_password" minlength="6">
                 </div>
                 
                 <div class="form-group">
                     <label for="confirm_password">Confirm New Password</label>
-                    <input type="password" class="form-control" id="confirm_password" name="confirm_password">
+                    <input type="password" class="form-control" id="confirm_password" name="confirm_password" minlength="6">
                 </div>
             </div>
             
@@ -233,114 +577,192 @@ include 'includes/header.php';
             <h2>Items Issued to You</h2>
         </div>
         
-        <table>
-            <thead>
-                <tr>
-                    <th>Item</th>
-                    <th>Property No.</th>
-                    <th>Issued By</th>
-                    <th>Issue Date</th>
-                    <th>Return Date</th>
-                    <th>Quantity</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php
-                $issued_items = $conn->query("
-                    SELECT ei.*, 
-                           i.article_name, i.property_no, i.uom,
-                           CONCAT(u.firstname, ' ', u.lastname) as issued_by_name
-                    FROM equipment_issuance ei
-                    JOIN inventory i ON ei.inventory_id = i.id
-                    JOIN users u ON ei.issued_by = u.id
-                    WHERE ei.issued_to = $user_id
-                    ORDER BY ei.issued_date DESC
-                ");
-                
-                if ($issued_items && $issued_items->num_rows > 0):
-                    while($item = $issued_items->fetch_assoc()):
-                ?>
-                <tr>
-                    <td><?php echo htmlspecialchars($item['article_name']); ?></td>
-                    <td><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></td>
-                    <td><?php echo htmlspecialchars($item['issued_by_name']); ?></td>
-                    <td><?php echo date('M d, Y', strtotime($item['issued_date'])); ?></td>
-                    <td>
-                        <?php 
-                        if ($item['actual_return']) {
-                            echo date('M d, Y', strtotime($item['actual_return']));
-                        } else {
-                            echo '<span class="badge badge-warning">Not returned</span>';
-                        }
-                        ?>
-                    </td>
-                    <td><?php echo $item['quantity_issued'] . ' ' . ($item['uom'] ?? ''); ?></td>
-                    <td><?php echo getStatusBadge($item['status']); ?></td>
-                </tr>
-                <?php 
-                    endwhile;
-                else:
-                ?>
-                <tr>
-                    <td colspan="7" class="text-center">No items issued yet</td>
-                </tr>
-                <?php endif; ?>
-            </tbody>
-        </table>
+        <div style="overflow-x: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Item</th>
+                        <th>Property No.</th>
+                        <th>Issued By</th>
+                        <th>Reissued From</th>
+                        <th>Reissued By</th>
+                        <th>Issue Date</th>
+                        <th>Return Date</th>
+                        <th>Quantity</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                                    <?php
+                    // Simple query that only joins tables we know exist
+                    $stmt = $conn->prepare("
+                        SELECT ei.*, 
+                               i.article_name, i.property_no, i.uom,
+                               CONCAT(u.firstname, ' ', u.lastname) as issued_by_name
+                        FROM equipment_issuance ei
+                        JOIN inventory i ON ei.inventory_id = i.id
+                        JOIN users u ON ei.issued_by = u.id
+                        WHERE ei.issued_to = ?
+                        ORDER BY ei.issued_date DESC
+                    ");
+                    $stmt->bind_param("i", $user_id);
+                    $stmt->execute();
+                    $issued_items = $stmt->get_result();
+                    
+                    // Debug: Check if query returns results
+                    $num_rows = $issued_items ? $issued_items->num_rows : 0;
+                    
+                    if ($num_rows > 0):
+                        while($item = $issued_items->fetch_assoc()):
+                            // Get status badge
+                            $status_badge = '';
+                            $status = strtolower($item['status'] ?? 'issued');
+                            if ($status === 'issued') {
+                                $status_badge = '<span class="badge badge-warning">Issued</span>';
+                            } elseif ($status === 'returned') {
+                                $status_badge = '<span class="badge badge-success">Returned</span>';
+                            } elseif ($status === 'cancelled') {
+                                $status_badge = '<span class="badge badge-danger">Cancelled</span>';
+                            } else {
+                                $status_badge = '<span class="badge badge-secondary">' . htmlspecialchars($status) . '</span>';
+                            }
+                    ?>
+                    <tr>
+                        <td><strong><?php echo htmlspecialchars($item['article_name']); ?></strong></td>
+                        <td><code><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></code></td>
+                        <td><?php echo htmlspecialchars($item['issued_by_name']); ?></td>
+                        <td><span class="text-muted">-</span></td>
+                        <td><span class="text-muted">-</span></td>
+                        <td><?php echo date('M d, Y', strtotime($item['issued_date'])); ?></td>
+                        <td>
+                            <?php 
+                            if ($item['actual_return']) {
+                                echo date('M d, Y', strtotime($item['actual_return']));
+                            } elseif ($item['status'] === 'returned') {
+                                echo '<span class="badge badge-success">Returned</span>';
+                            } else {
+                                echo '<span class="badge badge-warning">Not returned</span>';
+                            }
+                            ?>
+                        </td>
+                        <td><?php echo $item['quantity_issued'] . ' ' . htmlspecialchars($item['uom'] ?? 'pcs'); ?></td>
+                        <td><?php echo $status_badge; ?></td>
+                    </tr>
+                    <?php 
+                        endwhile;
+                    else:
+                    ?>
+                    <tr>
+                        <td colspan="9" class="text-center" style="padding: 40px;">
+                            <i class="fas fa-box-open" style="font-size: 48px; color: #ccc; display: block; margin-bottom: 15px;"></i>
+                            <p>No items issued yet</p>
+                            <small>Debug: Found <?php echo $num_rows; ?> records for user ID <?php echo $user_id; ?></small>
+                        </td>
+                    </tr>
+                    <?php 
+                    endif;
+                    $stmt->close();
+                    ?>
+                </tbody>
+            </table>
+        </div>
     </div>
 </div>
 
 <script>
+// Tab switching function - single parameter version
 function showTab(tabName) {
-    // Hide all tabs
-    document.querySelectorAll('.tab-content').forEach(tab => {
+    console.log('Switching to tab:', tabName);
+    
+    // Hide all tab contents
+    document.querySelectorAll('.tab-content').forEach(function(tab) {
         tab.classList.remove('active');
     });
     
-    // Remove active class from all tabs
-    document.querySelectorAll('.tab').forEach(tab => {
+    // Remove active class from all tab buttons
+    document.querySelectorAll('.tab').forEach(function(tab) {
         tab.classList.remove('active');
     });
     
-    // Show selected tab
-    document.getElementById(tabName + '-tab').classList.add('active');
+    // Show selected tab content
+    var tabContent = document.getElementById(tabName + '-tab');
+    if (tabContent) {
+        tabContent.classList.add('active');
+    }
     
-    // Add active class to clicked tab
-    event.target.classList.add('active');
+    // Add active class to the correct tab button
+    var tabButton = document.querySelector('.tab[data-tab="' + tabName + '"]');
+    if (tabButton) {
+        tabButton.classList.add('active');
+    }
 }
 
+// Avatar preview function
 function previewAvatar(input) {
     if (input.files && input.files[0]) {
-        let reader = new FileReader();
+        // Check file size (max 2MB)
+        if (input.files[0].size > 2 * 1024 * 1024) {
+            alert('Image too large. Please choose an image under 2MB.');
+            input.value = '';
+            return;
+        }
+        
+        // Check file type
+        if (!input.files[0].type.match('image.*')) {
+            alert('Please select a valid image file (JPG, PNG, GIF).');
+            input.value = '';
+            return;
+        }
+        
+        var reader = new FileReader();
         reader.onload = function(e) {
             document.getElementById('avatar_preview').innerHTML = 
-                '<img src="' + e.target.result + '" style="max-width: 100px; max-height: 100px; border-radius: 50%;">';
-        }
+                '<img src="' + e.target.result + '" alt="Preview">';
+        };
         reader.readAsDataURL(input.files[0]);
     }
 }
 
-// Form validation
-document.querySelector('form').addEventListener('submit', function(e) {
-    let newPass = document.getElementById('new_password').value;
-    let confirmPass = document.getElementById('confirm_password').value;
-    
-    if (newPass || confirmPass) {
-        if (newPass.length < 6 && newPass.length > 0) {
-            e.preventDefault();
-            alert('New password must be at least 6 characters long');
-        } else if (newPass !== confirmPass) {
-            e.preventDefault();
-            alert('New passwords do not match');
-        }
-    }
-});
-
-// Set initial active tab
+// Initialize everything when DOM is ready
 document.addEventListener('DOMContentLoaded', function() {
-    // Ensure first tab is active
-    document.querySelector('.tab.active').click();
+    console.log('Profile page initialized');
+    
+    // Set up tab click handlers
+    document.querySelectorAll('.tab').forEach(function(tab) {
+        tab.addEventListener('click', function() {
+            var tabName = this.getAttribute('data-tab');
+            console.log('Tab clicked:', tabName);
+            if (tabName) {
+                showTab(tabName);
+            }
+        });
+    });
+    
+    // Set up form validation
+    var profileForm = document.getElementById('profileForm');
+    if (profileForm) {
+        profileForm.addEventListener('submit', function(e) {
+            var newPass = document.getElementById('new_password').value;
+            var confirmPass = document.getElementById('confirm_password').value;
+            
+            // Only validate if user is trying to change password
+            if (newPass || confirmPass) {
+                if (newPass.length > 0 && newPass.length < 6) {
+                    e.preventDefault();
+                    alert('New password must be at least 6 characters long');
+                    return false;
+                }
+                if (newPass !== confirmPass) {
+                    e.preventDefault();
+                    alert('New passwords do not match');
+                    return false;
+                }
+            }
+        });
+    }
+    
+    // Show profile tab by default
+    showTab('profile');
 });
 </script>
 

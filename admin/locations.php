@@ -1,3 +1,5 @@
+
+
 <?php
 /**
  * Locations Page (Admin)
@@ -9,10 +11,41 @@ require_once $root_path . '/config.php';
 require_once INCLUDE_PATH . '/auth.php';
 require_once INCLUDE_PATH . '/functions.php';
 
-requireRole('admin');
+requireRole('admin' || 'superadmin');
 
 $page_title = 'Locations';
 $page_description = 'Manage buildings, departments, and sections';
+
+// Function to get next department code
+function getNextDepartmentCode($conn) {
+    $stmt = $conn->prepare("SELECT MAX(CAST(code AS UNSIGNED)) as max_code FROM departments WHERE code IS NOT NULL AND code != ''");
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $row = $result->fetch_assoc();
+    $stmt->close();
+    
+    $next_code = ($row['max_code'] ?? 0) + 1;
+    return str_pad($next_code, 3, '0', STR_PAD_LEFT);
+}
+
+// Function to check if department code exists
+function departmentCodeExists($conn, $code, $exclude_id = null) {
+    $sql = "SELECT id FROM departments WHERE code = ?";
+    if ($exclude_id) {
+        $sql .= " AND id != ?";
+    }
+    $stmt = $conn->prepare($sql);
+    if ($exclude_id) {
+        $stmt->bind_param("si", $code, $exclude_id);
+    } else {
+        $stmt->bind_param("s", $code);
+    }
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $exists = $result->num_rows > 0;
+    $stmt->close();
+    return $exists;
+}
 
 // Handle Building Actions
 if (isset($_POST['building_action'])) {
@@ -59,13 +92,15 @@ if (isset($_POST['department_action'])) {
     if ($_POST['department_action'] == 'add') {
         $name = sanitize($_POST['name']);
         $building_id = !empty($_POST['building_id']) ? (int)$_POST['building_id'] : null;
+        // Auto-generate code for new departments
+        $code = getNextDepartmentCode($conn);
         
-        $stmt = $conn->prepare("INSERT INTO departments (name, building_id) VALUES (?, ?)");
-        $stmt->bind_param("si", $name, $building_id);
+        $stmt = $conn->prepare("INSERT INTO departments (code, name, building_id) VALUES (?, ?, ?)");
+        $stmt->bind_param("ssi", $code, $name, $building_id);
         
         if ($stmt->execute()) {
-            $_SESSION['success'] = "Department added successfully";
-            logActivity('Add Department', 0, "Added department: $name");
+            $_SESSION['success'] = "Department added successfully. Code: $code";
+            logActivity('Add Department', 0, "Added department: $name (Code: $code)");
         } else {
             $_SESSION['error'] = "Error adding department: " . $conn->error;
         }
@@ -78,13 +113,28 @@ if (isset($_POST['department_action'])) {
         $id = (int)$_POST['id'];
         $name = sanitize($_POST['name']);
         $building_id = !empty($_POST['building_id']) ? (int)$_POST['building_id'] : null;
+        $code = sanitize($_POST['code']);
         
-        $stmt = $conn->prepare("UPDATE departments SET name = ?, building_id = ? WHERE id = ?");
-        $stmt->bind_param("sii", $name, $building_id, $id);
+        // Validate code for edit
+        if (empty($code)) {
+            $_SESSION['error'] = "Department code cannot be empty";
+            header('Location: ' . SITE_URL . '/admin/locations.php');
+            exit();
+        }
+        
+        // Check if code already exists (excluding current department)
+        if (departmentCodeExists($conn, $code, $id)) {
+            $_SESSION['error'] = "Department code '$code' already exists. Please use a different code.";
+            header('Location: ' . SITE_URL . '/admin/locations.php');
+            exit();
+        }
+        
+        $stmt = $conn->prepare("UPDATE departments SET code = ?, name = ?, building_id = ? WHERE id = ?");
+        $stmt->bind_param("ssii", $code, $name, $building_id, $id);
         
         if ($stmt->execute()) {
-            $_SESSION['success'] = "Department updated successfully";
-            logActivity('Edit Department', $id, "Updated department: $name");
+            $_SESSION['success'] = "Department updated successfully. Code: $code";
+            logActivity('Edit Department', $id, "Updated department: $name (Code: $code)");
         } else {
             $_SESSION['error'] = "Error updating department: " . $conn->error;
         }
@@ -188,24 +238,375 @@ if (isset($_GET['delete'])) {
 // Get all buildings for dropdowns
 $buildings = $conn->query("SELECT * FROM buildings ORDER BY name");
 
-// Get all departments with building names
+// Get all departments with building names and codes
 $departments = $conn->query("
     SELECT d.*, b.name as building_name 
     FROM departments d
     LEFT JOIN buildings b ON d.building_id = b.id
-    ORDER BY b.name, d.name
+    ORDER BY d.code ASC, d.name
 ");
 
-// Get all sections with department names
+// Get all sections with department names and codes
 $sections = $conn->query("
-    SELECT s.*, d.name as department_name 
+    SELECT s.*, d.name as department_name, d.code as department_code
     FROM sections s
     LEFT JOIN departments d ON s.department_id = d.id
-    ORDER BY d.name, s.name
+    ORDER BY d.code ASC, s.name
 ");
 
 include INCLUDE_PATH . '/header.php';
 ?>
+
+<style>
+:root {
+    --primary: #6B8CFF;
+    --secondary: #8FB5FF;
+    --accent: #F8B0C0;
+    --accent-light: #FFD8E0;
+    --success-light: #C5E8C5;
+    --light: #F0F0F0;
+    --white: #FFFFFF;
+    --border-light: #E0E0E0;
+    --text-primary: #3A3A3A;
+    --text-secondary: #6B6B6B;
+    --text-muted: #9E9E9E;
+    --text-light: #FFFFFF;
+    --success: #4CAF50;
+    --danger: #f44336;
+}
+
+body {
+    background-color: var(--light);
+    color: var(--text-primary);
+}
+
+.stats-grid {
+    display: grid;
+    gap: 20px;
+    margin-bottom: 30px;
+}
+
+.stat-chart {
+    background: var(--white);
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 4px 12px rgba(107, 140, 255, 0.1);
+    border-left: 4px solid var(--primary);
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.stat-chart:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 20px rgba(107, 140, 255, 0.15);
+}
+
+.table-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--accent-light);
+}
+
+.table-header h3 {
+    color: var(--primary);
+    font-size: 18px;
+    margin: 0;
+}
+
+.table-header h3 i {
+    color: var(--accent);
+    margin-right: 10px;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th {
+    text-align: left;
+    padding: 12px 10px;
+    background-color: var(--light);
+    color: var(--primary);
+    font-weight: 600;
+    border-bottom: 2px solid var(--accent-light);
+    font-size: 13px;
+}
+
+td {
+    padding: 12px 10px;
+    border-bottom: 1px solid var(--border-light);
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+tr:hover {
+    background-color: var(--accent-light);
+}
+
+.code-badge {
+    display: inline-block;
+    background: var(--primary);
+    color: white;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: bold;
+    margin-right: 8px;
+}
+
+.action-buttons {
+    display: flex;
+    gap: 5px;
+}
+
+.action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    color: var(--text-light);
+    text-decoration: none;
+    transition: all 0.2s;
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.action-btn.edit {
+    background-color: var(--secondary);
+}
+
+.action-btn.edit:hover {
+    background-color: #7a9fe6;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(143, 181, 255, 0.3);
+}
+
+.action-btn.delete {
+    background-color: var(--danger);
+}
+
+.action-btn.delete:hover {
+    background-color: #e53935;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(244, 67, 54, 0.3);
+}
+
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    backdrop-filter: blur(3px);
+}
+
+.modal-content {
+    background-color: var(--white);
+    margin: 10% auto;
+    padding: 25px;
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(107, 140, 255, 0.2);
+    position: relative;
+    animation: modalSlideIn 0.3s;
+    max-width: 500px;
+}
+
+@keyframes modalSlideIn {
+    from {
+        transform: translateY(-30px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--accent-light);
+}
+
+.modal-header h2 {
+    color: var(--primary);
+    margin: 0;
+    font-size: 20px;
+}
+
+.modal-close {
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    color: var(--text-muted);
+    transition: color 0.2s;
+}
+
+.modal-close:hover {
+    color: var(--accent);
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-size: 14px;
+}
+
+.form-control {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    font-size: 14px;
+    color: var(--text-primary);
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.1);
+}
+
+.form-control[readonly] {
+    background-color: var(--light);
+    cursor: not-allowed;
+}
+
+select.form-control {
+    cursor: pointer;
+    background-color: var(--white);
+}
+
+.text-danger {
+    color: var(--danger);
+}
+
+.text-muted {
+    color: var(--text-muted);
+}
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s;
+    text-decoration: none;
+}
+
+.btn-sm {
+    padding: 6px 12px;
+    font-size: 13px;
+}
+
+.btn-primary {
+    background-color: var(--accent);
+    color: var(--text-primary);
+}
+
+.btn-primary:hover {
+    background-color: #e69eb0;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(248, 176, 192, 0.3);
+}
+
+.btn-secondary {
+    background-color: var(--secondary);
+    color: var(--text-light);
+}
+
+.btn-secondary:hover {
+    background-color: #7a9fe6;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(143, 181, 255, 0.3);
+}
+
+.alert {
+    padding: 15px 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-left: 4px solid transparent;
+}
+
+.alert i {
+    font-size: 18px;
+}
+
+.alert-success {
+    background-color: var(--success-light);
+    color: var(--success);
+    border-left-color: var(--success);
+}
+
+.alert-danger {
+    background-color: #ffebee;
+    color: var(--danger);
+    border-left-color: var(--danger);
+}
+
+.text-center {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 20px;
+}
+
+.info-message {
+    background-color: var(--accent-light);
+    padding: 10px 15px;
+    border-radius: 8px;
+    margin-bottom: 15px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.info-message i {
+    color: var(--primary);
+    margin-right: 8px;
+}
+
+@media (max-width: 768px) {
+    .stats-grid {
+        grid-template-columns: 1fr !important;
+    }
+    
+    .modal-content {
+        margin: 20px;
+        width: auto;
+    }
+    
+    .action-buttons {
+        flex-wrap: wrap;
+    }
+}
+</style>
 
 <?php if (isset($_SESSION['success'])): ?>
     <div class="alert alert-success">
@@ -290,6 +691,7 @@ include INCLUDE_PATH . '/header.php';
             <table style="width: 100%;">
                 <thead>
                     <tr>
+                        <th>Code</th>
                         <th>Name</th>
                         <th>Building</th>
                         <th>Actions</th>
@@ -299,11 +701,12 @@ include INCLUDE_PATH . '/header.php';
                     <?php if ($departments && $departments->num_rows > 0): ?>
                         <?php while($d = $departments->fetch_assoc()): ?>
                         <tr>
+                            <td><span class="code-badge"><?php echo htmlspecialchars($d['code']); ?></span></td>
                             <td><?php echo htmlspecialchars($d['name']); ?></td>
                             <td><?php echo htmlspecialchars($d['building_name'] ?? 'N/A'); ?></td>
                             <td>
                                 <div class="action-buttons">
-                                    <button class="action-btn edit" onclick="editDepartment(<?php echo $d['id']; ?>, '<?php echo htmlspecialchars($d['name']); ?>', <?php echo $d['building_id'] ?? 'null'; ?>)" title="Edit">
+                                    <button class="action-btn edit" onclick="editDepartment(<?php echo $d['id']; ?>, '<?php echo htmlspecialchars($d['name']); ?>', '<?php echo htmlspecialchars($d['code']); ?>', <?php echo $d['building_id'] ?? 'null'; ?>)" title="Edit">
                                         <i class="fas fa-edit"></i>
                                     </button>
                                     <a href="?delete=<?php echo $d['id']; ?>&type=department" 
@@ -318,7 +721,7 @@ include INCLUDE_PATH . '/header.php';
                         <?php endwhile; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="3" class="text-center">No departments found</td>
+                            <td colspan="4" class="text-center">No departments found</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -341,6 +744,7 @@ include INCLUDE_PATH . '/header.php';
                     <tr>
                         <th>Name</th>
                         <th>Department</th>
+                        <th>Dept Code</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -350,6 +754,7 @@ include INCLUDE_PATH . '/header.php';
                         <tr>
                             <td><?php echo htmlspecialchars($s['name']); ?></td>
                             <td><?php echo htmlspecialchars($s['department_name'] ?? 'N/A'); ?></td>
+                            <td><?php echo $s['department_code'] ? '<span class="code-badge">' . htmlspecialchars($s['department_code']) . '</span>' : 'N/A'; ?></td>
                             <td>
                                 <div class="action-buttons">
                                     <button class="action-btn edit" onclick="editSection(<?php echo $s['id']; ?>, '<?php echo htmlspecialchars($s['name']); ?>', <?php echo $s['department_id'] ?? 'null'; ?>)" title="Edit">
@@ -367,7 +772,7 @@ include INCLUDE_PATH . '/header.php';
                         <?php endwhile; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="3" class="text-center">No sections found</td>
+                            <td colspan="4" class="text-center">No sections found</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -378,7 +783,7 @@ include INCLUDE_PATH . '/header.php';
 
 <!-- Building Modal -->
 <div id="buildingModal" class="modal">
-    <div class="modal-content" style="max-width: 500px;">
+    <div class="modal-content">
         <div class="modal-header">
             <h2 id="buildingModalTitle">Add Building</h2>
             <span class="modal-close" onclick="closeBuildingModal()">&times;</span>
@@ -409,7 +814,7 @@ include INCLUDE_PATH . '/header.php';
 
 <!-- Department Modal -->
 <div id="departmentModal" class="modal">
-    <div class="modal-content" style="max-width: 500px;">
+    <div class="modal-content">
         <div class="modal-header">
             <h2 id="departmentModalTitle">Add Department</h2>
             <span class="modal-close" onclick="closeDepartmentModal()">&times;</span>
@@ -418,6 +823,12 @@ include INCLUDE_PATH . '/header.php';
             <form method="POST" action="" id="departmentForm">
                 <input type="hidden" name="department_action" id="department_action" value="add">
                 <input type="hidden" name="id" id="department_id" value="">
+                
+                <div class="form-group">
+                    <label for="department_code">Department Code</label>
+                    <input type="text" class="form-control" id="department_code" name="code" readonly>
+                    <small class="text-muted">Code is auto-generated and cannot be changed when adding</small>
+                </div>
                 
                 <div class="form-group">
                     <label for="department_name">Department Name <span class="text-danger">*</span></label>
@@ -448,7 +859,7 @@ include INCLUDE_PATH . '/header.php';
 
 <!-- Section Modal -->
 <div id="sectionModal" class="modal">
-    <div class="modal-content" style="max-width: 500px;">
+    <div class="modal-content">
         <div class="modal-header">
             <h2 id="sectionModalTitle">Add Section</h2>
             <span class="modal-close" onclick="closeSectionModal()">&times;</span>
@@ -471,7 +882,9 @@ include INCLUDE_PATH . '/header.php';
                         $departments->data_seek(0);
                         while($d = $departments->fetch_assoc()): 
                         ?>
-                        <option value="<?php echo $d['id']; ?>"><?php echo htmlspecialchars($d['name'] . ($d['building_name'] ? ' (' . $d['building_name'] . ')' : '')); ?></option>
+                        <option value="<?php echo $d['id']; ?>">
+                            <?php echo '[' . htmlspecialchars($d['code']) . '] ' . htmlspecialchars($d['name'] . ($d['building_name'] ? ' (' . $d['building_name'] . ')' : '')); ?>
+                        </option>
                         <?php endwhile; ?>
                     </select>
                 </div>
@@ -485,243 +898,19 @@ include INCLUDE_PATH . '/header.php';
     </div>
 </div>
 
-<style>
-/* Stats grid layout */
-.stats-grid {
-    display: grid;
-    gap: 20px;
-    margin-bottom: 30px;
-}
-
-.stat-chart {
-    background: white;
-    border-radius: 10px;
-    padding: 20px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-}
-
-.table-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 15px;
-}
-
-.table-header h3 {
-    color: #161E54;
-    font-size: 18px;
-    margin: 0;
-}
-
-.table-header h3 i {
-    color: #F16D34;
-    margin-right: 10px;
-}
-
-/* Table styles */
-table {
-    width: 100%;
-    border-collapse: collapse;
-}
-
-th {
-    text-align: left;
-    padding: 10px;
-    background-color: #f8f9fa;
-    color: #161E54;
-    font-weight: 600;
-    border-bottom: 2px solid #BBE0EF;
-}
-
-td {
-    padding: 10px;
-    border-bottom: 1px solid #e0e0e0;
-}
-
-/* Action buttons */
-.action-buttons {
-    display: flex;
-    gap: 5px;
-}
-
-.action-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: 4px;
-    color: white;
-    text-decoration: none;
-    transition: all 0.3s;
-    border: none;
-    cursor: pointer;
-}
-
-.action-btn.edit {
-    background-color: #FF986A;
-}
-
-.action-btn.edit:hover {
-    background-color: #f57c4a;
-    transform: translateY(-2px);
-    box-shadow: 0 3px 8px rgba(255,152,106,0.3);
-}
-
-.action-btn.delete {
-    background-color: #dc3545;
-}
-
-.action-btn.delete:hover {
-    background-color: #c82333;
-    transform: translateY(-2px);
-    box-shadow: 0 3px 8px rgba(220,53,69,0.3);
-}
-
-/* Modal styles */
-.modal {
-    display: none;
-    position: fixed;
-    z-index: 1000;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(0,0,0,0.5);
-}
-
-.modal-content {
-    background-color: white;
-    margin: 10% auto;
-    padding: 20px;
-    border-radius: 10px;
-    box-shadow: 0 5px 20px rgba(0,0,0,0.2);
-    position: relative;
-}
-
-.modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid #eee;
-}
-
-.modal-header h2 {
-    color: #161E54;
-    margin: 0;
-}
-
-.modal-close {
-    font-size: 24px;
-    font-weight: bold;
-    cursor: pointer;
-    color: #999;
-}
-
-.modal-close:hover {
-    color: #F16D34;
-}
-
-/* Form styles */
-.form-group {
-    margin-bottom: 15px;
-}
-
-.form-group label {
-    display: block;
-    margin-bottom: 5px;
-    color: #161E54;
-    font-weight: 500;
-}
-
-.form-control {
-    width: 100%;
-    padding: 10px;
-    border: 1px solid #ddd;
-    border-radius: 5px;
-    font-size: 14px;
-}
-
-.form-control:focus {
-    outline: none;
-    border-color: #F16D34;
-    box-shadow: 0 0 0 2px rgba(241,109,52,0.1);
-}
-
-.text-danger {
-    color: #dc3545;
-}
-
-/* Button styles */
-.btn {
-    padding: 8px 16px;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-    font-size: 14px;
-    transition: all 0.3s;
-}
-
-.btn-sm {
-    padding: 5px 10px;
-    font-size: 13px;
-}
-
-.btn-primary {
-    background-color: #F16D34;
-    color: white;
-}
-
-.btn-primary:hover {
-    background-color: #d55a2a;
-    transform: translateY(-2px);
-    box-shadow: 0 3px 8px rgba(241,109,52,0.3);
-}
-
-.btn-secondary {
-    background-color: #6c757d;
-    color: white;
-}
-
-.btn-secondary:hover {
-    background-color: #5a6268;
-    transform: translateY(-2px);
-    box-shadow: 0 3px 8px rgba(108,117,125,0.3);
-}
-
-/* Alert styles */
-.alert {
-    padding: 15px;
-    border-radius: 8px;
-    margin-bottom: 20px;
-}
-
-.alert-success {
-    background-color: #d4edda;
-    color: #155724;
-    border: 1px solid #c3e6cb;
-}
-
-.alert-danger {
-    background-color: #f8d7da;
-    color: #721c24;
-    border: 1px solid #f5c6cb;
-}
-
-.alert i {
-    margin-right: 10px;
-}
-
-.text-center {
-    text-align: center;
-    color: #999;
-    padding: 20px;
-}
-</style>
-
 <script>
+// Get next department code via AJAX
+function fetchNextDepartmentCode() {
+    fetch('ajax/get_next_department_code.php')
+        .then(response => response.json())
+        .then(data => {
+            if (data.code) {
+                document.getElementById('department_code').value = data.code;
+            }
+        })
+        .catch(error => console.error('Error fetching department code:', error));
+}
+
 // Building Modal Functions
 function openBuildingModal() {
     document.getElementById('buildingModalTitle').textContent = 'Add Building';
@@ -750,15 +939,24 @@ function openDepartmentModal() {
     document.getElementById('departmentModalTitle').textContent = 'Add Department';
     document.getElementById('department_action').value = 'add';
     document.getElementById('department_id').value = '';
+    document.getElementById('department_code').value = '';
+    document.getElementById('department_code').readOnly = true;
     document.getElementById('department_name').value = '';
     document.getElementById('department_building').value = '';
+    
+    // Fetch the next available department code
+    <?php $next_code = getNextDepartmentCode($conn); ?>
+    document.getElementById('department_code').value = '<?php echo $next_code; ?>';
+    
     document.getElementById('departmentModal').style.display = 'block';
 }
 
-function editDepartment(id, name, buildingId) {
+function editDepartment(id, name, code, buildingId) {
     document.getElementById('departmentModalTitle').textContent = 'Edit Department';
     document.getElementById('department_action').value = 'edit';
     document.getElementById('department_id').value = id;
+    document.getElementById('department_code').value = code;
+    document.getElementById('department_code').readOnly = false; // Make editable for edit
     document.getElementById('department_name').value = name;
     document.getElementById('department_building').value = buildingId || '';
     document.getElementById('departmentModal').style.display = 'block';

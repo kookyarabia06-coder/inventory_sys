@@ -1,7 +1,9 @@
+
 <?php
 /**
  * Semi-Expendable Page (Admin)
  * Complete semi-expendable management system with all inventory fields
+ * Supports multiple barcode generation for quantity > 1
  */
 
 // Get the absolute path to the root directory
@@ -16,7 +18,7 @@ require_once $root_path . '/vendor/autoload.php';
 use Picqer\Barcode\BarcodeGeneratorPNG;
 
 // Require admin role
-requireRole('admin');
+requireRole('admin' || 'supply');
 
 // Generate CSRF token if not exists
 if (empty($_SESSION['csrf_token'])) {
@@ -25,6 +27,197 @@ if (empty($_SESSION['csrf_token'])) {
 
 $page_title = 'Semi-Expendable Items';
 $page_description = 'Manage semi-expendable inventory';
+
+// ============================================
+// AJAX HANDLERS - MUST BE BEFORE ANY HTML OUTPUT
+// ============================================
+
+// Handle AJAX request to get multiple items
+if (isset($_GET['get_multiple_items'])) {
+    // Clear any output buffers
+    while (ob_get_level()) {
+        ob_end_clean();
+    }
+    
+    header('Content-Type: application/json');
+    
+    $property_no = $_GET['property_no'] ?? '';
+    
+    if (empty($property_no)) {
+        echo json_encode(['error' => 'No property number provided']);
+        exit;
+    }
+    
+    // Extract base property number
+    $base_property = preg_replace('/-\d+$/', '', $property_no);
+    
+    // Get all items with this base property
+    $stmt = $conn->prepare("
+        SELECT i.*, e.name as equipment_name
+        FROM inventory i
+        LEFT JOIN equipment e ON i.equipment_id = e.id
+        WHERE i.property_no LIKE ? 
+        ORDER BY i.property_no
+    ");
+    
+    $like_pattern = $base_property . '%';
+    $stmt->bind_param("s", $like_pattern);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    $items = [];
+    while ($row = $result->fetch_assoc()) {
+        $items[] = [
+            'id' => $row['id'],
+            'property_no' => $row['property_no'],
+            'article_name' => $row['article_name'],
+            'barcode_data' => $row['barcode_data'],
+            'quantity' => $row['qty_physical_count'],
+            'uom' => $row['uom'],
+            'unit_value' => $row['unit_value']
+        ];
+    }
+    
+    $stmt->close();
+    
+    echo json_encode([
+        'success' => true,
+        'items' => $items,
+        'count' => count($items),
+        'base_property' => $base_property
+    ]);
+    exit;
+}
+
+// Barcode handler with improved validation
+if (isset($_GET['generate_barcode'])) {
+    // Clear any output buffers
+    while (ob_get_level()) {
+        ob_end_clean();
+    }
+    
+    header('Content-Type: application/json');
+
+    $barcode_value = $_GET['barcode_value'] ?? '';
+
+    if (empty($barcode_value)) {
+        echo json_encode(['error' => 'Please provide barcode value']);
+        exit;
+    }
+
+    // Validate barcode format
+    if (!preg_match('/^[A-Za-z0-9\-_]+$/', $barcode_value)) {
+        echo json_encode(['error' => 'Invalid barcode format. Use only letters, numbers, hyphens and underscores.']);
+        exit;
+    }
+
+    try {
+        $generator = new BarcodeGeneratorPNG();
+        $barcode = base64_encode($generator->getBarcode($barcode_value, $generator::TYPE_CODE_128));
+
+        echo json_encode([
+            'success' => true,
+            'barcode' => $barcode,
+            'value' => $barcode_value
+        ]);
+    } catch (Exception $e) {
+        echo json_encode(['error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+// Handle multiple barcode generation preview with improved error handling
+if (isset($_GET['generate_multiple_preview'])) {
+    // Clear any output buffers to prevent HTML from being sent
+    while (ob_get_level()) {
+        ob_end_clean();
+    }
+    
+    header('Content-Type: application/json');
+    
+    // Set up error handling
+    $response = [
+        'success' => false,
+        'error' => null,
+        'debug' => []
+    ];
+    
+    try {
+        $prefix = $_GET['prefix'] ?? 'SEMI';
+        $quantity = isset($_GET['quantity']) ? intval($_GET['quantity']) : 5;
+        
+        $response['debug']['prefix'] = $prefix;
+        $response['debug']['quantity'] = $quantity;
+        
+        // Validate quantity
+        if ($quantity < 1) $quantity = 1;
+        if ($quantity > 50) $quantity = 50;
+        
+        // Validate prefix
+        if (!preg_match('/^[A-Za-z0-9\-_]+$/', $prefix)) {
+            throw new Exception('Invalid prefix format. Use only letters, numbers, hyphens and underscores.');
+        }
+        
+        // Check if class exists
+        if (!class_exists('Picqer\Barcode\BarcodeGeneratorPNG')) {
+            throw new Exception('Picqer\Barcode\BarcodeGeneratorPNG class not found. Please check vendor/autoload.php');
+        }
+        
+        // Check GD extension
+        if (!extension_loaded('gd')) {
+            throw new Exception('GD extension is not loaded. Please enable it in php.ini');
+        }
+        
+        $baseBarcode = $prefix . '-' . date('Ymd');
+        $response['debug']['base'] = $baseBarcode;
+        
+        $generator = new BarcodeGeneratorPNG();
+        $barcodes = [];
+
+        $preview_count = min($quantity, 10);
+        for ($i = 1; $i <= $preview_count; $i++) {
+            $randomPart = rand(1000, 9999);
+            $barcodeValue = $baseBarcode . '-' . $randomPart . '-' . str_pad($i, 3, '0', STR_PAD_LEFT);
+            
+            try {
+                $barcode = $generator->getBarcode($barcodeValue, $generator::TYPE_CODE_128);
+                $barcode_base64 = base64_encode($barcode);
+                
+                $barcodes[] = [
+                    'value' => $barcodeValue,
+                    'barcode' => $barcode_base64,
+                    'index' => $i
+                ];
+            } catch (Exception $e) {
+                $barcodes[] = [
+                    'value' => $barcodeValue,
+                    'barcode' => null,
+                    'index' => $i,
+                    'error' => $e->getMessage()
+                ];
+            }
+        }
+
+        $response['success'] = true;
+        $response['barcodes'] = $barcodes;
+        $response['total'] = $quantity;
+        $response['preview_count'] = $preview_count;
+        
+    } catch (Exception $e) {
+        $response['error'] = $e->getMessage();
+        $response['debug']['exception'] = get_class($e);
+        $response['debug']['file'] = $e->getFile();
+        $response['debug']['line'] = $e->getLine();
+    }
+    
+    // Ensure no whitespace before output
+    echo json_encode($response);
+    exit;
+}
+
+// ============================================
+// END OF AJAX HANDLERS
+// ============================================
 
 // Get equipment types for dropdown
 $equipment = $conn->query("SELECT * FROM equipment ORDER BY name");
@@ -40,7 +233,7 @@ $sections = $conn->query("
 // Get users for dropdown (for approved_by, verified_by, allocate_to)
 $users = $conn->query("SELECT id, username, firstname, lastname FROM users WHERE status = 'active' ORDER BY firstname, lastname");
 
-// Handle Add Semi-Expendable Item
+// Handle Add Semi-Expendable Item with multiple barcodes
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
     // Verify CSRF token
     if (!hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'] ?? '')) {
@@ -50,7 +243,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
     if ($_POST['action'] == 'add') {
         $article_name = sanitize($_POST['article_name']);
         $description = sanitize($_POST['description']);
-        $property_no = generatePropertyNo();
+        $property_no_base = generatePropertyNo();
         $uom = sanitize($_POST['uom']);
         $quantity = floatval($_POST['quantity']);
         $unit_value = floatval($_POST['unit_value']);
@@ -60,13 +253,26 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
         $type_equipment = sanitize($_POST['type_equipment']);
         $condition_text = sanitize($_POST['condition_text']);
         $fund_cluster = sanitize($_POST['fund_cluster']);
-        $certified_correct = sanitize($_POST['certified_correct']);
-        $approved_by = !empty($_POST['approved_by']) ? (int)$_POST['approved_by'] : null;
-        $verified_by = !empty($_POST['verified_by']) ? (int)$_POST['verified_by'] : null;
+        // Handle multi-select for certified_correct
+        $certified_correct_array = isset($_POST['certified_correct']) && is_array($_POST['certified_correct']) 
+            ? array_filter(array_map('intval', $_POST['certified_correct'])) 
+            : [];
+        $certified_correct = !empty($certified_correct_array) ? json_encode($certified_correct_array) : null;
+        // Handle multi-select for approved_by
+        $approved_by_array = isset($_POST['approved_by']) && is_array($_POST['approved_by']) 
+            ? array_filter(array_map('intval', $_POST['approved_by'])) 
+            : [];
+        $approved_by = !empty($approved_by_array) ? json_encode($approved_by_array) : null;
+        // Handle multi-select for verified_by
+        $verified_by_array = isset($_POST['verified_by']) && is_array($_POST['verified_by']) 
+            ? array_filter(array_map('intval', $_POST['verified_by'])) 
+            : [];
+        $verified_by = !empty($verified_by_array) ? json_encode($verified_by_array) : null;
         $allocate_to = !empty($_POST['allocate_to']) ? (int)$_POST['allocate_to'] : null;
         $remarks = sanitize($_POST['remarks']);
         $barcode_data = sanitize($_POST['barcode_data'] ?? '');
         $created_by = $_SESSION['user_id'];
+        $generate_multiple = isset($_POST['generate_multiple_barcodes']) && $_POST['generate_multiple_barcodes'] == '1';
         
         // Validate
         $errors = [];
@@ -76,52 +282,125 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
         if ($unit_value <= 0) $errors[] = "Unit value must be greater than 0";
         
         if (empty($errors)) {
-            $stmt = $conn->prepare("
-                INSERT INTO inventory (
-                    article_name, description, property_no, uom, 
-                    qty_property_card, qty_physical_count, unit_value,
-                    equipment_id, section_id, category, type_equipment, condition_text,
-                    fund_cluster, certified_correct, approved_by, verified_by,
-                    allocate_to, remarks, barcode_data, created_by, date_added, date_updated
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
-            ");
+            // Start transaction
+            $conn->begin_transaction();
             
-            $qty_property_card = $quantity;
-            $qty_physical_count = $quantity;
-            
-            // Correct bind_param with 20 parameters
-            $stmt->bind_param(
-                "sssdddiiisssssssisis",  // 20 characters: 11 s, 3 d, 6 i
-                $article_name,
-                $description,
-                $property_no,
-                $uom,
-                $qty_property_card,
-                $qty_physical_count,
-                $unit_value,
-                $equipment_id,
-                $section_id,
-                $category,
-                $type_equipment,
-                $condition_text,
-                $fund_cluster,
-                $certified_correct,
-                $approved_by,
-                $verified_by,
-                $allocate_to,
-                $remarks,
-                $barcode_data,
-                $created_by
-            );
-            
-            if ($stmt->execute()) {
-                $inventory_id = $stmt->insert_id;
-                logActivity('Add Semi-Expendable', $inventory_id, "Added new semi-expendable item: $article_name");
-                $_SESSION['success'] = "Semi-expendable item added successfully. Property No: $property_no";
-            } else {
-                $_SESSION['error'] = "Database error: " . $conn->error;
+            try {
+                // Check if quantity is a whole number (integer) for multiple barcodes
+                if ($generate_multiple && $quantity > 1 && floor($quantity) == $quantity) {
+                    // Generate multiple barcodes based on quantity
+                    $base_barcode = $barcode_data ?: 'SEMI-' . date('Ymd');
+                    $success_count = 0;
+                    
+                    for ($i = 1; $i <= $quantity; $i++) {
+                        // Generate sequential property number
+                        $property_no = $property_no_base . '-' . str_pad($i, 3, '0', STR_PAD_LEFT);
+                        
+                        // Generate sequential barcode
+                        $sequential_barcode = $base_barcode . '-' . str_pad($i, 3, '0', STR_PAD_LEFT);
+                        
+                        $stmt = $conn->prepare("
+                            INSERT INTO inventory (
+                                article_name, description, property_no, uom, 
+                                qty_property_card, qty_physical_count, unit_value,
+                                equipment_id, section_id, category, type_equipment, condition_text,
+                                fund_cluster, certified_correct, approved_by, verified_by,
+                                allocate_to, remarks, barcode_data, created_by, date_added, date_updated
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                        ");
+                        
+                        // keep the entered quantity on each record rather than defaulting to 1
+                        $qty_property_card = $quantity;
+                        $qty_physical_count = $quantity;
+                        
+                        $stmt->bind_param(
+                            "ssssddiiisssssiiissi",
+                            $article_name,
+                            $description,
+                            $property_no,
+                            $uom,
+                            $qty_property_card,
+                            $qty_physical_count,
+                            $unit_value,
+                            $equipment_id,
+                            $section_id,
+                            $category,
+                            $type_equipment,
+                            $condition_text,
+                            $fund_cluster,
+                            $certified_correct,
+                            $approved_by,
+                            $verified_by,
+                            $allocate_to,
+                            $remarks,
+                            $sequential_barcode,
+                            $created_by
+                        );
+                        
+                        if ($stmt->execute()) {
+                            $success_count++;
+                            logActivity('Add Semi-Expendable Multiple', $stmt->insert_id, "Added semi-expendable item {$i}/{$quantity}: $article_name");
+                        }
+                        $stmt->close();
+                    }
+                    
+                    $conn->commit();
+                    $_SESSION['success'] = "$success_count semi-expendable items added successfully with sequential barcodes.";
+                    
+                } else {
+                    // Single item insertion
+                    $stmt = $conn->prepare("
+                        INSERT INTO inventory (
+                            article_name, description, property_no, uom, 
+                            qty_property_card, qty_physical_count, unit_value,
+                            equipment_id, section_id, category, type_equipment, condition_text,
+                            fund_cluster, certified_correct, approved_by, verified_by,
+                            allocate_to, remarks, barcode_data, created_by, date_added, date_updated
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                    ");
+                    
+                    $qty_property_card = $quantity;
+                    $qty_physical_count = $quantity;
+                    
+                    $stmt->bind_param(
+                        "ssssddiiisssssiiissi",
+                        $article_name,
+                        $description,
+                        $property_no_base,
+                        $uom,
+                        $qty_property_card,
+                        $qty_physical_count,
+                        $unit_value,
+                        $equipment_id,
+                        $section_id,
+                        $category,
+                        $type_equipment,
+                        $condition_text,
+                        $fund_cluster,
+                        $certified_correct,
+                        $approved_by,
+                        $verified_by,
+                        $allocate_to,
+                        $remarks,
+                        $barcode_data,
+                        $created_by
+                    );
+                    
+                    if ($stmt->execute()) {
+                        $inventory_id = $stmt->insert_id;
+                        $conn->commit();
+                        logActivity('Add Semi-Expendable', $inventory_id, "Added new semi-expendable item: $article_name");
+                        $_SESSION['success'] = "Semi-expendable item added successfully. Property No: $property_no_base";
+                    } else {
+                        throw new Exception($conn->error);
+                    }
+                    $stmt->close();
+                }
+                
+            } catch (Exception $e) {
+                $conn->rollback();
+                $_SESSION['error'] = "Database error: " . $e->getMessage();
             }
-            $stmt->close();
         } else {
             $_SESSION['error'] = implode("<br>", $errors);
         }
@@ -143,9 +422,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
         $type_equipment = sanitize($_POST['type_equipment']);
         $condition_text = sanitize($_POST['condition_text']);
         $fund_cluster = sanitize($_POST['fund_cluster']);
-        $certified_correct = sanitize($_POST['certified_correct']);
-        $approved_by = !empty($_POST['approved_by']) ? (int)$_POST['approved_by'] : null;
-        $verified_by = !empty($_POST['verified_by']) ? (int)$_POST['verified_by'] : null;
+        // Handle multi-select for certified_correct
+        $certified_correct_array = isset($_POST['certified_correct']) && is_array($_POST['certified_correct']) 
+            ? array_filter(array_map('intval', $_POST['certified_correct'])) 
+            : [];
+        $certified_correct = !empty($certified_correct_array) ? json_encode($certified_correct_array) : null;
+        // Handle multi-select for approved_by
+        $approved_by_array = isset($_POST['approved_by']) && is_array($_POST['approved_by']) 
+            ? array_filter(array_map('intval', $_POST['approved_by'])) 
+            : [];
+        $approved_by = !empty($approved_by_array) ? json_encode($approved_by_array) : null;
+        // Handle multi-select for verified_by
+        $verified_by_array = isset($_POST['verified_by']) && is_array($_POST['verified_by']) 
+            ? array_filter(array_map('intval', $_POST['verified_by'])) 
+            : [];
+        $verified_by = !empty($verified_by_array) ? json_encode($verified_by_array) : null;
         $allocate_to = !empty($_POST['allocate_to']) ? (int)$_POST['allocate_to'] : null;
         $remarks = sanitize($_POST['remarks']);
         $barcode_data = sanitize($_POST['barcode_data'] ?? '');
@@ -162,7 +453,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action'])) {
         ");
         
         $stmt->bind_param(
-            "sssddiissssiiisssi",
+            "sssddiissssiiissi",
             $article_name,
             $description,
             $uom,
@@ -231,7 +522,7 @@ if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
 
 // Pagination
 $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
-$per_page = 10;
+$per_page = 999999;
 $search = isset($_GET['search']) ? sanitize($_GET['search']) : '';
 
 // Build query for Semi-Expendable items only (using prepared statements for search)
@@ -241,7 +532,8 @@ $query = "
            CONCAT(vr.firstname, ' ', vr.lastname) as verifier_name,
            CONCAT(al.firstname, ' ', al.lastname) as allocatee_name,
            CONCAT(cr.firstname, ' ', cr.lastname) as created_by_name,
-           (SELECT COUNT(*) FROM equipment_issuance WHERE inventory_id = i.id AND status = 'issued') as is_issued
+           (SELECT COUNT(*) FROM equipment_issuance WHERE inventory_id = i.id AND status = 'issued') as is_issued,
+           CASE WHEN i.property_no LIKE '%-%' THEN 1 ELSE 0 END as is_multiple
     FROM inventory i
     LEFT JOIN equipment e ON i.equipment_id = e.id
     LEFT JOIN sections s ON i.section_id = s.id
@@ -251,7 +543,6 @@ $query = "
     LEFT JOIN users cr ON i.created_by = cr.id
     WHERE i.category = 'Semi-Expendable' OR i.type_equipment = 'Semi-Expendable'
 ";
-
 $count_query = "SELECT COUNT(*) as total FROM inventory WHERE category = 'Semi-Expendable' OR type_equipment = 'Semi-Expendable'";
 
 $params = [];
@@ -300,6 +591,25 @@ while ($row = $result->fetch_assoc()) {
 }
 $stmt->close();
 
+// calculate total quantity per base property (for multiple sets)
+$counts = [];
+foreach ($semi_items as $r) {
+    $base = preg_replace('/-\d+$/', '', $r['property_no']);
+    if (!isset($counts[$base])) {
+        $counts[$base] = 0;
+    }
+    if (!empty($r['is_multiple'])) {
+        $counts[$base] += 1;
+    } else {
+        $counts[$base] += floatval($r['qty_physical_count']);
+    }
+}
+foreach ($semi_items as &$r) {
+    $base = preg_replace('/-\d+$/', '', $r['property_no']);
+    $r['total_qty'] = $counts[$base] ?? $r['qty_physical_count'];
+}
+unset($r);
+
 // Create pagination data structure
 $pagination_data = [
     'data' => $semi_items,
@@ -321,81 +631,8 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
     $stmt->close();
 }
 
+// NOW include the header - after all AJAX handlers
 include INCLUDE_PATH . '/header.php';
-
-// Barcode handler with improved validation
-if (isset($_GET['generate_barcode'])) {
-    header('Content-Type: application/json');
-
-    $barcode_value = $_GET['barcode_value'] ?? '';
-
-    if (empty($barcode_value)) {
-        echo json_encode(['error' => 'Please provide barcode value']);
-        exit;
-    }
-
-    // Validate barcode format
-    if (!preg_match('/^[A-Za-z0-9\-_]+$/', $barcode_value)) {
-        echo json_encode(['error' => 'Invalid barcode format. Use only letters, numbers, hyphens and underscores.']);
-        exit;
-    }
-
-    try {
-        $generator = new BarcodeGeneratorPNG();
-        $barcode = base64_encode($generator->getBarcode($barcode_value, $generator::TYPE_CODE_128));
-
-        echo json_encode([
-            'success' => true,
-            'barcode' => $barcode,
-            'value' => $barcode_value
-        ]);
-    } catch (Exception $e) {
-        echo json_encode(['error' => $e->getMessage()]);
-    }
-    exit;
-}
-
-// Handle multiple barcode generation preview
-if (isset($_GET['generate_multiple_preview'])) {
-    header('Content-Type: application/json');
-
-    $prefix = $_GET['prefix'] ?? 'SEMI';
-    $quantity = min(intval($_GET['quantity'] ?? 5), 50); // Limit to 50 max
-    
-    // Validate prefix
-    if (!preg_match('/^[A-Za-z0-9\-_]+$/', $prefix)) {
-        echo json_encode(['error' => 'Invalid prefix format']);
-        exit;
-    }
-    
-    $baseBarcode = $prefix . date('Ymd');
-
-    try {
-        $generator = new BarcodeGeneratorPNG();
-        $barcodes = [];
-
-        for ($i = 0; $i < min($quantity, 10); $i++) { // Preview only first 10
-            $randomPart = rand(1000, 9999);
-            $barcodeValue = $baseBarcode . $randomPart . str_pad($i + 1, 3, '0', STR_PAD_LEFT);
-            $barcode = base64_encode($generator->getBarcode($barcodeValue, $generator::TYPE_CODE_128));
-
-            $barcodes[] = [
-                'value' => $barcodeValue,
-                'barcode' => $barcode,
-                'index' => $i + 1
-            ];
-        }
-
-        echo json_encode([
-            'success' => true,
-            'barcodes' => $barcodes,
-            'total' => $quantity
-        ]);
-    } catch (Exception $e) {
-        echo json_encode(['error' => $e->getMessage()]);
-    }
-    exit;
-}
 ?>
 
 <!-- Display Success/Error Messages -->
@@ -410,6 +647,9 @@ if (isset($_GET['generate_multiple_preview'])) {
         <i class="fas fa-exclamation-circle"></i> <?php echo $_SESSION['error']; unset($_SESSION['error']); ?>
     </div>
 <?php endif; ?>
+
+<!-- The rest of your HTML code continues here... -->
+<!-- Statistics Cards, Quick Actions, Search, Table, Modals, etc. -->
 
 <!-- Statistics Cards for Semi-Expendable -->
 <div class="dashboard-cards">
@@ -503,6 +743,7 @@ if (isset($_GET['generate_multiple_preview'])) {
         <a href="<?php echo SITE_URL; ?>/admin/issue_items.php?category=semi" class="btn btn-primary">
             <i class="fas fa-hand-holding"></i> Issue Items
         </a>
+       
         <a href="<?php echo SITE_URL; ?>/admin/semi_expendable.php?export=1" class="btn btn-secondary">
             <i class="fas fa-download"></i> Export List
         </a>
@@ -536,7 +777,19 @@ if (isset($_GET['generate_multiple_preview'])) {
 <div class="table-container">
     <div class="table-header">
         <h2><i class="fas fa-box-open"></i> Semi-Expendable Items List</h2>
-        <p>Showing <?php echo count($semi_items); ?> of <?php echo $total_rows; ?> items</p>
+        <?php
+            // compute unique items by base property (to match table logic below)
+            $uniqueCount = 0;
+            $seen = [];
+            foreach ($semi_items as $it) {
+                $base = preg_replace('/-\d+$/', '', $it['property_no']);
+                if (!isset($seen[$base])) {
+                    $seen[$base] = true;
+                    $uniqueCount++;
+                }
+            }
+        ?>
+        <p>Showing <?php echo $uniqueCount; ?> of <?php echo $total_rows; ?> items</p>
     </div>
     
     <table>
@@ -556,7 +809,15 @@ if (isset($_GET['generate_multiple_preview'])) {
         </thead>
         <tbody>
             <?php if (count($semi_items) > 0): ?>
-                <?php foreach ($semi_items as $item): ?>
+                
+                <?php
+                // display only one entry per base property number when multiples exist
+                $shown = [];
+                foreach ($semi_items as $item):
+                    $base = preg_replace('/-\d+$/', '', $item['property_no']);
+                    if (isset($shown[$base])) continue;
+                    $shown[$base] = true;
+            ?>
                 <tr class="<?php echo $item['qty_physical_count'] <= 5 ? 'stock-alert-row' : ''; ?>">
                     <td>
                         <strong><?php echo htmlspecialchars($item['article_name']); ?></strong>
@@ -570,10 +831,13 @@ if (isset($_GET['generate_multiple_preview'])) {
                         <br><small><?php echo htmlspecialchars($item['type_equipment'] ?? $item['equipment_name']); ?></small>
                     </td>
                     <td>
-                        <?php echo $item['qty_physical_count'] . ' ' . $item['uom']; ?>
-                        <?php if ($item['qty_physical_count'] <= 5): ?>
-                            <br><span class="badge badge-warning">Low Stock</span>
-                        <?php endif; ?>
+                        <?php
+                            // if part of a multiple set, show aggregated quantity
+                           
+                            echo $item['qty_physical_count'] . ' ' . $item['uom'];
+                        
+                        ?>
+                       
                     </td>
                     <td><?php echo formatCurrency($item['unit_value']); ?></td>
                     <td><?php echo htmlspecialchars($item['section_name'] ?? 'N/A'); ?></td>
@@ -593,6 +857,31 @@ if (isset($_GET['generate_multiple_preview'])) {
                         <?php else: ?>
                             <span class="text-muted">No barcode</span>
                         <?php endif; ?>
+                         <!--  Show "View All Barcodes" button only if it's a multiple item -->
+                     <!--  Show "View All Barcodes" button only if it's a multiple item -->
+    <?php if ($item['is_multiple']):
+        // Determine if this is part of a multiple set with more than one item
+        // For multiple items, we need to check if there are actually multiple records
+        // The property_no will have a suffix like -001, -002, etc.
+        
+        // Count how many items with the same base property number exist
+        $baseProperty = preg_replace('/-\d+$/', '', $item['property_no']);
+        
+        // We need to query or use the already available data to determine count
+        // Since we already have $counts array from earlier in the code, we can use that
+        $multipleCount = isset($counts[$baseProperty]) ? $counts[$baseProperty] : 1;
+        
+        // Enable button only if there is more than 1 item in this set
+        $hasMultipleItems = $multipleCount > 1;
+    ?>
+        <button class="action-btn"
+                style="background-color: pink; <?php echo $hasMultipleItems ? '' : 'opacity:0.6;cursor:not-allowed;'; ?>"
+                <?php echo $hasMultipleItems ? "onclick=\"viewAllBarcodes('{$item['property_no']}', '" . htmlspecialchars($item['article_name']) . "')\"" : ''; ?>
+                title="<?php echo $hasMultipleItems ? 'View All Barcodes' : 'Only 1 item in this set'; ?>"
+                <?php echo $hasMultipleItems ? '' : 'disabled'; ?>>
+            <i class="fas fa-layer-group"></i>
+        </button>
+    <?php endif; ?>
                     </td>
                     <td>
                         <div class="action-buttons">
@@ -602,6 +891,7 @@ if (isset($_GET['generate_multiple_preview'])) {
                             <button class="action-btn view" onclick="viewItem(<?php echo $item['id']; ?>)" title="View">
                                 <i class="fas fa-eye"></i>
                             </button>
+                           
                             <?php if ($item['is_issued'] == 0): ?>
                             <a href="?delete=<?php echo $item['id']; ?>&csrf_token=<?php echo $_SESSION['csrf_token']; ?>" 
                                class="action-btn delete" 
@@ -638,6 +928,16 @@ if (isset($_GET['generate_multiple_preview'])) {
     <?php echo displayPagination($pagination_data, '?page=' . ($search ? '&search=' . urlencode($search) : '')); ?>
 </div>
 
+<!-- Sticky SCAN BARCODE Button (Bottom Right of Table) -->
+    <div class="sticky-scan-button-container">
+        <a href="<?php echo SITE_URL; ?>/admin/barcodescannerforsemi_expendable.php" 
+           class="sticky-scan-button">
+            <i class="fas fa-camera"></i> 
+            <span>SCAN BARCODE</span>
+        </a>
+    </div>
+</div>
+
 <!-- Add/Edit Semi-Expendable Modal -->
 <div id="semiModal" class="modal" style="display: <?php echo $edit_item ? 'block' : 'none'; ?>;">
     <div class="modal-content" style="max-width: 900px; max-height: 90vh; display: flex; flex-direction: column;">
@@ -651,6 +951,7 @@ if (isset($_GET['generate_multiple_preview'])) {
             <form method="POST" action="" id="semiForm">
                 <input type="hidden" name="action" value="<?php echo $edit_item ? 'edit' : 'add'; ?>">
                 <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
+                <input type="hidden" name="generate_multiple_barcodes" id="generate_multiple_barcodes" value="0">
                 <?php if ($edit_item): ?>
                 <input type="hidden" name="id" value="<?php echo $edit_item['id']; ?>">
                 <?php endif; ?>
@@ -734,7 +1035,25 @@ if (isset($_GET['generate_multiple_preview'])) {
                             <label for="quantity">Quantity <span class="text-danger">*</span></label>
                             <input type="number" class="form-control" id="quantity" name="quantity" 
                                    value="<?php echo $edit_item ? $edit_item['qty_physical_count'] : '1'; ?>" 
-                                   min="0.01" step="0.01" required>
+                                   min="0.01" step="0.01" required onchange="checkQuantityForMultipleBarcodes()">
+                        </div>
+                    </div>
+                    
+                    <!-- Multiple Barcodes Option -->
+                    <div id="multipleBarcodeOption" class="form-group" style="display: none; margin-top: 15px; padding: 15px; background: #e8f4f8; border-radius: 8px; border-left: 4px solid #F16D34;">
+                        <div class="form-check">
+                            <input type="checkbox" class="form-check-input" id="multiple_barcodes" onchange="toggleMultipleBarcodes()">
+                            <label class="form-check-label" for="multiple_barcodes">
+                                <strong>Generate individual barcodes for each item (<span id="itemCountDisplay">1</span> items)</strong>
+                            </label>
+                            <small class="form-text text-muted" style="display: block; margin-top: 5px;">
+                                When checked, each item will have its own unique barcode (e.g., SEMI-YYYYMMDD-001, SEMI-YYYYMMDD-002, etc.)
+                            </small>
+                        </div>
+                        
+                        <div id="barcodePreviewContainer" style="margin-top: 15px; display: none;">
+                            <label>Barcode Preview:</label>
+                            <div id="multipleBarcodePreview" class="barcode-preview-grid" style="max-height: 300px; overflow-y: auto;"></div>
                         </div>
                     </div>
                     
@@ -777,38 +1096,65 @@ if (isset($_GET['generate_multiple_preview'])) {
                         </div>
                         
                         <div class="form-group">
-                            <label for="certified_correct">Certified Correct By</label>
-                            <input type="text" class="form-control" id="certified_correct" name="certified_correct" 
-                                   value="<?php echo $edit_item ? htmlspecialchars($edit_item['certified_correct']) : ''; ?>"
-                                   placeholder="Name of certifying officer">
+                            <label for="certified_correct">Certified Correct By (Multi-Select)</label>
+                            <?php 
+                            $certified_selected = [];
+                            if ($edit_item && !empty($edit_item['certified_correct'])) {
+                                $certified_data = json_decode($edit_item['certified_correct'], true);
+                                $certified_selected = is_array($certified_data) ? $certified_data : [];
+                            }
+                            ?>
+                            <select class="form-control searchable-select" id="certified_correct" name="certified_correct[]" multiple>
+                                <?php if ($users): mysqli_data_seek($users, 0); while($user = $users->fetch_assoc()): ?>
+                                <option value="<?php echo $user['id']; ?>" 
+                                    <?php echo in_array($user['id'], $certified_selected) ? 'selected' : ''; ?>>
+                                    <?php echo htmlspecialchars($user['firstname'] . ' ' . $user['lastname'] . ' (' . $user['username'] . ')'); ?>
+                                </option>
+                                <?php endwhile; endif; ?>
+                            </select>
+                            <small class="form-text text-muted">Search and select multiple users</small>
                         </div>
                     </div>
                     
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="approved_by">Approved By</label>
-                            <select class="form-control" id="approved_by" name="approved_by">
-                                <option value="">-- Select Approver --</option>
+                            <label for="approved_by">Approved By (Multi-Select)</label>
+                            <?php 
+                            $approved_selected = [];
+                            if ($edit_item && !empty($edit_item['approved_by'])) {
+                                $approved_data = json_decode($edit_item['approved_by'], true);
+                                $approved_selected = is_array($approved_data) ? $approved_data : [];
+                            }
+                            ?>
+                            <select class="form-control searchable-select" id="approved_by" name="approved_by[]" multiple>
                                 <?php if ($users): mysqli_data_seek($users, 0); while($user = $users->fetch_assoc()): ?>
                                 <option value="<?php echo $user['id']; ?>" 
-                                    <?php echo ($edit_item && $edit_item['approved_by'] == $user['id']) ? 'selected' : ''; ?>>
+                                    <?php echo in_array($user['id'], $approved_selected) ? 'selected' : ''; ?>>
                                     <?php echo htmlspecialchars($user['firstname'] . ' ' . $user['lastname'] . ' (' . $user['username'] . ')'); ?>
                                 </option>
                                 <?php endwhile; endif; ?>
                             </select>
+                            <small class="form-text text-muted">Search and select multiple users</small>
                         </div>
                         
                         <div class="form-group">
-                            <label for="verified_by">Verified By</label>
-                            <select class="form-control" id="verified_by" name="verified_by">
-                                <option value="">-- Select Verifier --</option>
+                            <label for="verified_by">Verified By (Multi-Select)</label>
+                            <?php 
+                            $verified_selected = [];
+                            if ($edit_item && !empty($edit_item['verified_by'])) {
+                                $verified_data = json_decode($edit_item['verified_by'], true);
+                                $verified_selected = is_array($verified_data) ? $verified_data : [];
+                            }
+                            ?>
+                            <select class="form-control searchable-select" id="verified_by" name="verified_by[]" multiple>
                                 <?php if ($users): mysqli_data_seek($users, 0); while($user = $users->fetch_assoc()): ?>
                                 <option value="<?php echo $user['id']; ?>" 
-                                    <?php echo ($edit_item && $edit_item['verified_by'] == $user['id']) ? 'selected' : ''; ?>>
+                                    <?php echo in_array($user['id'], $verified_selected) ? 'selected' : ''; ?>>
                                     <?php echo htmlspecialchars($user['firstname'] . ' ' . $user['lastname'] . ' (' . $user['username'] . ')'); ?>
                                 </option>
                                 <?php endwhile; endif; ?>
                             </select>
+                            <small class="form-text text-muted">Search and select multiple users</small>
                         </div>
                     </div>
                 </div>
@@ -842,7 +1188,7 @@ if (isset($_GET['generate_multiple_preview'])) {
                         <div class="barcode-input-group">
                             <input type="text" class="form-control" id="barcode_data" name="barcode_data" 
                                    value="<?php echo $edit_item ? htmlspecialchars($edit_item['barcode_data']) : ''; ?>"
-                                   placeholder="Enter or generate barcode"
+                                   placeholder="Enter or generate barcode (for multiple items, this will be the base)"
                                    pattern="[A-Za-z0-9\-_]+"
                                    title="Use only letters, numbers, hyphens and underscores">
                             <button type="button" class="btn btn-secondary" onclick="generateBarcodeForEdit()" style="margin-top: 5px;">
@@ -850,6 +1196,7 @@ if (isset($_GET['generate_multiple_preview'])) {
                             </button>
                         </div>
                         <div id="barcodePreview" class="barcode-preview" style="margin-top: 10px; text-align: center;"></div>
+                        <small class="form-text text-muted">For multiple items, this will be the base barcode (e.g., SEMI-20260310 will become SEMI-20260310-001, SEMI-20260310-002, etc.)</small>
                     </div>
                 </div>
                 
@@ -889,7 +1236,7 @@ if (isset($_GET['generate_multiple_preview'])) {
     </div>
 </div>
 
-<!-- View Item Modal -->
+<!-- View Item Modal (Updated with Barcode Display and Multiple Set Info) -->
 <div id="viewModal" class="modal">
     <div class="modal-content" style="max-width: 700px; max-height: 80vh; display: flex; flex-direction: column;">
         <div class="modal-header" style="flex-shrink: 0;">
@@ -903,6 +1250,25 @@ if (isset($_GET['generate_multiple_preview'])) {
             <button type="button" class="btn btn-secondary" onclick="closeViewModal()">
                 <i class="fas fa-times"></i> Close
             </button>
+        </div>
+    </div>
+</div>
+
+<!-- View All Barcodes Modal -->
+<div id="viewAllBarcodesModal" class="modal">
+    <div class="modal-content" style="max-width: 900px; max-height: 85vh; display: flex; flex-direction: column;">
+        <div class="modal-header" style="flex-shrink: 0;">
+            <h2 id="allBarcodesModalTitle">All Barcodes</h2>
+            <span class="modal-close" onclick="closeAllBarcodesModal()">&times;</span>
+        </div>
+        <div class="modal-body" id="allBarcodesContent" style="overflow-y: auto; flex: 1; padding: 20px;">
+            <!-- Content will be loaded dynamically -->
+        </div>
+        <div class="modal-footer" style="flex-shrink: 0; padding: 15px 20px; border-top: 1px solid #BBE0EF; text-align: right;">
+            <button type="button" class="btn btn-primary" onclick="printAllBarcodes()">
+                <i class="fas fa-print"></i> Print All
+            </button>
+            <button type="button" class="btn btn-secondary" onclick="closeAllBarcodesModal()">Close</button>
         </div>
     </div>
 </div>
@@ -972,126 +1338,203 @@ if (isset($_GET['generate_multiple_preview'])) {
 </div>
 
 <style>
-/* Barcode column styling */
-.btn-xs {
-    padding: 2px 8px;
-    font-size: 11px;
-    border-radius: 3px;
-    background-color: #6c757d;
-    color: white;
-    border: none;
-    cursor: pointer;
+:root {
+    --primary: #6B8CFF;        /* Deeper Periwinkle - Main brand color */
+    --secondary: #8FB5FF;       /* Medium Blue - Secondary elements */
+    --accent: #F8B0C0;          /* Muted Pink - Highlights, buttons */
+    --accent-light: #FFD8E0;    /* Light Pink - Soft highlights */
+    --success-light: #C5E8C5;   /* Muted Mint - Success backgrounds */
+    --light: #F0F0F0;           /* Light Gray - Page background */
+    --white: #FFFFFF;           /* White - Cards, containers */
+    --border-light: #E0E0E0;    /* Light Gray for borders */
+    --text-primary: #3A3A3A;    /* Dark gray for main text */
+    --text-secondary: #6B6B6B;  /* Medium gray for secondary text */
+    --text-muted: #9E9E9E;      /* Light gray for muted text */
+    --text-light: #FFFFFF;      /* White text for dark backgrounds */
+    --success: #4CAF50;
+    --danger: #f44336;
+    --info: #8FB5FF;
 }
 
-.btn-xs:hover {
-    background-color: #5a6268;
+body {
+    background-color: var(--light);
+    color: var(--text-primary);
 }
 
-.btn-primary {
-    background-color: #F16D34;
-    color: white;
-    border: none;
-    padding: 8px 16px;
-    border-radius: 5px;
-    cursor: pointer;
+/* Dashboard Cards */
+.dashboard-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 20px;
+    margin-bottom: 30px;
 }
 
-.btn-primary:hover {
-    background-color: #d55a2a;
-}
-
-.btn-secondary {
-    background-color: #6c757d;
-    color: white;
-    border: none;
-    padding: 8px 16px;
-    border-radius: 5px;
-    cursor: pointer;
-}
-
-.btn-secondary:hover {
-    background-color: #5a6268;
-}
-
-.btn-info {
-    background-color: #17a2b8;
-    color: white;
-    border: none;
-    padding: 8px 16px;
-    border-radius: 5px;
-    cursor: pointer;
-}
-
-.btn-info:hover {
-    background-color: #138496;
-}
-
-/* Modal styles */
-.modal {
-    display: none;
-    position: fixed;
-    z-index: 1000;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(0,0,0,0.5);
-}
-
-.modal-content {
-    background-color: white;
-    margin: 5% auto;
+.card {
+    background: var(--white);
+    border-radius: 12px;
     padding: 20px;
-    border-radius: 10px;
-    box-shadow: 0 5px 20px rgba(0,0,0,0.2);
-    position: relative;
+    box-shadow: 0 4px 12px rgba(107, 140, 255, 0.1);
+    border-left: 4px solid var(--primary);
+    transition: transform 0.2s, box-shadow 0.2s;
 }
 
-.modal-header {
+.card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 20px rgba(107, 140, 255, 0.15);
+}
+
+.card-icon {
+    width: 50px;
+    height: 50px;
+    background: var(--accent-light);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 15px;
+}
+
+.card-icon i {
+    font-size: 24px;
+    color: var(--primary);
+}
+
+.card h3 {
+    color: var(--text-secondary);
+    font-size: 14px;
+    margin-bottom: 5px;
+    font-weight: 500;
+}
+
+.card .card-value {
+    color: var(--primary);
+    font-size: 28px;
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.card .card-label {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+/* Table Container */
+.table-container {
+    background: var(--white);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 30px;
+    box-shadow: 0 4px 12px rgba(107, 140, 255, 0.1);
+}
+
+.table-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 20px;
     padding-bottom: 10px;
-    border-bottom: 1px solid #eee;
+    border-bottom: 2px solid var(--accent-light);
 }
 
-.modal-close {
-    font-size: 24px;
-    font-weight: bold;
+.table-header h2 {
+    color: var(--primary);
+    font-size: 18px;
+    margin: 0;
+}
+
+.table-header h2 i {
+    color: var(--accent);
+    margin-right: 10px;
+}
+
+.table-header p {
+    color: var(--text-muted);
+    font-size: 14px;
+    margin: 0;
+}
+
+/* Search Box */
+.search-box {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.search-box input[type="text"],
+.search-box select {
+    padding: 12px 15px;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    font-size: 14px;
+    flex: 1;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.search-box input[type="text"]:focus,
+.search-box select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.1);
+}
+
+.search-box button {
+    padding: 12px 24px;
+    background: var(--primary);
+    color: var(--text-light);
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
     cursor: pointer;
-    color: #999;
+    transition: all 0.2s;
 }
 
-.modal-close:hover {
-    color: #F16D34;
+.search-box button:hover {
+    background: #5a7ae6;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(107, 140, 255, 0.3);
 }
 
-/* Badge styles */
-.badge-warning {
-    background-color: #ffc107;
-    color: #212529;
-    padding: 3px 8px;
-    border-radius: 12px;
-    font-size: 11px;
+/* Table Styles */
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+thead tr {
+    background: linear-gradient(to right, var(--light), var(--white));
+    border-bottom: 2px solid var(--accent-light);
+}
+
+th {
+    padding: 15px 10px;
+    text-align: left;
+    color: var(--primary);
     font-weight: 600;
+    font-size: 13px;
+    white-space: nowrap;
 }
 
-.badge-success {
-    background-color: #28a745;
-    color: white;
-    padding: 3px 8px;
-    border-radius: 12px;
-    font-size: 11px;
-    font-weight: 600;
+td {
+    padding: 15px 10px;
+    border-bottom: 1px solid var(--border-light);
+    color: var(--text-secondary);
+    font-size: 13px;
 }
 
-.text-muted {
-    color: #6c757d;
-    font-style: italic;
+tr:hover {
+    background-color: var(--light);
 }
 
-/* Action buttons */
+tr.stock-alert-row {
+    background-color: white;
+}
+
+tr.stock-alert-row:hover {
+     background-color: #f0c0d0;
+}
+
+/* Action Buttons */
 .action-buttons {
     display: flex;
     gap: 5px;
@@ -1104,156 +1547,613 @@ if (isset($_GET['generate_multiple_preview'])) {
     justify-content: center;
     width: 32px;
     height: 32px;
-    border-radius: 5px;
-    color: white;
+    border-radius: 6px;
+    border: none;
+    color: var(--text-light);
     text-decoration: none;
-    transition: all 0.3s;
+    transition: all 0.2s;
+    cursor: pointer;
+    font-size: 14px;
 }
 
-.action-btn.edit { background-color: #FF986A; }
-.action-btn.view { background-color: #161E54; }
-.action-btn.delete { background-color: #dc3545; }
-.action-btn.success { background-color: #28a745; }
-.action-btn.barcode { background-color: #2196F3; }
+.action-btn.edit { background-color: var(--secondary); }
+.action-btn.view { background-color: var(--primary); }
+.action-btn.delete { background-color: var(--danger); }
+.action-btn.success { background-color: var(--success); }
 
 .action-btn:hover {
     transform: translateY(-2px);
-    box-shadow: 0 3px 8px rgba(0,0,0,0.2);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
 }
 
-/* Barcode preview grid */
-.barcode-preview-grid {
+.action-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Badges */
+.badge-warning {
+    background-color: var(--secondary);
+    color: var(--text-primary);
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    display: inline-block;
+}
+
+.badge-success {
+    background-color: var(--success-light);
+    color: var(--success);
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    display: inline-block;
+}
+
+/* Button Styles */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+}
+
+.btn-primary {
+    background-color: var(--accent);
+    color: var(--text-primary);
+}
+
+.btn-primary:hover {
+    background-color: #e69eb0;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(248, 176, 192, 0.3);
+}
+
+.btn-secondary {
+    background-color: var(--secondary);
+    color: var(--text-light);
+}
+
+.btn-secondary:hover {
+    background-color: #7a9fe6;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(143, 181, 255, 0.3);
+}
+
+.btn-info {
+    background-color: var(--info);
+    color: var(--text-light);
+}
+
+.btn-info:hover {
+    background-color: #7a9fe6;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(143, 181, 255, 0.3);
+}
+
+.btn-xs {
+    padding: 4px 8px;
+    font-size: 11px;
+    border-radius: 4px;
+    background-color: var(--secondary);
+    color: var(--text-light);
+    border: none;
+    cursor: pointer;
+}
+
+.btn-xs:hover {
+    background-color: #7a9fe6;
+}
+
+/* Modal Styles */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    backdrop-filter: blur(3px);
+}
+
+.modal-content {
+    background: var(--white);
+    margin: 5% auto;
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(107, 140, 255, 0.2);
+    position: relative;
+    animation: modalSlideIn 0.3s;
+}
+
+@keyframes modalSlideIn {
+    from {
+        transform: translateY(-30px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 25px;
+    border-bottom: 2px solid var(--accent-light);
+}
+
+.modal-header h2 {
+    color: var(--primary);
+    font-size: 20px;
+    margin: 0;
+}
+
+.modal-close {
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    color: var(--text-muted);
+    transition: color 0.2s;
+}
+
+.modal-close:hover {
+    color: var(--accent);
+}
+
+.modal-body {
+    padding: 25px;
+    max-height: calc(90vh - 150px);
+    overflow-y: auto;
+}
+
+.modal-footer {
+    padding: 15px 25px;
+    border-top: 1px solid var(--border-light);
+    text-align: right;
+    background: var(--light);
+    border-radius: 0 0 12px 12px;
+}
+
+/* Form Section */
+.form-section {
+    background: var(--white);
+    padding: 20px;
+    margin-bottom: 25px;
+    border-radius: 10px;
+    border-left: 4px solid var(--primary);
+    box-shadow: 0 2px 8px rgba(107, 140, 255, 0.1);
+}
+
+.form-section h3 {
+    color: var(--primary);
+    margin-bottom: 20px;
+    font-size: 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--accent-light);
+}
+
+.form-section h3 i {
+    color: var(--accent);
+    margin-right: 10px;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-size: 14px;
+}
+
+.form-control {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    font-size: 14px;
+    color: var(--text-primary);
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.1);
+}
+
+.form-control[readonly], .form-control[disabled] {
+    background-color: var(--light);
+    color: var(--text-secondary);
+    cursor: not-allowed;
+}
+
+.form-row {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.form-row .form-group {
+    flex: 1;
+}
+
+.form-text {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 5px;
+}
+
+/* Barcode Preview Grid */
+.barcode-preview-grid,
+.all-barcodes-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     gap: 15px;
-    margin-top: 20px;
+    margin: 15px 0;
+    padding: 15px;
+    background: var(--light);
+    border-radius: 8px;
     max-height: 400px;
     overflow-y: auto;
-    padding: 15px;
-    background: #f8f9fa;
-    border-radius: 8px;
 }
 
-.barcode-preview-card {
-    background: white;
-    border: 1px solid #e0e0e0;
+.barcode-preview-card,
+.barcode-item-card {
+    background: var(--white);
+    border: 1px solid var(--border-light);
     border-radius: 8px;
     padding: 15px;
     text-align: center;
+    transition: all 0.2s;
 }
 
-.barcode-preview-card .item-number {
-    font-size: 14px;
+.barcode-preview-card:hover,
+.barcode-item-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(107, 140, 255, 0.15);
+    border-color: var(--primary);
+}
+
+.barcode-preview-card .item-number,
+.barcode-item-card .item-property {
     font-weight: bold;
-    color: #2196F3;
+    color: var(--primary);
     margin-bottom: 10px;
+    font-size: 13px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--accent-light);
 }
 
-.barcode-preview-card .barcode-img img {
+.barcode-img {
+    margin: 10px 0;
+    padding: 10px;
+    background: var(--white);
+}
+
+.barcode-img img {
     max-width: 100%;
     height: auto;
 }
 
-.barcode-preview-card .barcode-value {
+.barcode-value {
     font-family: monospace;
     font-size: 11px;
+    color: var(--text-secondary);
     margin-top: 8px;
     word-break: break-all;
 }
 
-/* Loading indicator */
-.loading {
-    text-align: center;
-    padding: 30px;
-    color: #666;
+/* Barcode Detail Item */
+.barcode-detail-item {
+    margin: 15px 0;
+    padding: 20px;
+    background: var(--light);
+    border-radius: 8px;
+    border-left: 4px solid var(--accent);
 }
 
-.loading i {
-    font-size: 24px;
+.barcode-detail-item .barcode-label {
+    font-weight: bold;
+    color: var(--primary);
     margin-bottom: 10px;
-    color: #2196F3;
 }
 
-.loading-spinner {
+.barcode-detail-item .barcode-image {
     text-align: center;
-    padding: 30px;
-    color: #F16D34;
-}
-
-.loading-spinner i {
-    margin-right: 8px;
-}
-
-/* Alert styles */
-.alert {
     padding: 15px;
+    background: var(--white);
+    border-radius: 5px;
+}
+
+.barcode-detail-item .barcode-image img {
+    max-width: 100%;
+    height: auto;
+    max-height: 60px;
+}
+
+.barcode-detail-item .barcode-value {
+    font-family: monospace;
+    text-align: center;
+    margin-top: 10px;
+    color: var(--accent);
+}
+
+/* Alert Styles */
+.alert {
+    padding: 15px 20px;
     border-radius: 8px;
     margin-bottom: 20px;
-}
-
-.alert-success {
-    background-color: #d4edda;
-    color: #155724;
-    border: 1px solid #c3e6cb;
-}
-
-.alert-danger {
-    background-color: #f8d7da;
-    color: #721c24;
-    border: 1px solid #f5c6cb;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-left: 4px solid transparent;
 }
 
 .alert i {
-    margin-right: 10px;
-}
-
-/* Additional styles for the enhanced form */
-.form-section {
-    background: #f8f9fa;
-    padding: 20px;
-    margin-bottom: 25px;
-    border-radius: 10px;
-    border-left: 4px solid #F16D34;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-}
-
-.form-section h3 {
-    color: #161E54;
-    margin-bottom: 20px;
     font-size: 18px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid #BBE0EF;
 }
 
-.form-section h3 i {
-    color: #F16D34;
-    margin-right: 10px;
+.alert-success {
+    background-color: var(--success-light);
+    color: var(--success);
+    border-left-color: var(--success);
 }
 
-.form-text.text-muted {
-    color: #FF986A !important;
-    font-size: 12px;
-    margin-top: 5px;
-    display: block;
+.alert-danger {
+    background-color: #ffebee;
+    color: var(--danger);
+    border-left-color: var(--danger);
 }
 
-.form-control[readonly], .form-control[disabled] {
-    background-color: #BBE0EF;
-    color: #161E54;
-    cursor: not-allowed;
-    opacity: 0.7;
+/* Loading Indicator */
+.loading,
+.loading-spinner {
+    text-align: center;
+    padding: 30px;
+    color: var(--text-muted);
 }
 
-/* Stock alert row */
-.stock-alert-row {
-    background-color: #fff3cd;
+.loading i,
+.loading-spinner i {
+    font-size: 32px;
+    margin-bottom: 15px;
+    color: var(--primary);
 }
 
-.stock-alert-row:hover {
-    background-color: #ffe69c;
+/* Text Utilities */
+.text-muted {
+    color: var(--text-muted) !important;
 }
+
+.text-danger {
+    color: var(--danger) !important;
+}
+
+.text-info {
+    color: var(--info) !important;
+}
+
+.text-center {
+    text-align: center;
+}
+
+.mt-3 {
+    margin-top: 15px;
+}
+
+/* Form Check */
+.form-check {
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.form-check-input {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: var(--accent);
+}
+
+.form-check-label {
+    font-size: 14px;
+    cursor: pointer;
+}
+
+/* Pagination Styles */
+.pagination {
+    display: flex;
+    justify-content: center;
+    gap: 5px;
+    margin-top: 30px;
+}
+
+.pagination a,
+.pagination span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 35px;
+    height: 35px;
+    padding: 0 8px;
+    border-radius: 6px;
+    background: var(--white);
+    color: var(--text-secondary);
+    text-decoration: none;
+    border: 1px solid var(--border-light);
+    transition: all 0.2s;
+}
+
+.pagination a:hover {
+    background: var(--primary);
+    color: var(--text-light);
+    border-color: var(--primary);
+}
+
+.pagination .active {
+    background: var(--primary);
+    color: var(--text-light);
+    border-color: var(--primary);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .dashboard-cards {
+        grid-template-columns: 1fr;
+    }
+    
+    .search-box {
+        flex-direction: column;
+    }
+    
+    .form-row {
+        flex-direction: column;
+        gap: 0;
+    }
+    
+    .action-buttons {
+        justify-content: flex-start;
+    }
+    
+    .modal-content {
+        margin: 20px;
+        width: auto;
+    }
+    
+    .barcode-preview-grid,
+    .all-barcodes-grid {
+        grid-template-columns: 1fr;
+    }
+}
+/* Sticky SCAN BARCODE Button - Bottom Right of Table */
+.sticky-scan-button-container {
+    position: sticky;
+    bottom: 30px;
+    display: flex;
+    justify-content: flex-end;
+    margin-top: -50px;
+    padding-right: 20px;
+    padding-bottom: 20px;
+    pointer-events: none;
+    z-index: 100;
+}
+
+.sticky-scan-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 16px 32px;
+    background: linear-gradient(135deg, var(--accent) 0%, #e69eb0 100%);
+    color: var(--text-primary);
+    font-weight: bold;
+    font-size: 16px;
+    border-radius: 60px;
+    text-decoration: none;
+    box-shadow: 0 10px 30px rgba(248, 176, 192, 0.6);
+    border: 2px solid white;
+    pointer-events: auto;
+    transition: all 0.3s ease;
+    animation: pulse-sticky-table 2s infinite;
+    letter-spacing: 0.5px;
+    backdrop-filter: blur(5px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.sticky-scan-button i {
+    font-size: 20px;
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));
+}
+
+.sticky-scan-button:hover {
+    transform: translateY(-5px) scale(1.05);
+    box-shadow: 0 20px 40px rgba(248, 176, 192, 0.8);
+    background: linear-gradient(135deg, #e69eb0 0%, var(--accent) 100%);
+    border-color: var(--primary);
+}
+
+@keyframes pulse-sticky-table {
+    0% {
+        box-shadow: 0 10px 30px rgba(248, 176, 192, 0.6);
+        transform: scale(1);
+    }
+    50% {
+        box-shadow: 0 15px 40px rgba(248, 176, 192, 0.9);
+        transform: scale(1.05);
+    }
+    100% {
+        box-shadow: 0 10px 30px rgba(248, 176, 192, 0.6);
+        transform: scale(1);
+    }
+}
+
+/* Add a subtle glow effect */
+.sticky-scan-button::after {
+    content: '';
+    position: absolute;
+    top: -2px;
+    left: -2px;
+    right: -2px;
+    bottom: -2px;
+    background: linear-gradient(135deg, var(--accent-light), var(--accent));
+    border-radius: 60px;
+    z-index: -1;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.sticky-scan-button:hover::after {
+    opacity: 0.5;
+}
+
+/* For mobile responsiveness */
+@media (max-width: 768px) {
+    .sticky-scan-button-container {
+        bottom: 20px;
+        padding-right: 10px;
+        padding-bottom: 10px;
+    }
+    
+    .sticky-scan-button {
+        padding: 12px 24px;
+        font-size: 14px;
+        gap: 8px;
+    }
+    
+    .sticky-scan-button i {
+        font-size: 16px;
+    }
+}
+
+/* Ensure button stays within table container */
+.table-container {
+    position: relative;
+    overflow: visible !important;
+}
+
+/* Remove the old SCAN BARCODE button from Quick Actions */
+/* Find this section in Quick Actions and either remove or comment out the SCAN BARCODE button */
 </style>
-
 <script>
 // Calculate total value
 document.getElementById('quantity')?.addEventListener('input', calculateTotal);
@@ -1273,6 +2173,10 @@ function openAddModal() {
     document.querySelector('#semiForm input[name="action"]').value = 'add';
     document.getElementById('semiModal').style.display = 'block';
     document.getElementById('barcodePreview').innerHTML = '';
+    document.getElementById('multipleBarcodeOption').style.display = 'none';
+    document.getElementById('barcodePreviewContainer').style.display = 'none';
+    document.getElementById('generate_multiple_barcodes').value = '0';
+    document.getElementById('itemCountDisplay').textContent = '1';
     calculateTotal();
 }
 
@@ -1300,15 +2204,172 @@ function closeAddBarcodeModal() {
     document.getElementById('addBarcodeModal').style.display = 'none';
 }
 
-// View Item Details - UPDATED WITH CREATED BY FIELD
+// Close All Barcodes Modal
+function closeAllBarcodesModal() {
+    document.getElementById('viewAllBarcodesModal').style.display = 'none';
+}
+
+// Check quantity for multiple barcodes option
+function checkQuantityForMultipleBarcodes() {
+    let quantity = parseFloat(document.getElementById('quantity').value);
+    let multipleOption = document.getElementById('multipleBarcodeOption');
+    let isInteger = Number.isInteger(quantity) && quantity > 1;
+    let isEdit = <?php echo $edit_item ? 'true' : 'false'; ?>;
+    
+    if (isInteger && !isEdit) { // Only show for new items
+        multipleOption.style.display = 'block';
+        // Update the label text
+        document.getElementById('itemCountDisplay').textContent = quantity;
+    } else {
+        multipleOption.style.display = 'none';
+        document.getElementById('multiple_barcodes').checked = false;
+        document.getElementById('barcodePreviewContainer').style.display = 'none';
+        document.getElementById('generate_multiple_barcodes').value = '0';
+    }
+}
+
+// Toggle multiple barcodes generation
+function toggleMultipleBarcodes() {
+    let isChecked = document.getElementById('multiple_barcodes').checked;
+    let previewContainer = document.getElementById('barcodePreviewContainer');
+    let generateField = document.getElementById('generate_multiple_barcodes');
+    
+    generateField.value = isChecked ? '1' : '0';
+    
+    if (isChecked) {
+        previewContainer.style.display = 'block';
+        previewMultipleBarcodes();
+    } else {
+        previewContainer.style.display = 'none';
+    }
+}
+
+// Preview multiple barcodes based on quantity
+function previewMultipleBarcodes() {
+    let quantity = parseInt(document.getElementById('quantity').value);
+    if (isNaN(quantity) || quantity < 1) {
+        quantity = 1;
+    }
+    
+    let prefix = 'SEMI';
+    let previewDiv = document.getElementById('multipleBarcodePreview');
+    
+    previewDiv.innerHTML = '<div class="loading-spinner"><i class="fas fa-spinner fa-spin"></i> Generating preview...</div>';
+    
+    // Add timestamp to prevent caching
+    let timestamp = new Date().getTime();
+    let url = '?generate_multiple_preview=1&prefix=' + encodeURIComponent(prefix) + '&quantity=' + quantity + '&t=' + timestamp;
+    
+    console.log('Fetching from URL:', url);
+    
+    fetch(url)
+        .then(response => {
+            console.log('Response status:', response.status);
+            console.log('Response headers:', response.headers.get('content-type'));
+            
+            // Check if response is OK
+            if (!response.ok) {
+                throw new Error('HTTP error! status: ' + response.status);
+            }
+            
+            // Check content type
+            const contentType = response.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                // If not JSON, get the text to see what's being returned
+                return response.text().then(text => {
+                    console.error('Received non-JSON response. First 500 characters:');
+                    console.error(text.substring(0, 500));
+                    
+                    // Try to extract error message from HTML
+                    let errorMatch = text.match(/<b>(?:Fatal error|Warning|Parse error)<\/b>:\s*([^<]+)/i);
+                    let errorMsg = errorMatch ? errorMatch[1] : 'Unknown error';
+                    
+                    throw new Error('Server returned HTML instead of JSON. Error: ' + errorMsg);
+                });
+            }
+            
+            return response.json();
+        })
+        .then(data => {
+            console.log('Preview data received:', data);
+            
+            if (data.success) {
+                let html = '<p style="margin-bottom: 10px; font-weight: bold;">Barcodes to be generated:</p>';
+                
+                if (data.barcodes && data.barcodes.length > 0) {
+                    data.barcodes.forEach(barcode => {
+                        html += `
+                            <div style="display: flex; align-items: center; gap: 10px; padding: 5px; border-bottom: 1px solid #eee;">
+                                <span style="min-width: 30px; font-weight: bold;">#${barcode.index}:</span>
+                                <span style="font-family: monospace; flex: 1;">${escapeHtml(barcode.value)}</span>
+                            </div>
+                        `;
+                    });
+                    
+                    if (data.total > data.barcodes.length) {
+                        html += `<p class="text-muted" style="margin-top: 10px;">... and ${data.total - data.barcodes.length} more items</p>`;
+                    }
+                } else {
+                    html += '<p class="text-muted">No barcodes to preview</p>';
+                }
+                
+                previewDiv.innerHTML = html;
+            } else {
+                let errorMsg = data.error || 'Unknown error occurred';
+                previewDiv.innerHTML = `<div class="alert alert-danger">Error generating preview: ${escapeHtml(errorMsg)}</div>`;
+            }
+        })
+        .catch(error => {
+            console.error('Fetch error:', error);
+            previewDiv.innerHTML = `<div class="alert alert-danger">Network error: ${escapeHtml(error.message)}</div>`;
+        });
+}
+
+// View Item Details - UPDATED WITH CREATED BY FIELD AND MULTIPLE SET INFO
 function viewItem(itemId) {
     // Show loading
     document.getElementById('viewModalContent').innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i><br>Loading item details...</div>';
     document.getElementById('viewModal').style.display = 'block';
     
-    fetch('<?php echo SITE_URL; ?>/api/get_item_details.php?id=' + itemId)
-        .then(response => response.json())
+    // Add timestamp to prevent caching
+    let timestamp = new Date().getTime();
+    let url = '<?php echo SITE_URL; ?>/api/get_item_details.php?id=' + itemId + '&t=' + timestamp;
+    
+    console.log('Fetching from URL:', url);
+    
+    fetch(url)
+        .then(response => {
+            console.log('Response status:', response.status);
+            console.log('Response headers:', response.headers.get('content-type'));
+            
+            // Check if response is OK
+            if (!response.ok) {
+                throw new Error('HTTP error! status: ' + response.status);
+            }
+            
+            // Check content type
+            const contentType = response.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                // If not JSON, get the text to see what's being returned
+                return response.text().then(text => {
+                    console.error('Received non-JSON response:', text.substring(0, 200));
+                    throw new Error('Server returned non-JSON response. Check console for details.');
+                });
+            }
+            
+            return response.json();
+        })
         .then(data => {
+            console.log('Data received:', data);
+            
+            if (data.error) {
+                document.getElementById('viewModalContent').innerHTML = '<div class="alert alert-danger">Error: ' + escapeHtml(data.error) + '</div>';
+                return;
+            }
+            
+            // Check if this is part of a multiple set by looking for similar property numbers
+            let isMultipleSet = data.property_no && data.property_no.includes('-');
+            
             let content = `
                 <div style="margin-bottom: 20px;">
                     <h3>${escapeHtml(data.article_name)}</h3>
@@ -1318,7 +2379,8 @@ function viewItem(itemId) {
                         <tr><td style="padding: 8px 0;"><strong>Category:</strong></td><td style="padding: 8px 0;">${escapeHtml(data.category)}</td></tr>
                         <tr><td style="padding: 8px 0;"><strong>Type of Equipment:</strong></td><td style="padding: 8px 0;">${escapeHtml(data.type_equipment || 'N/A')}</td></tr>
                         <tr><td style="padding: 8px 0;"><strong>Equipment Type:</strong></td><td style="padding: 8px 0;">${escapeHtml(data.equipment_name || 'N/A')}</td></tr>
-                        <tr><td style="padding: 8px 0;"><strong>Quantity:</strong></td><td style="padding: 8px 0;">${escapeHtml(data.qty_physical_count)} ${escapeHtml(data.uom)}</td></tr>
+                        <tr><td style="padding: 8px 0;"><strong>Quantity:</strong
+                        td><td style="padding: 8px 0;">${escapeHtml((data.total_qty !== undefined ? data.total_qty : data.qty_physical_count))} ${escapeHtml(data.uom)}</td></tr>
                         <tr><td style="padding: 8px 0;"><strong>Unit Value:</strong></td><td style="padding: 8px 0;">${formatCurrency(data.unit_value)}</td></tr>
                         <tr><td style="padding: 8px 0;"><strong>Total Value:</strong></td><td style="padding: 8px 0;">${formatCurrency(data.unit_value * data.qty_physical_count)}</td></tr>
                         <tr><td style="padding: 8px 0;"><strong>Fund Cluster:</strong></td><td style="padding: 8px 0;">${escapeHtml(data.fund_cluster || 'N/A')}</td></tr>
@@ -1334,14 +2396,187 @@ function viewItem(itemId) {
                         <tr><td style="padding: 8px 0;"><strong>Date Updated:</strong></td><td style="padding: 8px 0;">${data.date_updated ? formatDate(data.date_updated) : 'Never'}</td></tr>
                         <tr><td style="padding: 8px 0;"><strong>Remarks:</strong></td><td style="padding: 8px 0;">${escapeHtml(data.remarks || 'N/A')}</td></tr>
                     </table>
+                    
+                    <div style="margin-top: 25px; border-top: 2px solid #BBE0EF; padding-top: 15px;">
+                        <h4 style="color: #F16D34; margin-bottom: 15px;"><i class="fas fa-barcode"></i> Barcode Information</h4>
+                        
+                        ${data.barcode_data ? `
+                            <div class="barcode-detail-item">
+                                <div class="barcode-label">Barcode:</div>
+                                <div class="barcode-image">
+                                    <img src="generate_barcodeppe.php?code=${encodeURIComponent(data.barcode_data)}&format=png&width=300&height=60" 
+                                         alt="Barcode" 
+                                         onerror="this.style.display='none'; this.parentNode.innerHTML += '<div style=\'font-family: monospace; padding: 10px; background: #f0f0f0;\'>' + escapeHtml('${data.barcode_data}') + '</div>';">
+                                </div>
+                                <div class="barcode-value">${escapeHtml(data.barcode_data)}</div>
+                            </div>
+                        ` : '<p class="text-muted">No barcode assigned to this item.</p>'}
+                        
+                        ${isMultipleSet ? `
+                            <div style="margin-top: 15px; padding: 10px; background: #e8f4f8; border-radius: 5px;">
+                                <i class="fas fa-info-circle" style="color: #F16D34;"></i>
+                                <small> This item is part of a multiple set. <button class="btn btn-xs btn-info" onclick="viewAllBarcodes('${data.property_no}', '${escapeHtml(data.article_name)}')">View All Barcodes</button></small>
+                            </div>
+                        ` : ''}
+                    </div>
                 </div>
             `;
             document.getElementById('viewModalContent').innerHTML = content;
         })
         .catch(error => {
-            document.getElementById('viewModalContent').innerHTML = '<div class="alert alert-danger">Error loading item details</div>';
-            console.error('Error:', error);
+            console.error('Error details:', error);
+            document.getElementById('viewModalContent').innerHTML = '<div class="alert alert-danger">Error loading item details: ' + escapeHtml(error.message) + '<br><br>Check browser console for more details.</div>';
         });
+}
+
+// View all barcodes for a multiple set
+function viewAllBarcodes(propertyNo, itemName) {
+    document.getElementById('allBarcodesModalTitle').textContent = 'All Barcodes - ' + escapeHtml(itemName);
+    document.getElementById('allBarcodesContent').innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i><br>Loading barcodes...</div>';
+    document.getElementById('viewAllBarcodesModal').style.display = 'block';
+    
+    // Add timestamp to prevent caching
+    let timestamp = new Date().getTime();
+    let url = '?get_multiple_items=1&property_no=' + encodeURIComponent(propertyNo) + '&t=' + timestamp;
+    
+    console.log('Fetching from URL:', url);
+    
+    fetch(url)
+        .then(response => {
+            console.log('Response status:', response.status);
+            console.log('Response headers:', response.headers.get('content-type'));
+            
+            // Check if response is OK
+            if (!response.ok) {
+                throw new Error('HTTP error! status: ' + response.status);
+            }
+            
+            // Check content type
+            const contentType = response.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                // If not JSON, get the text to see what's being returned
+                return response.text().then(text => {
+                    console.error('Received non-JSON response:', text.substring(0, 200));
+                    throw new Error('Server returned non-JSON response. Check console for details.');
+                });
+            }
+            
+            return response.json();
+        })
+        .then(data => {
+            console.log('Data received:', data);
+            
+            if (data.error) {
+                document.getElementById('allBarcodesContent').innerHTML = '<div class="alert alert-danger">Error: ' + escapeHtml(data.error) + '</div>';
+                return;
+            }
+            
+            if (data.success && data.items.length > 0) {
+                let html = `
+                    <p><strong>Found ${data.count} items in this set:</strong></p>
+                    <div class="all-barcodes-grid">
+                `;
+                
+                data.items.forEach((item, index) => {
+                    html += `
+                        <div class="barcode-item-card">
+                            <div class="item-property">Item ${index + 1}: ${escapeHtml(item.property_no)}</div>
+                            <div class="barcode-image" style="text-align: center; margin: 10px 0;">
+                                <img src="generate_barcode.php?code=${encodeURIComponent(item.barcode_data)}&width=250&height=60" 
+                                     alt="Barcode" style="max-width: 100%; height: auto; border: 1px solid #ddd; padding: 5px; border-radius: 4px;">
+                            </div>
+                            <div class="barcode-value" style="font-family: monospace; font-size: 13px; padding: 10px; background: var(--light); border-radius: 5px; margin: 10px 0;">${escapeHtml(item.barcode_data)}</div>
+                            <div class="item-actions">
+                                <button class="btn-xs" onclick="showBarcodeModal('${item.barcode_data}', '${escapeHtml(item.article_name)} - ${escapeHtml(item.property_no)}')">
+                                    <i class="fas fa-search"></i> View
+                                </button>
+                                <button class="btn-xs" onclick="printBarcode('${item.barcode_data}', '${escapeHtml(item.article_name)} - ${escapeHtml(item.property_no)}')">
+                                    <i class="fas fa-print"></i> Print
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                html += '</div>';
+                document.getElementById('allBarcodesContent').innerHTML = html;
+            } else {
+                document.getElementById('allBarcodesContent').innerHTML = '<div class="alert alert-warning">No related items found.</div>';
+            }
+        })
+        .catch(error => {
+            console.error('Error details:', error);
+            document.getElementById('allBarcodesContent').innerHTML = '<div class="alert alert-danger">Error loading barcodes: ' + escapeHtml(error.message) + '<br><br>Check browser console for more details.</div>';
+        });
+}
+
+// Print all barcodes in the modal
+function printAllBarcodes() {
+    let content = document.getElementById('allBarcodesContent').innerHTML;
+    let title = document.getElementById('allBarcodesModalTitle').textContent;
+    
+    let printWindow = window.open('', '_blank');
+    printWindow.document.write(`
+        <html>
+        <head>
+            <title>${escapeHtml(title)}</title>
+            <style>
+                :root {
+                    --primary: #F16D34;
+                    --accent: #FF9100;
+                    --text-primary: #3A3A3A;
+                }
+                body { font-family: Arial, sans-serif; padding: 20px; }
+                .print-header { text-align: center; margin-bottom: 30px; }
+                .print-header h2 { color: var(--primary); }
+                .barcodes-grid { 
+                    display: grid; 
+                    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); 
+                    gap: 20px; 
+                }
+                .barcode-item { 
+                    border: 2px solid var(--primary); 
+                    padding: 15px; 
+                    text-align: center; 
+                    border-radius: 8px;
+                    page-break-inside: avoid;
+                    background: #fff;
+                }
+                .barcode-item-card {
+                    border: 2px solid var(--primary); 
+                    padding: 15px; 
+                    text-align: center; 
+                    border-radius: 8px;
+                    page-break-inside: avoid;
+                    background: #fff;
+                }
+                .barcode-image { margin: 10px 0; }
+                .barcode-image img { max-width: 100%; height: auto; border: 1px solid #ddd; padding: 5px; border-radius: 4px; }
+                .barcode-item img, .barcode-item-card img { max-width: 100%; height: auto; }
+                .item-property, .item-property-text { font-weight: bold; color: var(--primary); margin-bottom: 10px; }
+                .barcode-value { font-family: monospace; color: var(--text-primary); margin-top: 5px; font-size: 12px; }
+                .item-actions { display: none; }
+                @media print {
+                    body { margin: 0; padding: 10px; }
+                    .barcode-item, .barcode-item-card { border: 1px solid #000; }
+                    .item-actions { display: none; }
+                }
+            </style>
+        </head>
+        <body>
+            <div class="print-header">
+                <h2>${escapeHtml(title)}</h2>
+            </div>
+            <div class="barcodes-grid">
+                ${content.replace(/<button.*?<\/button>/g, '').replace(/<div class="item-actions">[\s\S]*?<\/div>/g, '')}
+            </div>
+            <script>
+                window.onload = function() { window.print(); setTimeout(function() { window.close(); }, 500); }
+            <\/script>
+        </body>
+        </html>
+    `);
+    printWindow.document.close();
 }
 
 function formatCurrency(amount) {
@@ -1375,6 +2610,7 @@ window.onclick = function(event) {
     let viewModal = document.getElementById('viewModal');
     let barcodeModal = document.getElementById('barcodeModal');
     let addBarcodeModal = document.getElementById('addBarcodeModal');
+    let allBarcodesModal = document.getElementById('viewAllBarcodesModal');
     
     if (event.target == semiModal) {
         closeModal();
@@ -1387,6 +2623,9 @@ window.onclick = function(event) {
     }
     if (event.target == addBarcodeModal) {
         closeAddBarcodeModal();
+    }
+    if (event.target == allBarcodesModal) {
+        closeAllBarcodesModal();
     }
 }
 
@@ -1448,10 +2687,7 @@ function previewBarcodes() {
                 html += `
                 <div class="barcode-preview-card">
                     <div class="item-number">Item ${barcode.index}</div>
-                    <div class="barcode-img">
-                        <img src="data:image/png;base64,${barcode.barcode}" alt="Barcode">
-                    </div>
-                    <div class="barcode-value">${barcode.value}</div>
+                    <div class="barcode-value" style="font-family: monospace; font-size: 13px; padding: 10px; background: var(--light); border-radius: 5px; margin: 10px 0;">${barcode.value}</div>
                 </div>
                 `;
             });
@@ -1591,6 +2827,16 @@ function testBarcodeGenerator() {
     let testValue = 'SEMI-TEST-' + new Date().getTime();
     window.open('generate_barcodeppe.php?code=' + testValue + '&format=html', '_blank');
 }
+
+// Initialize Select2 for searchable multi-select fields
+document.addEventListener('DOMContentLoaded', function() {
+    $('.searchable-select').select2({
+        placeholder: 'Search and select users...',
+        allowClear: true,
+        width: '100%',
+        theme: 'bootstrap-5'
+    });
+});
 </script>
 
 <?php include INCLUDE_PATH . '/footer.php'; ?>

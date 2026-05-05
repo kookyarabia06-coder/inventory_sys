@@ -227,15 +227,31 @@ body {
     color: var(--text-secondary);
 }
 
+.user-info-link {
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: block;
+    padding: 5px 0;
+    border-radius: 5px;
+}
+
+.user-info-link:hover .user-info h4 {
+    color: var(--primary);
+}
+
+.user-info-link:hover .user-info p {
+    color: var(--primary);
+}
+
 .user-avatar {
-    width: 45px;
-    height: 45px;
+    width: 35px;
+    height: 35px;
     border-radius: 50%;
     background: linear-gradient(135deg, var(--accent), #E6A0B0);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 20px;
+    font-size: 16px;
     color: var(--text-light);
     border: 2px solid var(--white);
 }
@@ -531,8 +547,8 @@ tr:hover td {
 }
 
 .image-preview {
-    max-width: 200px;
-    max-height: 200px;
+    max-width: 40px;
+    max-height: 40px;
     margin-top: 10px;
     border-radius: 8px;
     border: 1px solid var(--border-light);
@@ -1225,17 +1241,31 @@ tr:hover td {
 }
 
 .profile-avatar {
-    width: 100px;
-    height: 100px;
+    width: 140px;
+    height: 140px;
     border-radius: 50%;
     background: linear-gradient(135deg, var(--accent), #E6A0B0);
     margin: 0 auto 15px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 40px;
+    font-size: 48px;
     color: var(--text-light);
     border: 3px solid var(--white);
+    overflow: hidden;
+    position: relative;
+}
+
+.profile-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+    border-radius: 50%;
+}
+
+.profile-avatar i {
+    font-size: 48px;
 }
 
 .profile-name {
@@ -1397,7 +1427,7 @@ tr:hover td {
 }
 
 .stock-alert-row td {
-    color: #F57C00;
+    color: var(--text-primary);
 }
 
 .best-selling-grid {
@@ -1623,26 +1653,33 @@ input:checked + .slider:before {
 }
 
 /* ================================================
-   27. CUSTOM SCROLLBAR
+   27.2 LIGHTER BLUE SCROLLBAR (ALTERNATIVE)
    ================================================ */
+/* Uncomment this section for a lighter blue variant */
+
 ::-webkit-scrollbar {
     width: 8px;
     height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-    background: #F0F0F0;
+    background: #4a627a;
+    border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: #C0C0C0;
-    border-radius: 4px;
+    background: #2C3E50;
+    border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: #A0A0A0;
+    background: #1a2632;
 }
 
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #2C3E50 #4a627a;
+}
 /* ================================================
    28. ANIMATIONS
    ================================================ */
@@ -1880,6 +1917,74 @@ input:checked + .slider:before {
     body {
         background: white;
     }
+}
+
+/* ================================================
+   32. SELECT2 CUSTOM STYLES
+   ================================================ */
+.select2-container--default .select2-selection--multiple {
+    border: 1px solid var(--border-light);
+    border-radius: 6px;
+    min-height: 38px;
+    background-color: var(--white);
+}
+
+.select2-container--default .select2-selection--multiple .select2-selection__rendered {
+    padding: 2px 8px;
+    color: var(--text-primary);
+}
+
+.select2-container--default .select2-selection--multiple .select2-selection__choice {
+    background-color: var(--primary);
+    border: none;
+    border-radius: 4px;
+    color: var(--text-light);
+    padding: 3px 8px;
+    margin: 2px;
+    font-size: 13px;
+}
+
+.select2-container--default .select2-selection--multiple .select2-selection__choice__remove {
+    color: var(--text-light);
+    margin-right: 5px;
+}
+
+.select2-container--default .select2-selection--multiple .select2-selection__choice__remove:hover {
+    color: var(--accent);
+}
+
+.select2-container--default .select2-search--inline .select2-search__field {
+    margin-top: 0;
+    padding: 0;
+    border: none;
+    outline: none;
+    color: var(--text-primary);
+}
+
+.select2-container--default.select2-container--focus .select2-selection--multiple {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(107, 140, 255, 0.2);
+}
+
+.select2-dropdown {
+    border: 1px solid var(--border-light);
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.select2-container--default .select2-results__option {
+    padding: 8px 12px;
+    color: var(--text-primary);
+}
+
+.select2-container--default .select2-results__option--highlighted[aria-selected] {
+    background-color: var(--primary);
+    color: var(--text-light);
+}
+
+.select2-container--default .select2-results__option[aria-selected=true] {
+    background-color: var(--secondary);
+    color: var(--text-primary);
 }
 
 /* ================================================

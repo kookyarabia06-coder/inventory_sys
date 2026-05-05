@@ -33,52 +33,22 @@ if (!isset($page_description)) {
     $page_description = '';
 }
 
-// Get unread notifications count (if user is logged in)
-$unread_count = 0;
-$notifications = [];
-if (isset($_SESSION['user_id'])) {
-    // You can implement notifications table later
-    // For now, just set to 0
-    $unread_count = 0;
-    
-    // Optional: Get low stock notifications for admin/supply
-    if (isset($currentUser) && in_array($currentUser['role'] ?? '', ['super_admin', 'admin', 'supply'])) {
-        $result = $conn->query("SELECT COUNT(*) as count FROM inventory WHERE qty_physical_count <= 5");
-        if ($result) {
-            $low_stock_count = $result->fetch_assoc()['count'];
-            if ($low_stock_count > 0) {
-                $notifications[] = [
-                    'type' => 'warning',
-                    'message' => "$low_stock_count items are low in stock",
-                    'icon' => 'exclamation-triangle',
-                    'link' => SITE_URL . '/inventory?filter=low_stock'
-                ];
-            }
-        }
-    }
-    
-    // Get pending issuances for admin
-    if (isset($currentUser) && in_array($currentUser['role'] ?? '', ['super_admin', 'admin'])) {
-        $result = $conn->query("SELECT COUNT(*) as count FROM equipment_issuance WHERE status = 'issued' AND expected_return < CURDATE()");
-        if ($result) {
-            $overdue_count = $result->fetch_assoc()['count'];
-            if ($overdue_count > 0) {
-                $notifications[] = [
-                    'type' => 'danger',
-                    'message' => "$overdue_count items are overdue",
-                    'icon' => 'clock',
-                    'link' => SITE_URL . '/admin/issue_items'
-                ];
-            }
-        }
-    }
-}
+// Role names for display
+$role_names = [
+    'super_admin' => 'Super Administrator',
+    'admin' => 'Administrator',
+    'supply' => 'Supply Officer',
+    'user' => 'End User'
+];
 
+// Get current date and time
+date_default_timezone_set('Asia/Manila');
+$current_date_full = date('l, F j, Y'); // Monday, May 4, 2026
+$current_time = date('h:i A'); // 01:45 PM
 
 // Debug: Check if CSS file exists
 $css_file = ASSET_PATH . '/css/style.css';
 $css_url = ASSET_URL . '/css/style.css';
-$css_exists = file_exists($css_file);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -93,111 +63,194 @@ $css_exists = file_exists($css_file);
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
+    <!-- Select2 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+    
+    <!-- SweetAlert2 -->
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    
+    <!-- jQuery (for AJAX) -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    
+    <!-- Select2 JS -->
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+    
+    <!-- QuaggaJS for barcode scanning -->
+    <script src="https://cdn.jsdelivr.net/npm/quagga@0.12.1/dist/quagga.min.js"></script>
+    
     <!-- Custom CSS -->
     <link rel="stylesheet" href="<?php echo $css_url; ?>?v=<?php echo time(); ?>">
     
-     <!-- IIMS CUBES ICON - Updated with professional palette -->
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 640 640'%3E%3Cpath fill='%236B8CFF' d='M348 62.7C330.7 52.7 309.3 52.7 292 62.7L207.8 111.3C190.5 121.3 179.8 139.8 179.8 159.8L179.8 261.7L91.5 312.7C74.2 322.7 63.5 341.2 63.5 361.2L63.5 458.5C63.5 478.5 74.2 497 91.5 507L175.8 555.6C193.1 565.6 214.5 565.6 231.8 555.6L320.1 504.6L408.4 555.6C425.7 565.6 447.1 565.6 464.4 555.6L548.5 507C565.8 497 576.5 478.5 576.5 458.5L576.5 361.2C576.5 341.2 565.8 322.7 548.5 312.7L460.2 261.7L460.2 159.8C460.2 139.8 449.5 121.3 432.2 111.3L348 62.7zM296 356.6L296 463.1L207.7 514.1C206.5 514.8 205.1 515.2 203.7 515.2L203.7 409.9L296 356.6zM527.4 357.2C528.1 358.4 528.5 359.8 528.5 361.2L528.5 458.5C528.5 461.4 527 464 524.5 465.4L440.2 514C439 514.7 437.6 515.1 436.2 515.1L436.2 409.8L527.4 357.2zM412.3 159.8L412.3 261.7L320 315L320 208.5L411.2 155.9C411.9 157.1 412.3 158.5 412.3 159.9z'/%3E%3C/svg%3E">
-    <link rel="shortcut icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 640 640'%3E%3Cpath fill='%236B8CFF' d='M348 62.7C330.7 52.7 309.3 52.7 292 62.7L207.8 111.3C190.5 121.3 179.8 139.8 179.8 159.8L179.8 261.7L91.5 312.7C74.2 322.7 63.5 341.2 63.5 361.2L63.5 458.5C63.5 478.5 74.2 497 91.5 507L175.8 555.6C193.1 565.6 214.5 565.6 231.8 555.6L320.1 504.6L408.4 555.6C425.7 565.6 447.1 565.6 464.4 555.6L548.5 507C565.8 497 576.5 478.5 576.5 458.5L576.5 361.2C576.5 341.2 565.8 322.7 548.5 312.7L460.2 261.7L460.2 159.8C460.2 139.8 449.5 121.3 432.2 111.3L348 62.7zM296 356.6L296 463.1L207.7 514.1C206.5 514.8 205.1 515.2 203.7 515.2L203.7 409.9L296 356.6zM527.4 357.2C528.1 358.4 528.5 359.8 528.5 361.2L528.5 458.5C528.5 461.4 527 464 524.5 465.4L440.2 514C439 514.7 437.6 515.1 436.2 515.1L436.2 409.8L527.4 357.2zM412.3 159.8L412.3 261.7L320 315L320 208.5L411.2 155.9C411.9 157.1 412.3 158.5 412.3 159.9z'/%3E%3C/svg%3E">
+    <!-- FAVICON - Try multiple paths -->
+    <link rel="icon" type="image/png" href="<?php echo ASSET_URL; ?>/icons/armmc.png">
+    <link rel="icon" type="image/png" href="<?php echo ASSET_URL; ?>/icons/armmc.png">
+    <link rel="icon" type="image/png" href="<?php echo ASSET_URL; ?>/icons/armmc.png">
+    <link rel="apple-touch-icon" href="<?php echo ASSET_URL; ?>/icons/armmc.png">
+    <link rel="shortcut icon" href="<?php echo ASSET_URL; ?>/icons/armmc.png">
     
-    <!-- Add pop animation to the favicon -->
     <style>
-        /* This makes the browser tab icon pop */
-        link[rel="icon"] {
-            animation: faviconPop 3s infinite;
+        /* Reset and Base Styles */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
         
-        @keyframes faviconPop {
-            0%, 100% { 
-                transform: scale(1); 
-            }
-            50% { 
-                transform: scale(1.2); 
-            }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #F5F7FA;
+            overflow-x: hidden;
         }
         
-        /* Add glow effect with new accent color */
-        link[rel="icon"] {
-            filter: drop-shadow(0 0 5px #F8B0C0);
-            transition: all 0.3s ease;
+        .container-fluid {
+            display: flex;
+            min-height: 100vh;
         }
         
-        /* Pop Icon Custom Styles - Professional Palette */
-        .pop-icon {
-            position: relative;
-            display: inline-flex;
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            margin-left: 260px;
+            padding: 20px 30px;
+            transition: all 0.3s;
+        }
+        
+        /* Header */
+        .header {
+            background: white;
+            border-radius: 16px;
+            padding: 20px 30px;
+            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-between;
             align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            width: 38px;
-            height: 38px;
-            border-radius: 50%;
-            background-color: #F0F0F0;
-            color: #3A3A3A;
-            transition: all 0.2s ease;
-            margin: 0 4px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            position: relative;
+            z-index: 100;
         }
         
-        .pop-icon i {
-            font-size: 16px;
-            color: #6B6B6B;
-            transition: all 0.2s ease;
+        .header-title h1 {
+            font-size: 24px;
+            font-weight: 600;
+            color: #2C3E50;
+            margin-bottom: 5px;
         }
         
-        .pop-icon:hover {
-            background-color: #6B8CFF;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(107, 140, 255, 0.2);
+        .header-title p {
+            font-size: 14px;
+            color: #7F8C8D;
         }
         
-        .pop-icon:hover i {
-            color: white;
+        .header-user {
+            display: flex;
+            align-items: center;
+            gap: 25px;
         }
         
-        .pop-icon:active {
-            transform: scale(0.95);
+        /* DateTime Styles - No background color */
+        .datetime-container {
+            text-align: right;
+            padding: 8px 0;
+            min-width: 220px;
         }
         
-        /* Notification Wrapper */
-        .notification-wrapper {
+        .date-full {
+            font-size: 13px;
+            font-weight: 500;
+            color: #6B8CFF;
+            margin-bottom: 4px;
+            letter-spacing: 0.3px;
+        }
+        
+        .time-display {
+            font-size: 18px;
+            font-weight: 700;
+            color: #2C3E50;
+            font-family: 'Inter', monospace;
+        }
+        
+        .date-full i, .time-display i {
+            margin-right: 6px;
+            font-size: 12px;
+            color: #6B8CFF;
+        }
+        
+        .user-info {
+            text-align: right;
+        }
+        
+        .user-info h4 {
+            font-size: 14px;
+            font-weight: 600;
+            color: #2C3E50;
+            margin-bottom: 2px;
+        }
+        
+        .user-info p {
+            font-size: 12px;
+            color: #7F8C8D;
+        }
+        
+        .user-info-link {
+            text-decoration: none;
+            transition: opacity 0.2s;
+        }
+        
+        .user-info-link:hover {
+            opacity: 0.8;
+        }
+        
+        /* Profile Dropdown */
+        .profile-dropdown-wrapper {
             position: relative;
         }
         
-        .notification-badge {
-            position: absolute;
-            top: -4px;
-            right: -4px;
-            background-color: #F8B0C0;
-            color: white;
-            font-size: 10px;
-            font-weight: 600;
-            min-width: 18px;
-            height: 18px;
-            border-radius: 9px;
+        .user-avatar {
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            overflow: hidden;
+            background: linear-gradient(135deg, #6B8CFF, #8FB5FF);
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 0 4px;
             border: 2px solid white;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
         
-        /* Notification Dropdown */
-        .notification-dropdown {
-            position: absolute;
-            top: 45px;
-            right: -10px;
-            width: 340px;
+        .user-avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        .user-avatar i {
+            font-size: 22px;
+            color: white;
+        }
+        
+        .user-avatar:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(107, 140, 255, 0.4);
+        }
+        
+        .profile-dropdown {
+            position: fixed;
+            top: 70px;
+            right: 20px;
+            width: 280px;
             background: white;
             border-radius: 12px;
-            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
             border: 1px solid #E0E0E0;
-            z-index: 1000;
+            z-index: 99999;
             display: none;
             overflow: hidden;
         }
         
-        .notification-dropdown.show {
+        .profile-dropdown.show {
             display: block;
             animation: slideDown 0.2s ease;
         }
@@ -205,7 +258,7 @@ $css_exists = file_exists($css_file);
         @keyframes slideDown {
             from {
                 opacity: 0;
-                transform: translateY(-8px);
+                transform: translateY(-10px);
             }
             to {
                 opacity: 1;
@@ -213,281 +266,359 @@ $css_exists = file_exists($css_file);
             }
         }
         
-        .notification-header {
+        .profile-dropdown-header {
+            padding: 20px;
+            background: linear-gradient(135deg, #6B8CFF, #8FB5FF);
+            color: white;
+            text-align: center;
+        }
+        
+        .profile-dropdown-avatar {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            margin: 0 auto 10px;
+            overflow: hidden;
+            background: white;
+            border: 3px solid white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .profile-dropdown-avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        .profile-dropdown-avatar i {
+            font-size: 36px;
+            color: #6B8CFF;
+            line-height: 60px;
+        }
+        
+        .profile-dropdown-header h4 {
+            margin: 0 0 5px;
+            font-size: 16px;
+        }
+        
+        .profile-dropdown-header p {
+            margin: 0;
+            font-size: 11px;
+            opacity: 0.9;
+            word-break: break-all;
+        }
+        
+        .profile-dropdown-menu {
+            padding: 8px 0;
+        }
+        
+        .profile-dropdown-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 20px;
+            color: #333;
+            text-decoration: none;
+            transition: background-color 0.2s;
+            cursor: pointer;
+        }
+        
+        .profile-dropdown-item:hover {
+            background-color: #F8F9FA;
+        }
+        
+        .profile-dropdown-item i {
+            width: 20px;
+            font-size: 16px;
+            color: #6B8CFF;
+        }
+        
+        .profile-dropdown-divider {
+            height: 1px;
+            background-color: #E0E0E0;
+            margin: 8px 0;
+        }
+        
+        .profile-dropdown-item.logout {
+            color: #EF4444;
+        }
+        
+        .profile-dropdown-item.logout i {
+            color: #EF4444;
+        }
+        
+        /* Alert Messages */
+        .alert {
             padding: 15px 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            animation: slideIn 0.3s ease;
+        }
+        
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .alert-success {
+            background-color: #E8F5E9;
+            color: #2E7D32;
+            border-left: 4px solid #4CAF50;
+        }
+        
+        .alert-danger {
+            background-color: #FFEBEE;
+            color: #C62828;
+            border-left: 4px solid #F44336;
+        }
+        
+        .alert-warning {
+            background-color: #FFF3E0;
+            color: #E65100;
+            border-left: 4px solid #FF9800;
+        }
+        
+        .alert-info {
+            background-color: #E3F2FD;
+            color: #1565C0;
+            border-left: 4px solid #2196F3;
+        }
+        
+        /* Profile Modal */
+        .profile-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            z-index: 999999;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .profile-modal.show {
+            display: flex;
+        }
+        
+        .profile-modal-content {
+            background: white;
+            border-radius: 16px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 85vh;
+            overflow-y: auto;
+            animation: modalSlideIn 0.3s ease;
+        }
+        
+        @keyframes modalSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .profile-modal-header {
+            padding: 20px;
             border-bottom: 1px solid #E0E0E0;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            background-color: #F8F9FA;
+            background: linear-gradient(135deg, #6B8CFF, #8FB5FF);
+            color: white;
+            border-radius: 16px 16px 0 0;
         }
         
-        .notification-header h4 {
-            font-size: 14px;
-            font-weight: 600;
+        .profile-modal-header h3 {
             margin: 0;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            color: #3A3A3A;
+            font-size: 18px;
         }
         
-        .notification-header h4 i {
-            color: #6B8CFF;
-            font-size: 16px;
-        }
-        
-        .notification-header .mark-read {
-            font-size: 12px;
+        .profile-modal-header .close-modal {
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            font-size: 20px;
             cursor: pointer;
-            color: #6B8CFF;
-            transition: color 0.2s;
-            padding: 4px 8px;
-            border-radius: 4px;
-            background: transparent;
-        }
-        
-        .notification-header .mark-read:hover {
-            color: #8FB5FF;
-            background-color: rgba(107, 140, 255, 0.05);
-        }
-        
-        .notification-list {
-            max-height: 350px;
-            overflow-y: auto;
-        }
-        
-        .notification-item {
-            display: flex;
-            align-items: center;
-            padding: 12px 20px;
-            border-bottom: 1px solid #F0F0F0;
-            text-decoration: none;
-            color: #3A3A3A;
-            transition: background-color 0.2s;
-            position: relative;
-        }
-        
-        .notification-item:hover {
-            background-color: #F8F9FA;
-        }
-        
-        .notification-item::before {
-            content: '';
-            position: absolute;
-            left: 0;
-            top: 0;
-            bottom: 0;
-            width: 3px;
-            background: transparent;
-        }
-        
-        .notification-item.warning::before {
-            background-color: #F8B0C0;
-        }
-        
-        .notification-item.danger::before {
-            background-color: #f44336;
-        }
-        
-        .notification-item.success::before {
-            background-color: #4CAF50;
-        }
-        
-        .notification-item.info::before {
-            background-color: #8FB5FF;
-        }
-        
-        .notification-icon {
-            width: 36px;
-            height: 36px;
+            width: 32px;
+            height: 32px;
             border-radius: 50%;
-            background-color: #F0F0F0;
             display: flex;
             align-items: center;
             justify-content: center;
-            margin-right: 12px;
-            color: #6B8CFF;
-            flex-shrink: 0;
+            transition: all 0.2s;
         }
         
-        .notification-item.warning .notification-icon {
-            background-color: #FFF3E0;
-            color: #F57C00;
+        .profile-modal-header .close-modal:hover {
+            background: rgba(255,255,255,0.3);
         }
         
-        .notification-item.danger .notification-icon {
-            background-color: #FFEBEE;
-            color: #C62828;
+        .profile-modal-body {
+            padding: 20px;
         }
         
-        .notification-item.success .notification-icon {
-            background-color: #E8F5E9;
-            color: #2E7D32;
-        }
-        
-        .notification-item.info .notification-icon {
-            background-color: #E3F2FD;
-            color: #1976D2;
-        }
-        
-        .notification-content {
-            flex: 1;
-        }
-        
-        .notification-content p {
-            font-size: 13px;
-            margin-bottom: 4px;
-            line-height: 1.4;
-            font-weight: 500;
-            color: #3A3A3A;
-        }
-        
-        .notification-content small {
-            font-size: 11px;
-            color: #9E9E9E;
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }
-        
-        .notification-content small i {
-            font-size: 10px;
-        }
-        
-        .notification-empty {
-            padding: 40px 20px;
+        .avatar-upload-section {
             text-align: center;
-            color: #9E9E9E;
+            margin-bottom: 25px;
         }
         
-        .notification-empty i {
-            font-size: 40px;
-            margin-bottom: 12px;
-            color: #E0E0E0;
+        .current-avatar {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 3px solid #6B8CFF;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            margin-bottom: 15px;
+            cursor: pointer;
         }
         
-        .notification-empty p {
+        .current-avatar-placeholder {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            background: #F0F0F0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 48px;
+            color: #6B8CFF;
+            border: 3px solid #6B8CFF;
+            cursor: pointer;
+        }
+        
+        .avatar-upload-btn {
+            background: #6B8CFF;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 20px;
+            cursor: pointer;
             font-size: 13px;
-            color: #9E9E9E;
+            margin-top: 10px;
+            transition: all 0.2s;
         }
         
-        .notification-footer {
-            padding: 12px 20px;
+        .avatar-upload-btn:hover {
+            background: #5a7ae6;
+            transform: translateY(-1px);
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #333;
+            font-size: 13px;
+        }
+        
+        .form-group input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #E0E0E0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        
+        .form-group input:focus {
+            outline: none;
+            border-color: #6B8CFF;
+            box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.1);
+        }
+        
+        .form-group input:disabled {
+            background: #F5F5F5;
+            color: #999;
+        }
+        
+        .profile-modal-footer {
+            padding: 15px 20px;
             border-top: 1px solid #E0E0E0;
-            text-align: center;
-            background-color: #F8F9FA;
-        }
-        
-        .notification-footer a {
-            color: #6B8CFF;
-            text-decoration: none;
-            font-size: 13px;
-            font-weight: 500;
-            transition: color 0.2s;
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 16px;
-        }
-        
-        .notification-footer a:hover {
-            color: #8FB5FF;
-            background-color: rgba(107, 140, 255, 0.05);
-        }
-        
-        /* Header Actions */
-        .header-actions {
             display: flex;
-            gap: 12px;
-            align-items: center;
-            margin-right: 20px;
+            justify-content: flex-end;
+            gap: 10px;
         }
         
-        .header-actions .pop-icon {
-            background-color: #F0F0F0;
-            width: 38px;
-            height: 38px;
-        }
-        
-        .header-actions .pop-icon i {
-            color: #6B6B6B;
-        }
-        
-        .header-actions .pop-icon:hover {
-            background-color: #6B8CFF;
-        }
-        
-        .header-actions .pop-icon:hover i {
+        .btn-save {
+            background: #4CAF50;
             color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.2s;
         }
         
-        /* Tooltip for pop icons */
-        .pop-icon[data-tooltip] {
-            position: relative;
+        .btn-save:hover {
+            background: #388E3C;
+            transform: translateY(-1px);
         }
         
-        .pop-icon[data-tooltip]::before {
-            content: attr(data-tooltip);
-            position: absolute;
-            bottom: 120%;
-            left: 50%;
-            transform: translateX(-50%);
-            background-color: #2C3E50;
+        .btn-cancel {
+            background: #f44336;
             color: white;
-            padding: 5px 10px;
-            border-radius: 4px;
-            font-size: 11px;
-            white-space: nowrap;
-            z-index: 1000;
-            opacity: 0;
-            visibility: hidden;
-            transition: all 0.2s ease;
-            pointer-events: none;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            font-weight: 400;
-            letter-spacing: 0.3px;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.2s;
         }
         
-        .pop-icon[data-tooltip]::after {
-            content: '';
-            position: absolute;
-            bottom: 110%;
-            left: 50%;
-            transform: translateX(-50%);
-            border-width: 4px;
-            border-style: solid;
-            border-color: #2C3E50 transparent transparent transparent;
-            opacity: 0;
-            visibility: hidden;
-            transition: all 0.2s ease;
-            pointer-events: none;
+        .btn-cancel:hover {
+            background: #d32f2f;
+            transform: translateY(-1px);
         }
         
-        .pop-icon[data-tooltip]:hover::before,
-        .pop-icon[data-tooltip]:hover::after {
-            opacity: 1;
-            visibility: visible;
-            bottom: 130%;
+        /* Responsive */
+        @media (max-width: 768px) {
+            .main-content {
+                margin-left: 0;
+                padding: 15px;
+            }
+            
+            .header {
+                flex-direction: column;
+                gap: 15px;
+            }
+            
+            .header-title {
+                text-align: center;
+            }
+            
+            .datetime-container {
+                text-align: center;
+                width: 100%;
+            }
+            
+            .profile-dropdown {
+                right: 10px;
+                top: 60px;
+            }
         }
     </style>
-    
-   
 </head>
 <body>
-    <?php if (isset($_GET['debug'])): ?>
-    <div class="debug-info">
-        <strong>Debug Info:</strong><br>
-        SITE_URL: <?php echo SITE_URL; ?><br>
-        ASSET_URL: <?php echo ASSET_URL; ?><br>
-        CSS URL: <?php echo $css_url; ?><br>
-        CSS Exists: <?php echo $css_exists ? 'Yes' : 'No'; ?><br>
-        Base Path: <?php echo BASE_PATH; ?><br>
-        Current Page: <?php echo basename($_SERVER['PHP_SELF']); ?><br>
-        User Role: <?php echo $currentUser['role'] ?? 'Not logged in'; ?><br>
-        Unread Count: <?php echo $unread_count; ?>
-    </div>
-    <?php endif; ?>
-    
     <div class="container-fluid">
         <!-- Include Sidebar -->
         <?php include INCLUDE_PATH . '/sidebar.php'; ?>
@@ -503,76 +634,66 @@ $css_exists = file_exists($css_file);
                     <?php endif; ?>
                 </div>
                 <div class="header-user">
-                    <!-- Notification Pop Icon -->
-                    <?php if (isset($_SESSION['user_id'])): ?>
-                    <div class="header-actions">
-                        <!-- Notifications Dropdown -->
-                        <div class="pop-icon notification-wrapper" id="notificationIcon" data-tooltip="Notifications">
-                            <i class="fas fa-bell"></i>
-                            <?php if ($unread_count > 0 || !empty($notifications)): ?>
-                            <span class="notification-badge"><?php echo count($notifications) ?: $unread_count; ?></span>
+                    <!-- Date and Time Display - No background color -->
+                    <div class="datetime-container">
+                        <div class="date-full">
+                            <i class="far fa-calendar-alt"></i> <?php echo $current_date_full; ?>
+                        </div>
+                        <div class="time-display" id="liveTime">
+                            <i class="far fa-clock"></i> <?php echo $current_time; ?>
+                        </div>
+                    </div>
+                    
+                    <!-- User Info -->
+                    <a href="<?php echo SITE_URL; ?>" class="user-info-link">
+                        <div class="user-info">
+                            <h4><?php echo htmlspecialchars(($currentUser['firstname'] ?? '') . ' ' . ($currentUser['lastname'] ?? 'User')); ?></h4>
+                            <p><?php echo $role_names[$currentUser['role'] ?? ''] ?? ucfirst(str_replace('_', ' ', $currentUser['role'] ?? 'Guest')); ?></p>
+                        </div>
+                    </a>
+                    
+                    <!-- Profile Dropdown -->
+                    <div class="profile-dropdown-wrapper">
+                        <div class="user-avatar" id="profileAvatarBtn">
+                            <?php if (!empty($currentUser['avatar']) && file_exists(UPLOAD_PATH . '/avatars/' . $currentUser['avatar'])): ?>
+                                <img src="<?php echo SITE_URL; ?>/uploads/avatars/<?php echo $currentUser['avatar']; ?>" alt="Avatar">
+                            <?php else: ?>
+                                <i class="fas fa-user"></i>
                             <?php endif; ?>
-                            
-                            <!-- Notifications Dropdown Content -->
-                            <div class="notification-dropdown" id="notificationDropdown">
-                                <div class="notification-header">
-                                    <h4><i class="fas fa-bell"></i> Notifications</h4>
-                                    <span class="mark-read" onclick="markAllRead()">Mark all as read</span>
-                                </div>
-                                <div class="notification-list">
-                                    <?php if (empty($notifications)): ?>
-                                    <div class="notification-empty">
-                                        <i class="fas fa-bell-slash"></i>
-                                        <p>No new notifications</p>
-                                    </div>
-                                    <?php else: ?>
-                                        <?php foreach ($notifications as $notif): ?>
-                                        <a href="<?php echo $notif['link']; ?>" class="notification-item <?php echo $notif['type']; ?>">
-                                            <div class="notification-icon">
-                                                <i class="fas fa-<?php echo $notif['icon']; ?>"></i>
-                                            </div>
-                                            <div class="notification-content">
-                                                <p><?php echo $notif['message']; ?></p>
-                                                <small><i class="far fa-clock"></i> Just now</small>
-                                            </div>
-                                        </a>
-                                        <?php endforeach; ?>
-                                    <?php endif; ?>
-                                </div>
-                                <div class="notification-footer">
-                                    <a href="<?php echo SITE_URL; ?>/notifications">View All Notifications</a>
-                                </div>
-                            </div>
                         </div>
                         
-                        <!-- Messages Pop Icon -->
-                        <div class="pop-icon" data-tooltip="Messages">
-                            <i class="fas fa-envelope"></i>
-                            <span class="notification-badge">0</span>
+                        <div class="profile-dropdown" id="profileDropdown">
+                            <div class="profile-dropdown-header">
+                                <div class="profile-dropdown-avatar">
+                                    <?php if (!empty($currentUser['avatar']) && file_exists(UPLOAD_PATH . '/avatars/' . $currentUser['avatar'])): ?>
+                                        <img src="<?php echo SITE_URL; ?>/uploads/avatars/<?php echo $currentUser['avatar']; ?>" alt="Avatar">
+                                    <?php else: ?>
+                                        <i class="fas fa-user"></i>
+                                    <?php endif; ?>
+                                </div>
+                                <h4><?php echo htmlspecialchars(($currentUser['firstname'] ?? '') . ' ' . ($currentUser['lastname'] ?? 'User')); ?></h4>
+                                <p><?php echo htmlspecialchars($currentUser['email'] ?? ''); ?></p>
+                            </div>
+                            <div class="profile-dropdown-menu">
+                                <a href="<?php echo SITE_URL; ?>/profile.php" class="profile-dropdown-item">
+                                    <i class="fas fa-user-circle"></i>
+                                    <span>My Profile</span>
+                                </a>
+                                <a href="#" class="profile-dropdown-item" id="editProfileBtn">
+                                    <i class="fas fa-edit"></i>
+                                    <span>Edit Profile</span>
+                                </a>
+                                <a href="<?php echo SITE_URL; ?>/change_password.php" class="profile-dropdown-item">
+                                    <i class="fas fa-lock"></i>
+                                    <span>Change Password</span>
+                                </a>
+                                <div class="profile-dropdown-divider"></div>
+                                <a href="<?php echo SITE_URL; ?>/logout.php" class="profile-dropdown-item logout">
+                                    <i class="fas fa-sign-out-alt"></i>
+                                    <span>Logout</span>
+                                </a>
+                            </div>
                         </div>
-                    </div>
-                    <?php endif; ?>
-                    
-                    <div class="user-info">
-                        <h4><?php echo htmlspecialchars(($currentUser['firstname'] ?? '') . ' ' . ($currentUser['lastname'] ?? 'User')); ?></h4>
-                        <p>
-                            <?php 
-                            $role_names = [
-                                'super_admin' => 'Super Administrator',
-                                'admin' => 'Administrator',
-                                'supply' => 'Supply Officer',
-                                'user' => 'End User'
-                            ];
-                            echo $role_names[$currentUser['role'] ?? ''] ?? ucfirst(str_replace('_', ' ', $currentUser['role'] ?? 'Guest')); 
-                            ?>
-                        </p>
-                    </div>
-                    <div class="user-avatar">
-                        <?php if (!empty($currentUser['avatar']) && file_exists(UPLOAD_PATH . '/avatars/' . $currentUser['avatar'])): ?>
-                            <img src="<?php echo SITE_URL; ?>/uploads/avatars/<?php echo $currentUser['avatar']; ?>" alt="Avatar">
-                        <?php else: ?>
-                            <i class="fas fa-user"></i>
-                        <?php endif; ?>
                     </div>
                 </div>
             </div>
@@ -581,41 +702,251 @@ $css_exists = file_exists($css_file);
             <?php if (isset($_SESSION['success'])): ?>
                 <div class="alert alert-success">
                     <i class="fas fa-check-circle"></i>
-                    <?php 
-                    echo $_SESSION['success'];
-                    unset($_SESSION['success']);
-                    ?>
+                    <?php echo $_SESSION['success']; unset($_SESSION['success']); ?>
                 </div>
             <?php endif; ?>
             
             <?php if (isset($_SESSION['error'])): ?>
                 <div class="alert alert-danger">
                     <i class="fas fa-exclamation-circle"></i>
-                    <?php 
-                    echo $_SESSION['error'];
-                    unset($_SESSION['error']);
-                    ?>
+                    <?php echo $_SESSION['error']; unset($_SESSION['error']); ?>
                 </div>
             <?php endif; ?>
             
             <?php if (isset($_SESSION['warning'])): ?>
                 <div class="alert alert-warning">
                     <i class="fas fa-exclamation-triangle"></i>
-                    <?php 
-                    echo $_SESSION['warning'];
-                    unset($_SESSION['warning']);
-                    ?>
+                    <?php echo $_SESSION['warning']; unset($_SESSION['warning']); ?>
                 </div>
             <?php endif; ?>
             
             <?php if (isset($_SESSION['info'])): ?>
                 <div class="alert alert-info">
                     <i class="fas fa-info-circle"></i>
-                    <?php 
-                    echo $_SESSION['info'];
-                    unset($_SESSION['info']);
-                    ?>
+                    <?php echo $_SESSION['info']; unset($_SESSION['info']); ?>
                 </div>
             <?php endif; ?>
             
-            <!-- Content Start -->
+            <!-- Profile Edit Modal -->
+            <div id="profileModal" class="profile-modal">
+                <div class="profile-modal-content">
+                    <div class="profile-modal-header">
+                        <h3><i class="fas fa-user-circle"></i> Edit Profile</h3>
+                        <button class="close-modal" onclick="closeProfileModal()">&times;</button>
+                    </div>
+                    <form id="profileForm" enctype="multipart/form-data">
+                        <div class="profile-modal-body">
+                            <div class="avatar-upload-section">
+                                <div id="avatarPreview" onclick="document.getElementById('avatarInput').click()" style="cursor: pointer;">
+                                    <?php if (!empty($currentUser['avatar']) && file_exists(UPLOAD_PATH . '/avatars/' . $currentUser['avatar'])): ?>
+                                        <img src="<?php echo SITE_URL; ?>/uploads/avatars/<?php echo $currentUser['avatar']; ?>" class="current-avatar" id="previewImg">
+                                    <?php else: ?>
+                                        <div class="current-avatar-placeholder" id="previewPlaceholder">
+                                            <i class="fas fa-user"></i>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+                                <input type="file" id="avatarInput" name="avatar" accept="image/*" style="display: none;" onchange="previewAvatar(this)">
+                                <div>
+                                    <button type="button" class="avatar-upload-btn" onclick="document.getElementById('avatarInput').click()">
+                                        <i class="fas fa-camera"></i> Change Avatar
+                                    </button>
+                                </div>
+                                <p style="font-size: 11px; color: #999; margin-top: 8px;">Click the image or button to upload (JPG, PNG, GIF, max 2MB)</p>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label><i class="fas fa-user"></i> First Name</label>
+                                <input type="text" name="firstname" value="<?php echo htmlspecialchars($currentUser['firstname'] ?? ''); ?>" required>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label><i class="fas fa-user"></i> Last Name</label>
+                                <input type="text" name="lastname" value="<?php echo htmlspecialchars($currentUser['lastname'] ?? ''); ?>" required>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label><i class="fas fa-envelope"></i> Email</label>
+                                <input type="email" name="email" value="<?php echo htmlspecialchars($currentUser['email'] ?? ''); ?>" required>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label><i class="fas fa-user-tag"></i> Username</label>
+                                <input type="text" value="<?php echo htmlspecialchars($currentUser['username'] ?? ''); ?>" disabled>
+                                <small style="color: #999;">Username cannot be changed</small>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label><i class="fas fa-lock"></i> New Password (leave blank to keep current)</label>
+                                <input type="password" name="new_password" placeholder="Enter new password">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label><i class="fas fa-lock"></i> Confirm New Password</label>
+                                <input type="password" name="confirm_password" placeholder="Confirm new password">
+                            </div>
+                        </div>
+                        <div class="profile-modal-footer">
+                            <button type="button" class="btn-cancel" onclick="closeProfileModal()">Cancel</button>
+                            <button type="submit" class="btn-save"><i class="fas fa-save"></i> Save Changes</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            
+            <!-- JavaScript -->
+            <script>
+                // Live Time Update Function
+                function updateLiveTime() {
+                    const now = new Date();
+                    let hours = now.getHours();
+                    const minutes = now.getMinutes().toString().padStart(2, '0');
+                    const ampm = hours >= 12 ? 'PM' : 'AM';
+                    hours = hours % 12;
+                    hours = hours ? hours : 12;
+                    const timeString = hours + ':' + minutes + ' ' + ampm;
+                    const timeElement = document.getElementById('liveTime');
+                    if (timeElement) {
+                        timeElement.innerHTML = '<i class="far fa-clock"></i> ' + timeString;
+                    }
+                }
+                
+                // Update time every minute
+                setInterval(updateLiveTime, 60000);
+                updateLiveTime(); // Initial call
+                
+                // Profile Dropdown
+                const profileAvatarBtn = document.getElementById('profileAvatarBtn');
+                const profileDropdown = document.getElementById('profileDropdown');
+                
+                if (profileAvatarBtn) {
+                    profileAvatarBtn.addEventListener('click', function(e) {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        profileDropdown.classList.toggle('show');
+                        
+                        // Calculate position
+                        if (profileDropdown.classList.contains('show')) {
+                            const rect = profileAvatarBtn.getBoundingClientRect();
+                            profileDropdown.style.position = 'fixed';
+                            profileDropdown.style.top = (rect.bottom + 5) + 'px';
+                            profileDropdown.style.right = (window.innerWidth - rect.right) + 'px';
+                        }
+                    });
+                }
+                
+                // Close dropdown when clicking outside
+                document.addEventListener('click', function(e) {
+                    if (profileDropdown && profileAvatarBtn && !profileAvatarBtn.contains(e.target) && !profileDropdown.contains(e.target)) {
+                        profileDropdown.classList.remove('show');
+                    }
+                });
+                
+                // Profile Modal Functions
+                function openProfileModal() {
+                    document.getElementById('profileModal').classList.add('show');
+                }
+                
+                function closeProfileModal() {
+                    document.getElementById('profileModal').classList.remove('show');
+                }
+                
+                // Edit Profile button in dropdown
+                document.getElementById('editProfileBtn')?.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    profileDropdown.classList.remove('show');
+                    openProfileModal();
+                });
+                
+                // Preview avatar before upload
+                function previewAvatar(input) {
+                    if (input.files && input.files[0]) {
+                        const reader = new FileReader();
+                        reader.onload = function(e) {
+                            const previewImg = document.getElementById('previewImg');
+                            const previewPlaceholder = document.getElementById('previewPlaceholder');
+                            
+                            if (previewImg) {
+                                previewImg.src = e.target.result;
+                            } else if (previewPlaceholder) {
+                                const newImg = document.createElement('img');
+                                newImg.id = 'previewImg';
+                                newImg.className = 'current-avatar';
+                                newImg.src = e.target.result;
+                                previewPlaceholder.parentNode.replaceChild(newImg, previewPlaceholder);
+                            } else {
+                                const avatarPreview = document.getElementById('avatarPreview');
+                                const newImg = document.createElement('img');
+                                newImg.id = 'previewImg';
+                                newImg.className = 'current-avatar';
+                                newImg.src = e.target.result;
+                                avatarPreview.innerHTML = '';
+                                avatarPreview.appendChild(newImg);
+                            }
+                        };
+                        reader.readAsDataURL(input.files[0]);
+                    }
+                }
+                
+                // Profile form submission
+                $('#profileForm').on('submit', function(e) {
+                    e.preventDefault();
+                    
+                    const formData = new FormData(this);
+                    
+                    Swal.fire({
+                        title: 'Updating Profile...',
+                        text: 'Please wait',
+                        allowOutsideClick: false,
+                        didOpen: () => {
+                            Swal.showLoading();
+                        }
+                    });
+                    
+                    $.ajax({
+                        url: '<?php echo SITE_URL; ?>/ajax/update_profile.php',
+                        type: 'POST',
+                        data: formData,
+                        processData: false,
+                        contentType: false,
+                        dataType: 'json',
+                        success: function(response) {
+                            if (response.success) {
+                                Swal.fire({
+                                    icon: 'success',
+                                    title: 'Profile Updated!',
+                                    text: response.message,
+                                    timer: 2000,
+                                    showConfirmButton: false
+                                }).then(() => {
+                                    location.reload();
+                                });
+                            } else {
+                                Swal.fire({
+                                    icon: 'error',
+                                    title: 'Update Failed',
+                                    text: response.message
+                                });
+                            }
+                        },
+                        error: function() {
+                            Swal.fire({
+                                icon: 'error',
+                                title: 'Error',
+                                text: 'An error occurred while updating your profile.'
+                            });
+                        }
+                    });
+                });
+                
+                // Close modal on escape key
+                document.addEventListener('keydown', function(e) {
+                    if (e.key === 'Escape') closeProfileModal();
+                });
+                
+                // Close modal when clicking outside
+                window.onclick = function(e) {
+                    const modal = document.getElementById('profileModal');
+                    if (e.target === modal) closeProfileModal();
+                };
+            </script>

@@ -1,297 +1,288 @@
 <?php
 /**
- * My Issued Items Page (End-User)
- * Shows all items issued to the current user
+ * User Dashboard
+ * End-user view showing their issued items and available inventory
  */
 
-$page_title = 'My Issued Items';
-$page_description = 'View all items currently issued to you';
+// Get the absolute path to the root directory
+$root_path = dirname(__DIR__);
 
-require_once '../includes/auth.php';
-requireLogin();
+// Load configuration and auth
+require_once $root_path . '/config.php';
+require_once INCLUDE_PATH . '/auth.php';
+require_once INCLUDE_PATH . '/functions.php';
+
+// Require user role
 requireRole('user');
 
-$user_id = $_SESSION['user_id'];
+// Get current user
+$currentUser = getCurrentUser();
+if (!$currentUser) {
+    // If user not found, logout
+    header('Location: ' . SITE_URL . '/logout');
+    exit();
+}
 
-// Get issued items for current user
-$query = "
+$user_id = (int)$currentUser['id'];
+
+$page_title = 'My Dashboard';
+$page_description = 'Overview of your issued items and available inventory';
+
+// Get user's issued items count
+$issued_count = 0;
+$result = $conn->query("SELECT COUNT(*) as count FROM user_inventory WHERE user_id = $user_id AND status = 'active'");
+if ($result && $row = $result->fetch_assoc()) {
+    $issued_count = $row['count'];
+}
+
+// Get total items ever issued to user
+$total_issued = 0;
+$result = $conn->query("SELECT COUNT(*) as count FROM equipment_issuance WHERE issued_to = $user_id");
+if ($result && $row = $result->fetch_assoc()) {
+    $total_issued = $row['count'];
+}
+
+// Get user's currently issued items - REMOVED expected_return from SELECT and ORDER BY
+$current_items = $conn->query("
     SELECT 
         ui.*,
         i.article_name,
         i.property_no,
-        i.description as item_description,
-        i.unit_value,
+        i.description,
         i.uom,
+        i.unit_value,
         ei.issued_date,
-        ei.expected_return,
         ei.purpose,
         ei.condition_on_issue,
-        ei.status as issuance_status,
         CONCAT(u.firstname, ' ', u.lastname) as issued_by_name
     FROM user_inventory ui
     JOIN inventory i ON ui.inventory_id = i.id
-    LEFT JOIN equipment_issuance ei ON ui.issuance_id = ei.id
-    LEFT JOIN users u ON ei.issued_by = u.id
+    JOIN equipment_issuance ei ON ui.issuance_id = ei.id
+    JOIN users u ON ei.issued_by = u.id
     WHERE ui.user_id = $user_id AND ui.status = 'active'
-    ORDER BY 
-        CASE 
-            WHEN ei.expected_return < CURDATE() THEN 0 
-            ELSE 1 
-        END,
-        ei.expected_return ASC
-";
-
-$result = $conn->query($query);
-
-// Get overdue count
-$overdue_count = 0;
-$overdue_result = $conn->query("
-    SELECT COUNT(*) as count 
-    FROM equipment_issuance ei
-    JOIN user_inventory ui ON ei.id = ui.issuance_id
-    WHERE ui.user_id = $user_id 
-    AND ui.status = 'active'
-    AND ei.expected_return IS NOT NULL 
-    AND ei.expected_return < CURDATE()
+    ORDER BY ei.issued_date DESC
 ");
-if ($overdue_result) {
-    $overdue_count = $overdue_result->fetch_assoc()['count'];
+
+if (!$current_items) {
+    $current_items = $conn->query("SELECT * FROM user_inventory WHERE 1=0");
 }
 
-// Get issuance history
-$history_query = "
-    SELECT 
-        ei.*,
-        i.article_name,
-        i.property_no,
-        CONCAT(u.firstname, ' ', u.lastname) as issued_to_name,
-        CONCAT(ub.firstname, ' ', ub.lastname) as issued_by_name
-    FROM equipment_issuance ei
-    JOIN inventory i ON ei.inventory_id = i.id
-    JOIN users u ON ei.issued_to = u.id
-    JOIN users ub ON ei.issued_by = ub.id
-    WHERE ei.issued_to = $user_id AND ei.status != 'issued'
-    ORDER BY ei.issued_date DESC
-    LIMIT 20
-";
+// Get available inventory (items in stock)
+$available_items = $conn->query("
+    SELECT i.*, e.name as equipment_name, s.name as section_name
+    FROM inventory i
+    LEFT JOIN equipment e ON i.equipment_id = e.id
+    LEFT JOIN sections s ON i.section_id = s.id
+    WHERE i.qty_physical_count > 0
+    ORDER BY i.article_name
+    LIMIT 10
+");
 
-$history_result = $conn->query($history_query);
+if (!$available_items) {
+    $available_items = $conn->query("SELECT * FROM inventory WHERE 1=0");
+}
 
-include '../includes/header.php';
+// Get recent activity for this user
+$recent_activity = $conn->query("
+    SELECT al.*, i.article_name
+    FROM activity_log al
+    LEFT JOIN inventory i ON al.item_id = i.id
+    WHERE al.user_id = $user_id
+    ORDER BY al.date_created DESC
+    LIMIT 5
+");
+
+if (!$recent_activity) {
+    $recent_activity = $conn->query("SELECT * FROM activity_log WHERE 1=0");
+}
+
+// Get total available items count
+$total_available = 0;
+$result = $conn->query("SELECT COUNT(*) as count FROM inventory WHERE qty_physical_count > 0");
+if ($result && $row = $result->fetch_assoc()) {
+    $total_available = $row['count'];
+}
+
+include INCLUDE_PATH . '/header.php';
 ?>
 
-<!-- Dashboard Cards -->
-<div class="dashboard-cards">
-    <div class="card">
-        <div class="card-icon">
-            <i class="fas fa-box"></i>
+<!-- Welcome Banner -->
+<div class="profile-header" style="margin-bottom: 30px; background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);">
+    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 20px;">
+        <div>
+            <h1 style="color: white; font-size: 32px; margin-bottom: 10px;">
+                Issued Items to <?php echo htmlspecialchars($currentUser['firstname'] . ' ' . $currentUser['lastname']); ?>!
+            </h1>
+           
         </div>
-        <h3>Total Items Issued</h3>
-        <?php
-        $total_items = $conn->query("
-            SELECT COUNT(*) as count FROM user_inventory 
-            WHERE user_id = $user_id AND status = 'active'
-        ")->fetch_assoc();
-        ?>
-        <div class="card-value"><?php echo $total_items['count'] ?? 0; ?></div>
-        <div class="card-label">Currently in your possession</div>
-    </div>
-    
-    <div class="card">
-        <div class="card-icon">
-            <i class="fas fa-clock"></i>
+        <div class="user-avatar" style="width: 80px; height: 80px; font-size: 40px; border-color: white; background: rgba(255,255,255,0.2);">
+            <?php if (!empty($currentUser['avatar']) && file_exists(UPLOAD_PATH . '/avatars/' . $currentUser['avatar'])): ?>
+                <img src="<?php echo SITE_URL; ?>/uploads/avatars/<?php echo $currentUser['avatar']; ?>" alt="Avatar" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">
+            <?php else: ?>
+                <i class="fas fa-user"></i>
+            <?php endif; ?>
         </div>
-        <h3>Overdue Items</h3>
-        <div class="card-value <?php echo $overdue_count > 0 ? 'text-danger' : ''; ?>">
-            <?php echo $overdue_count; ?>
-        </div>
-        <div class="card-label">Need to return</div>
-    </div>
-    
-    <div class="card">
-        <div class="card-icon">
-            <i class="fas fa-history"></i>
-        </div>
-        <h3>Total History</h3>
-        <?php
-        $total = $conn->query("
-            SELECT COUNT(*) as count FROM equipment_issuance WHERE issued_to = $user_id
-        ")->fetch_assoc();
-        ?>
-        <div class="card-value"><?php echo $total['count'] ?? 0; ?></div>
-        <div class="card-label">All time issuances</div>
     </div>
 </div>
 
-<!-- Currently Issued Items -->
+
+
+
+<!-- Main Content Grid -->
+<div class="stats-grid">
+    <!-- Currently Issued Items -->
+    <div class="stat-chart" style="grid-column: span 2;">
+        <div class="table-header">
+            <h3><i class="fas fa-clipboard-list"></i> Items Currently Issued to You</h3>
+            <a href="<?php echo SITE_URL; ?>/user/my_issued_items" class="btn btn-sm btn-primary">View All</a>
+        </div>
+        
+        <?php if ($current_items && $current_items->num_rows > 0): ?>
+            <div style="overflow-x: auto;">
+                <table style="width: 100%;">
+                    <thead>
+                        <tr>
+                            <th>Item</th>
+                            <th>Property No.</th>
+                            <th>Quantity</th>
+                            <th>Issue Date</th>
+                            <th>Status</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php while($item = $current_items->fetch_assoc()): ?>
+                        <tr>
+                            <td>
+                                <strong><?php echo htmlspecialchars($item['article_name']); ?></strong>
+                                <br><small><?php echo htmlspecialchars(substr($item['description'] ?? '', 0, 50)) . '...'; ?></small>
+                            </td>
+                            <td><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></td>
+                            <td><?php echo $item['quantity_assigned'] . ' ' . ($item['uom'] ?? ''); ?></td>
+                            <td><?php echo formatDate($item['issued_date']); ?></td>
+                            <td>
+                                <span class="badge badge-success">Active</span>
+                            </td>
+                            <td>
+                                <button class="btn btn-sm btn-primary" onclick="viewItemDetails(<?php echo $item['inventory_id']; ?>)">
+                                    <i class="fas fa-eye"></i> View
+                                </button>
+                            </td>
+                        </tr>
+                        <?php endwhile; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php else: ?>
+            <div class="empty-state">
+                <i class="fas fa-box-open"></i>
+                <h3>No Items Issued</h3>
+                <p>You don't have any items currently issued to you.</p>
+                <a href="<?php echo SITE_URL; ?>/user/view_inventory" class="btn btn-primary">
+                    <i class="fas fa-search"></i> Browse Inventory
+                </a>
+            </div>
+        <?php endif; ?>
+    </div>
+</div>
+
+<!-- Available Items Carousel -->
 <div class="table-container">
     <div class="table-header">
-        <h2><i class="fas fa-clipboard-list"></i> Currently Issued Items</h2>
-        <div class="search-box" style="width: 300px;">
-            <input type="text" id="searchIssued" placeholder="Search items...">
-            <button onclick="searchTable('searchIssued', 'issuedTable')">
-                <i class="fas fa-search"></i>
-            </button>
-        </div>
+        <h2><i class="fas fa-boxes"></i> Available Items You Might Need</h2>
+        <a href="<?php echo SITE_URL; ?>/user/view_inventory" class="btn btn-sm btn-primary">View All</a>
     </div>
     
-    <table id="issuedTable">
-        <thead>
-            <tr>
-                <th>Item</th>
-                <th>Property No.</th>
-                <th>Quantity</th>
-                <th>Issue Date</th>
-                <th>Due Date</th>
-                <th>Status</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            <?php if ($result && $result->num_rows > 0): ?>
-                <?php while ($row = $result->fetch_assoc()): 
-                    $is_overdue = false;
-                    $due_date = 'Not Set';
-                    $due_date_class = '';
-                    
-                    if (!empty($row['expected_return']) && $row['expected_return'] != '0000-00-00') {
-                        $due_date = date('M d, Y', strtotime($row['expected_return']));
-                        $is_overdue = strtotime($row['expected_return']) < time();
-                        $due_date_class = $is_overdue ? 'text-danger' : '';
-                    }
-                ?>
-                <tr class="<?php echo $is_overdue ? 'stock-alert-row' : ''; ?>">
-                    <td>
-                        <strong><?php echo htmlspecialchars($row['article_name']); ?></strong>
-                        <?php if (!empty($row['item_description'])): ?>
-                        <br><small><?php echo htmlspecialchars(substr($row['item_description'], 0, 50)) . '...'; ?></small>
-                        <?php endif; ?>
-                    </td>
-                    <td><?php echo htmlspecialchars($row['property_no'] ?? 'N/A'); ?></td>
-                    <td><?php echo $row['quantity_assigned'] . ' ' . ($row['uom'] ?? ''); ?></td>
-                    <td><?php echo !empty($row['issued_date']) ? date('M d, Y', strtotime($row['issued_date'])) : 'N/A'; ?></td>
-                    <td class="<?php echo $due_date_class; ?>">
-                        <?php echo $due_date; ?>
-                        <?php if ($is_overdue): ?>
-                            <br><span class="badge badge-danger">Overdue</span>
-                        <?php endif; ?>
-                    </td>
-                    <td>
-                        <?php 
-                        if ($is_overdue) {
-                            echo '<span class="badge badge-danger">Overdue</span>';
-                        } else {
-                            echo '<span class="badge badge-success">Active</span>';
-                        }
-                        ?>
-                    </td>
-                    <td>
-                        <div class="action-buttons">
-                            <button class="action-btn view" onclick="viewItemDetails(<?php echo $row['inventory_id']; ?>)" title="View Details">
-                                <i class="fas fa-eye"></i>
-                            </button>
-                            <button class="action-btn edit" onclick="requestExtension(<?php echo $row['issuance_id']; ?>)" title="Request Extension">
-                                <i class="fas fa-clock"></i>
-                            </button>
-                        </div>
-                    </td>
-                </tr>
-                <?php endwhile; ?>
-            <?php else: ?>
-                <tr>
-                    <td colspan="7" style="text-align: center; padding: 40px;">
-                        <i class="fas fa-box-open" style="font-size: 48px; color: #ccc; margin-bottom: 10px;"></i>
-                        <br>
-                        No items currently issued to you
-                    </td>
-                </tr>
-            <?php endif; ?>
-        </tbody>
-    </table>
-</div>
-
-<!-- Issuance History -->
-<div class="table-container">
-    <div class="table-header">
-        <h2><i class="fas fa-history"></i> Issuance History</h2>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px;">
+        <?php if ($available_items && $available_items->num_rows > 0): ?>
+            <?php while($item = $available_items->fetch_assoc()): ?>
+            <div class="card" style="padding: 15px; cursor: pointer;" onclick="viewItemDetails(<?php echo $item['id']; ?>)">
+                <div style="display: flex; justify-content: space-between; align-items: start;">
+                    <div>
+                        <h4 style="color: var(--primary); margin-bottom: 5px;">
+                            <?php echo htmlspecialchars($item['article_name']); ?>
+                        </h4>
+                        <p style="font-size: 12px; color: #666;">
+                            <?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?>
+                        </p>
+                    </div>
+                    <span class="badge badge-success">Available</span>
+                </div>
+                <p style="font-size: 13px; margin: 10px 0;">
+                    <?php echo htmlspecialchars(substr($item['description'] ?? '', 0, 60)) . '...'; ?>
+                </p>
+                <div style="display: flex; justify-content: space-between; font-size: 12px; color: #666;">
+                    <span><i class="fas fa-map-marker-alt"></i> <?php echo htmlspecialchars($item['section_name'] ?? 'N/A'); ?></span>
+                    <span><i class="fas fa-cubes"></i> Stock: <?php echo $item['qty_physical_count']; ?></span>
+                </div>
+                <button class="btn btn-sm btn-primary" style="width: 100%; margin-top: 10px;" 
+                        onclick="event.stopPropagation(); requestItem(<?php echo $item['id']; ?>)">
+                    <i class="fas fa-hand-holding"></i> Request Item
+                </button>
+            </div>
+            <?php endwhile; ?>
+        <?php else: ?>
+            <div class="empty-state" style="grid-column: 1/-1;">
+                <i class="fas fa-box-open"></i>
+                <p>No items available at the moment</p>
+            </div>
+        <?php endif; ?>
     </div>
-    
-    <table>
-        <thead>
-            <tr>
-                <th>Item</th>
-                <th>Property No.</th>
-                <th>Issued By</th>
-                <th>Issue Date</th>
-                <th>Return Date</th>
-                <th>Quantity</th>
-                <th>Status</th>
-            </tr>
-        </thead>
-        <tbody>
-            <?php if ($history_result && $history_result->num_rows > 0): ?>
-                <?php while ($row = $history_result->fetch_assoc()): ?>
-                <tr>
-                    <td>
-                        <strong><?php echo htmlspecialchars($row['article_name']); ?></strong>
-                    </td>
-                    <td><?php echo htmlspecialchars($row['property_no'] ?? 'N/A'); ?></td>
-                    <td><?php echo htmlspecialchars($row['issued_by_name']); ?></td>
-                    <td><?php echo !empty($row['issued_date']) ? date('M d, Y', strtotime($row['issued_date'])) : 'N/A'; ?></td>
-                    <td>
-                        <?php 
-                        if (!empty($row['actual_return']) && $row['actual_return'] != '0000-00-00') {
-                            echo date('M d, Y', strtotime($row['actual_return']));
-                        } else {
-                            echo '<span class="badge badge-warning">Not returned</span>';
-                        }
-                        ?>
-                    </td>
-                    <td><?php echo $row['quantity_issued'] . ' ' . ($row['uom'] ?? ''); ?></td>
-                    <td><?php echo getStatusBadge($row['status']); ?></td>
-                </tr>
-                <?php endwhile; ?>
-            <?php else: ?>
-                <tr>
-                    <td colspan="7" style="text-align: center; padding: 40px;">
-                        No issuance history found
-                    </td>
-                </tr>
-            <?php endif; ?>
-        </tbody>
-    </table>
 </div>
 
-<!-- Request Extension Modal -->
-<div id="extensionModal" class="modal">
+<!-- Report Issue Modal -->
+<div id="reportModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
-            <h2>Request Extension</h2>
-            <span class="modal-close" onclick="closeModal('extensionModal')">&times;</span>
+            <h2>Report an Issue</h2>
+            <span class="modal-close">&times;</span>
         </div>
         <div class="modal-body">
-            <form id="extensionForm" onsubmit="submitExtension(event)">
-                <input type="hidden" id="extension_issuance_id" name="issuance_id">
-                
+            <form id="reportForm" onsubmit="submitReport(event)">
                 <div class="form-group">
-                    <label>Current Due Date</label>
-                    <p id="current_due_date" style="font-weight: bold; padding: 10px; background: var(--light); border-radius: 6px;"></p>
+                    <label for="issue_item">Related Item (Optional)</label>
+                    <select class="form-control" id="issue_item" name="item_id">
+                        <option value="">-- Select Item --</option>
+                        <?php 
+                        $user_items = $conn->query("
+                            SELECT i.id, i.article_name, i.property_no
+                            FROM user_inventory ui
+                            JOIN inventory i ON ui.inventory_id = i.id
+                            WHERE ui.user_id = $user_id AND ui.status = 'active'
+                        ");
+                        if ($user_items) {
+                            while($item = $user_items->fetch_assoc()):
+                        ?>
+                        <option value="<?php echo $item['id']; ?>">
+                            <?php echo htmlspecialchars($item['article_name'] . ' (' . $item['property_no'] . ')'); ?>
+                        </option>
+                        <?php 
+                            endwhile;
+                        }
+                        ?>
+                    </select>
                 </div>
                 
                 <div class="form-group">
-                    <label for="new_return_date">New Return Date *</label>
-                    <input type="date" class="form-control" id="new_return_date" name="new_return_date" 
-                           min="<?php echo date('Y-m-d', strtotime('+1 day')); ?>" required>
+                    <label for="issue_type">Issue Type *</label>
+                    <select class="form-control" id="issue_type" name="issue_type" required>
+                        <option value="">-- Select Type --</option>
+                        <option value="damaged">Damaged Item</option>
+                        <option value="lost">Lost Item</option>
+                        <option value="wrong_item">Wrong Item Received</option>
+                        <option value="missing_parts">Missing Parts</option>
+                        <option value="other">Other</option>
+                    </select>
                 </div>
                 
                 <div class="form-group">
-                    <label for="extension_reason">Reason for Extension *</label>
-                    <textarea class="form-control" id="extension_reason" name="reason" rows="3" required></textarea>
+                    <label for="issue_description">Description *</label>
+                    <textarea class="form-control" id="issue_description" name="description" rows="4" required></textarea>
                 </div>
                 
                 <div style="display: flex; gap: 10px; justify-content: flex-end;">
-                    <button type="button" class="btn btn-secondary" onclick="closeModal('extensionModal')">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Submit Request</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('reportModal')">Cancel</button>
+                    <button type="submit" class="btn btn-danger">Submit Report</button>
                 </div>
             </form>
         </div>
@@ -299,6 +290,7 @@ include '../includes/header.php';
 </div>
 
 <script>
+// Global functions for modals
 function viewItemDetails(itemId) {
     ajaxRequest('<?php echo SITE_URL; ?>/api/get_item_details.php?id=' + itemId, 'GET', null, function(err, response) {
         if (!err && response) {
@@ -324,41 +316,31 @@ function viewItemDetails(itemId) {
     });
 }
 
-function requestExtension(issuanceId) {
-    ajaxRequest('<?php echo SITE_URL; ?>/api/get_issuance_details.php?id=' + issuanceId, 'GET', null, function(err, response) {
-        if (!err && response) {
-            document.getElementById('extension_issuance_id').value = issuanceId;
-            
-            let dueDate = response.expected_return;
-            if (dueDate && dueDate != '0000-00-00') {
-                document.getElementById('current_due_date').textContent = formatDate(dueDate);
-            } else {
-                document.getElementById('current_due_date').textContent = 'No due date set';
-            }
-            
-            document.getElementById('extensionModal').style.display = 'block';
-        } else {
-            alert('Error loading issuance details');
-        }
-    });
+function requestItem(itemId) {
+    // Redirect to view inventory with pre-selected item
+    window.location.href = '<?php echo SITE_URL; ?>/user/view_inventory?request=' + itemId;
 }
 
-function submitExtension(e) {
+function reportIssue() {
+    document.getElementById('reportModal').style.display = 'block';
+}
+
+function submitReport(e) {
     e.preventDefault();
     
     let formData = {
-        issuance_id: document.getElementById('extension_issuance_id').value,
-        new_return_date: document.getElementById('new_return_date').value,
-        reason: document.getElementById('extension_reason').value
+        item_id: document.getElementById('issue_item').value,
+        issue_type: document.getElementById('issue_type').value,
+        description: document.getElementById('issue_description').value
     };
     
-    ajaxRequest('<?php echo SITE_URL; ?>/api/request_extension.php', 'POST', formData, function(err, response) {
+    ajaxRequest('<?php echo SITE_URL; ?>/api/report_issue.php', 'POST', formData, function(err, response) {
         if (!err && response && response.success) {
-            alert('Extension request submitted successfully!');
-            closeModal('extensionModal');
-            location.reload();
+            alert('Issue reported successfully! An administrator will review your report.');
+            closeModal('reportModal');
+            document.getElementById('reportForm').reset();
         } else {
-            alert('Error: ' + (err ? err.message : (response ? response.message : 'Failed to submit request')));
+            alert('Error: ' + (err ? err.message : (response ? response.message : 'Failed to submit report')));
         }
     });
 }
@@ -367,49 +349,36 @@ function closeModal(modalId) {
     document.getElementById(modalId).style.display = 'none';
 }
 
-function searchTable(inputId, tableId) {
-    let input = document.getElementById(inputId);
-    let filter = input.value.toUpperCase();
-    let table = document.getElementById(tableId);
-    let tr = table.getElementsByTagName('tr');
-    
-    for (let i = 1; i < tr.length; i++) {
-        let tdArray = tr[i].getElementsByTagName('td');
-        let found = false;
-        for (let j = 0; j < tdArray.length; j++) {
-            if (tdArray[j]) {
-                let txtValue = tdArray[j].textContent || tdArray[j].innerText;
-                if (txtValue.toUpperCase().indexOf(filter) > -1) {
-                    found = true;
-                    break;
-                }
-            }
-        }
-        tr[i].style.display = found ? '' : 'none';
-    }
-}
-
+// Helper functions
 function formatCurrency(amount) {
-    return '₱' + parseFloat(amount || 0).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,');
+    return '₱' + parseFloat(amount).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,');
 }
 
 function formatDate(dateString) {
-    if (!dateString || dateString == '0000-00-00') return 'N/A';
+    if (!dateString) return 'N/A';
     let date = new Date(dateString);
     return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+function formatDateTime(dateString) {
+    if (!dateString) return 'N/A';
+    let date = new Date(dateString);
+    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
 function showModal(title, content) {
-    let modal = document.getElementById('dynamic-modal');
+    let modalId = 'dynamic-modal';
+    let modal = document.getElementById(modalId);
+    
     if (!modal) {
         modal = document.createElement('div');
-        modal.id = 'dynamic-modal';
+        modal.id = modalId;
         modal.className = 'modal';
         modal.innerHTML = `
             <div class="modal-content">
                 <div class="modal-header">
                     <h2 id="modal-title"></h2>
-                    <span class="modal-close" onclick="document.getElementById('dynamic-modal').style.display='none'">&times;</span>
+                    <span class="modal-close" onclick="closeModal('${modalId}')">&times;</span>
                 </div>
                 <div class="modal-body" id="modal-body"></div>
             </div>
@@ -447,62 +416,4 @@ function ajaxRequest(url, method, data, callback) {
 }
 </script>
 
-<style>
-/* Additional styles for overdue highlighting */
-.stock-alert-row {
-    background-color: #fff3e0 !important;
-}
-
-.stock-alert-row td {
-    color: #e65100 !important;
-}
-
-.text-danger {
-    color: #dc3545 !important;
-    font-weight: 600;
-}
-
-.action-buttons {
-    display: flex;
-    gap: 5px;
-    justify-content: center;
-}
-
-.action-btn {
-    width: 32px;
-    height: 32px;
-    border-radius: 4px;
-    border: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-.action-btn.view {
-    background-color: #e3f2fd;
-    color: #1976d2;
-}
-
-.action-btn.view:hover {
-    background-color: #bbdefb;
-    transform: translateY(-2px);
-}
-
-.action-btn.edit {
-    background-color: #fff3e0;
-    color: #f57c00;
-}
-
-.action-btn.edit:hover {
-    background-color: #ffe0b2;
-    transform: translateY(-2px);
-}
-
-.action-btn i {
-    font-size: 14px;
-}
-</style>
-
-<?php include '../includes/footer.php'; ?>
+<?php include INCLUDE_PATH . '/footer.php'; ?>

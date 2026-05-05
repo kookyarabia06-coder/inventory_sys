@@ -1,0 +1,18 @@
+{
+    "sourceFile": "test_mail.php",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 0,
+            "patches": [
+                {
+                    "date": 1777520398118,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                }
+            ],
+            "date": 1777520398118,
+            "name": "Commit-0",
+            "content": "<?php\r\nerror_reporting(E_ALL);\r\nini_set('display_errors', 1);\r\n\r\nrequire_once __DIR__ . '/config.php';\r\nrequire_once __DIR__ . '/includes/smtp_mailer.php';\r\n\r\necho \"<h1>Email Test</h1>\";\r\n\r\n// Test 1: Basic SMTP test\r\necho \"<h2>Test 1: Sending test email to \" . SUPPORT_EMAIL . \"</h2>\";\r\n$result = testEmailConfig();\r\n\r\nif ($result) {\r\n    echo \"<p style='color:green; font-weight:bold;'>✓ Test email sent successfully!</p>\";\r\n} else {\r\n    echo \"<p style='color:red; font-weight:bold;'>✗ Failed to send test email.</p>\";\r\n}\r\n\r\n// Display configuration\r\necho \"<h2>Current Configuration:</h2>\";\r\necho \"<pre>\";\r\necho \"SMTP_HOST: \" . SMTP_HOST . \"\\n\";\r\necho \"SMTP_PORT: \" . SMTP_PORT . \"\\n\";\r\necho \"SMTP_USER: \" . SMTP_USER . \"\\n\";\r\necho \"SMTP_PASS: \" . str_repeat('*', strlen(SMTP_PASS_CLEAN)) . \"\\n\";\r\necho \"SUPPORT_EMAIL: \" . SUPPORT_EMAIL . \"\\n\";\r\necho \"SITE_NAME: \" . SITE_NAME . \"\\n\";\r\necho \"SITE_URL: \" . SITE_URL . \"\\n\";\r\necho \"</pre>\";\r\n?>"
+        }
+    ]
+}

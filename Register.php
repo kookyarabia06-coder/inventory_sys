@@ -1,13 +1,14 @@
-<!-- register redirect -->
 <?php
-
-
+/**
+ * Register Page - User Registration with Admin Approval
+ */
 
 // Load configuration
 require_once __DIR__ . '/config.php';
 require_once CONFIG_PATH . '/database.php';
 require_once INCLUDE_PATH . '/functions.php';
 require_once INCLUDE_PATH . '/auth.php';
+require_once INCLUDE_PATH . '/smtp_mailer.php';
 
 // Redirect if already logged in
 if (isset($_SESSION['user_id'])) {
@@ -15,18 +16,17 @@ if (isset($_SESSION['user_id'])) {
     exit();
 }
 
-
 $errors = [];
 $success = '';
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     // Get form data
-    $firstname = sanitize($_POST['firstname']);
-    $lastname = sanitize($_POST['lastname']);
-    $username = sanitize($_POST['username']);
-    $email = sanitize($_POST['email']);
-    $password = $_POST['password'];
-    $confirm_password = $_POST['confirm_password'];
+    $firstname = sanitize($_POST['firstname'] ?? '');
+    $lastname = sanitize($_POST['lastname'] ?? '');
+    $username = sanitize($_POST['username'] ?? '');
+    $email = sanitize($_POST['email'] ?? '');
+    $password = $_POST['password'] ?? '';
+    $confirm_password = $_POST['confirm_password'] ?? '';
     $terms = isset($_POST['terms']) ? true : false;
     
     // Validation
@@ -46,10 +46,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $errors[] = "Username can only contain letters, numbers, and underscores";
     } else {
         // Check if username already exists
-        $check = $conn->query("SELECT id FROM users WHERE username = '$username'");
-        if ($check && $check->num_rows > 0) {
+        $check = $conn->prepare("SELECT id FROM users WHERE username = ?");
+        $check->bind_param("s", $username);
+        $check->execute();
+        $result = $check->get_result();
+        if ($result->num_rows > 0) {
             $errors[] = "Username already taken. Please choose another.";
         }
+        $check->close();
     }
     
     if (empty($email)) {
@@ -58,10 +62,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $errors[] = "Invalid email format";
     } else {
         // Check if email already exists
-        $check = $conn->query("SELECT id FROM users WHERE email = '$email'");
-        if ($check && $check->num_rows > 0) {
+        $check = $conn->prepare("SELECT id FROM users WHERE email = ?");
+        $check->bind_param("s", $email);
+        $check->execute();
+        $result = $check->get_result();
+        if ($result->num_rows > 0) {
             $errors[] = "Email already registered. Please use another or login.";
         }
+        $check->close();
     }
     
     if (empty($password)) {
@@ -83,8 +91,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     // If no errors, create user with pending status
     if (empty($errors)) {
         $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-        $role = 'user'; // Default role for new registrations
-        $status = 'pending'; // Set to pending - requires admin approval
+        $role = 'user';
+        $status = 'pending';
         $created_at = date('Y-m-d H:i:s');
         
         $stmt = $conn->prepare("
@@ -100,10 +108,138 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             // Log activity
             logActivity('Register', $user_id, "New user registered: $username (pending approval)");
             
-            // Create notification for admins
-            createAdminNotification("New user registration pending: $username ($email)");
+            // Log to audit trail
+            if (function_exists('logUserRegistration')) {
+                logUserRegistration($user_id, [
+                    'username' => $username,
+                    'email' => $email,
+                    'firstname' => $firstname,
+                    'lastname' => $lastname
+                ]);
+            }
             
-            // Don't auto-login, show success message
+            // Get admin emails
+            $admin_query = $conn->prepare("SELECT email, firstname, lastname FROM users WHERE role IN ('admin', 'super_admin') AND status = 'active'");
+            $admin_query->execute();
+            $admins = $admin_query->get_result();
+            
+            // HTML Email Template for Admin Notification
+            $admin_html_message = "
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset='UTF-8'>
+                <title>New Registration</title>
+                <style>
+                    body { font-family: 'Segoe UI', Arial, sans-serif; line-height: 1.6; color: #3A3A3A; }
+                    .container { max-width: 600px; margin: 0 auto; background: #FFFFFF; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(107, 140, 255, 0.1); }
+                    .header { background: linear-gradient(135deg, #6B8CFF 0%, #8FB5FF 100%); color: white; padding: 30px; text-align: center; }
+                    .content { padding: 30px; }
+                    .user-details { background: #F0F0F0; padding: 20px; border-radius: 12px; margin: 20px 0; }
+                    .button { display: inline-block; padding: 12px 24px; background-color: #6B8CFF; color: white; text-decoration: none; border-radius: 8px; }
+                </style>
+            </head>
+            <body>
+                <div class='container'>
+                    <div class='header'>
+                        <h1>New User Registration</h1>
+                        <p>A new user has registered and needs approval</p>
+                    </div>
+                    <div class='content'>
+                        <div class='user-details'>
+                            <p><strong>Name:</strong> $firstname $lastname</p>
+                            <p><strong>Username:</strong> $username</p>
+                            <p><strong>Email:</strong> $email</p>
+                            <p><strong>Registered:</strong> " . date('Y-m-d H:i:s') . "</p>
+                        </div>
+                        <p>Please login to the admin panel to approve or reject this registration.</p>
+                        <div style='text-align: center;'>
+                            <a href='" . SITE_URL . "/admin/users.php' class='button'>View Pending Registrations</a>
+                        </div>
+                    </div>
+                </div>
+            </body>
+            </html>
+            ";
+            
+            $admin_plain_message = "New User Registration Pending Approval\n\n";
+            $admin_plain_message .= "Name: $firstname $lastname\n";
+            $admin_plain_message .= "Username: $username\n";
+            $admin_plain_message .= "Email: $email\n";
+            $admin_plain_message .= "Registered: " . date('Y-m-d H:i:s') . "\n\n";
+            $admin_plain_message .= "Please login to the admin panel to approve or reject this registration.\n";
+            $admin_plain_message .= SITE_URL . "/admin/users.php\n";
+            
+            // Send to admins using SMTP
+            while ($admin = $admins->fetch_assoc()) {
+                sendSMTPEmail($admin['email'], "New User Registration Pending Approval - " . SITE_NAME, $admin_html_message, $admin_plain_message);
+            }
+            $admin_query->close();
+            
+            // HTML Email Template for User Confirmation
+            $user_html_message = "
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset='UTF-8'>
+                <title>Registration Received</title>
+                <style>
+                    body { font-family: 'Segoe UI', Arial, sans-serif; line-height: 1.6; color: #3A3A3A; }
+                    .container { max-width: 600px; margin: 0 auto; background: #FFFFFF; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(107, 140, 255, 0.1); }
+                    .header { background: linear-gradient(135deg, #6B8CFF 0%, #8FB5FF 100%); color: white; padding: 30px; text-align: center; }
+                    .content { padding: 30px; }
+                    .info-box { background: #FFF9E6; padding: 20px; border-left: 4px solid #FFB74D; border-radius: 8px; margin: 20px 0; }
+                    .footer { background: #F0F0F0; padding: 20px; text-align: center; font-size: 12px; color: #9E9E9E; }
+                </style>
+            </head>
+            <body>
+                <div class='container'>
+                    <div class='header'>
+                        <h1>Registration Received</h1>
+                        <p>Thank you for registering</p>
+                    </div>
+                    <div class='content'>
+                        <h3>Dear $firstname,</h3>
+                        <p>Thank you for registering with " . SITE_NAME . ".</p>
+                        
+                        <div class='info-box'>
+                            <p><strong>Your account has been created successfully and is pending admin approval.</strong></p>
+                            <p>You will receive an email notification once your account has been approved.</p>
+                        </div>
+                        
+                        <p><strong>Registration Details:</strong></p>
+                        <ul>
+                            <li>Username: $username</li>
+                            <li>Email: $email</li>
+                        </ul>
+                        
+                        <p>If you have any questions, please contact the system administrator.</p>
+                        
+                        <p>Best regards,<br>
+                        <strong>" . SITE_NAME . " Team</strong></p>
+                    </div>
+                    <div class='footer'>
+                        <p>This is an automated message. Please do not reply to this email.</p>
+                    </div>
+                </div>
+            </body>
+            </html>
+            ";
+            
+            $user_plain_message = "Registration Received - Awaiting Approval\n\n";
+            $user_plain_message .= "Dear $firstname,\n\n";
+            $user_plain_message .= "Thank you for registering with " . SITE_NAME . ".\n\n";
+            $user_plain_message .= "Your account has been created successfully and is pending admin approval.\n";
+            $user_plain_message .= "You will receive an email notification once your account has been approved.\n\n";
+            $user_plain_message .= "Registration Details:\n";
+            $user_plain_message .= "Username: $username\n";
+            $user_plain_message .= "Email: $email\n\n";
+            $user_plain_message .= "If you have any questions, please contact the system administrator.\n\n";
+            $user_plain_message .= "Regards,\n" . SITE_NAME . " Team\n";
+            
+            // Send confirmation to user using SMTP
+            sendSMTPEmail($email, "Registration Received - Awaiting Approval - " . SITE_NAME, $user_html_message, $user_plain_message);
+            
             $success = "Registration successful! Your account is pending approval from an administrator. You will be notified once your account is activated.";
             
             // Clear POST data
@@ -123,24 +259,6 @@ if ($result) {
         $settings[$row['setting_key']] = $row['setting_value'];
     }
 }
-
-/**
- * Create notification for admins about pending registration
- */
-function createAdminNotification($message) {
-    global $conn;
-    
-    // Get all admin and super admin users
-    $admins = $conn->query("SELECT id FROM users WHERE role IN ('admin', 'super_admin') AND status = 'active'");
-    
-    if ($admins && $admins->num_rows > 0) {
-        while ($admin = $admins->fetch_assoc()) {
-            // Insert notification for each admin
-            // You can create a notifications table or use activity_log
-            logActivity('Pending Registration', $admin['id'], $message);
-        }
-    }
-}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -155,8 +273,10 @@ function createAdminNotification($message) {
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
-    <!-- IMS CUBES ICON -->
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 640 640'%3E%3Cpath fill='%236B8CFF' d='M348 62.7C330.7 52.7 309.3 52.7 292 62.7L207.8 111.3C190.5 121.3 179.8 139.8 179.8 159.8L179.8 261.7L91.5 312.7C74.2 322.7 63.5 341.2 63.5 361.2L63.5 458.5C63.5 478.5 74.2 497 91.5 507L175.8 555.6C193.1 565.6 214.5 565.6 231.8 555.6L320.1 504.6L408.4 555.6C425.7 565.6 447.1 565.6 464.4 555.6L548.5 507C565.8 497 576.5 478.5 576.5 458.5L576.5 361.2C576.5 341.2 565.8 322.7 548.5 312.7L460.2 261.7L460.2 159.8C460.2 139.8 449.5 121.3 432.2 111.3L348 62.7zM296 356.6L296 463.1L207.7 514.1C206.5 514.8 205.1 515.2 203.7 515.2L203.7 409.9L296 356.6zM527.4 357.2C528.1 358.4 528.5 359.8 528.5 361.2L528.5 458.5C528.5 461.4 527 464 524.5 465.4L440.2 514C439 514.7 437.6 515.1 436.2 515.1L436.2 409.8L527.4 357.2zM412.3 159.8L412.3 261.7L320 315L320 208.5L411.2 155.9C411.9 157.1 412.3 158.5 412.3 159.9z'/%3E%3C/svg%3E">
+    <!-- FAVICON -->
+    <link rel="icon" type="image/png" href="<?php echo SITE_URL; ?>/assets/icons/armmc.png">
+    <link rel="apple-touch-icon" href="<?php echo SITE_URL; ?>/assets/icons/armmc.png">
+    <link rel="shortcut icon" href="<?php echo SITE_URL; ?>/assets/icons/armmc.png">
     
     <style>
         * {
@@ -179,11 +299,27 @@ function createAdminNotification($message) {
             background: #FFFFFF;
             border-radius: 16px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-            width: 500px;
+            width: 550px;
             max-width: 100%;
             padding: 35px;
             animation: slideIn 0.5s ease;
             border: 1px solid #E0E0E0;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        
+        .register-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .register-container::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+        
+        .register-container::-webkit-scrollbar-thumb {
+            background: #6B8CFF;
+            border-radius: 10px;
         }
         
         @keyframes slideIn {
@@ -258,12 +394,25 @@ function createAdminNotification($message) {
             font-size: 14px;
             border-left: 3px solid #4CAF50;
             display: flex;
-            align-items: center;
+            flex-direction: column;
             gap: 10px;
         }
         
         .success i {
             font-size: 24px;
+            margin-right: 10px;
+        }
+        
+        .success-content {
+            display: flex;
+            align-items: flex-start;
+            gap: 15px;
+        }
+        
+        .success a {
+            color: #2E7D32;
+            font-weight: 600;
+            text-decoration: underline;
         }
         
         .form-group {
@@ -315,6 +464,55 @@ function createAdminNotification($message) {
             background-color: #FAFAFA;
         }
         
+        /* FIXED Password Field Styles - No Overlapping */
+        .password-field {
+            position: relative;
+        }
+        
+        .password-field input {
+            width: 100%;
+            padding: 12px 45px 12px 40px;
+            border: 1px solid #E0E0E0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.3s;
+            background-color: #FAFAFA;
+            box-sizing: border-box;
+        }
+        
+        .password-field input:focus {
+            outline: none;
+            border-color: #6B8CFF;
+            background-color: #FFFFFF;
+            box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.05);
+        }
+        
+        .password-field .lock-icon {
+            position: absolute;
+            left: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #9E9E9E;
+            pointer-events: none;
+            font-size: 14px;
+        }
+        
+        .password-field .toggle-password {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #9E9E9E;
+            cursor: pointer;
+            transition: color 0.3s;
+            font-size: 16px;
+            z-index: 2;
+        }
+        
+        .password-field .toggle-password:hover {
+            color: #6B8CFF;
+        }
+        
         .input-group input:focus {
             outline: none;
             border-color: #6B8CFF;
@@ -343,6 +541,7 @@ function createAdminNotification($message) {
         
         .password-hint i {
             font-size: 10px;
+            width: 14px;
         }
         
         .password-hint.valid {
@@ -435,13 +634,13 @@ function createAdminNotification($message) {
         }
         
         .info-box {
-            background-color: #E3F2FD;
-            color: #1976D2;
+            background-color: #FFF3E0;
+            color: #E65100;
             padding: 12px 15px;
             border-radius: 8px;
             margin-bottom: 20px;
             font-size: 13px;
-            border-left: 3px solid #2196F3;
+            border-left: 3px solid #FF9800;
             display: flex;
             align-items: center;
             gap: 10px;
@@ -466,22 +665,22 @@ function createAdminNotification($message) {
 <body>
     <div class="register-container">
         <div class="logo">
-            <i class="fas fa-cubes"></i>
+            <img src="assets/icons/armmc.png" alt="Rodriguez Memorial Medical Center" style="width: 100px; height: auto; margin-bottom: 15px;">
             <h1>Create Account</h1>
-            <p><?php echo $settings['system_name'] ?? 'IMS'; ?></p>
+            <p><?php echo htmlspecialchars($settings['system_name'] ?? 'IMS'); ?></p>
         </div>
         
         <div class="info-box">
-            <i class="fas fa-info-circle"></i>
-            <span>Registration requires admin approval. You will be notified once your account is activated.</span>
+            <i class="fas fa-clock"></i>
+            <span><strong>Admin Approval Required:</strong> Your account will be pending until approved by an administrator. You will receive an email notification once approved.</span>
         </div>
         
         <?php if (!empty($errors)): ?>
             <div class="errors">
-                <strong>Please fix the following errors:</strong>
+                <strong><i class="fas fa-exclamation-triangle"></i> Please fix the following errors:</strong>
                 <ul>
                     <?php foreach ($errors as $error): ?>
-                        <li><?php echo $error; ?></li>
+                        <li><?php echo htmlspecialchars($error); ?></li>
                     <?php endforeach; ?>
                 </ul>
             </div>
@@ -489,16 +688,25 @@ function createAdminNotification($message) {
         
         <?php if ($success): ?>
             <div class="success">
-                <i class="fas fa-check-circle"></i>
-                <div>
-                    <strong><?php echo $success; ?></strong>
-                    <p style="margin-top: 5px;">You can now <a href="<?php echo SITE_URL; ?>/login.php" style="color: #2E7D32; font-weight: 600;">login</a> once your account is approved.</p>
+                <div class="success-content">
+                    <i class="fas fa-check-circle"></i>
+                    <div>
+                        <strong><?php echo htmlspecialchars($success); ?></strong>
+                        <p style="margin-top: 8px; font-size: 13px;">
+                            <i class="fas fa-envelope"></i> A confirmation email has been sent to your email address.
+                        </p>
+                        <p style="margin-top: 5px;">
+                            <a href="<?php echo SITE_URL ?? ''; ?>/login.php">
+                                <i class="fas fa-sign-in-alt"></i> Click here to login once approved
+                            </a>
+                        </p>
+                    </div>
                 </div>
             </div>
         <?php endif; ?>
         
         <?php if (!$success): ?>
-        <form method="POST" action="" id="registerForm" onsubmit="return validateForm()">
+        <form method="POST" action="" id="registerForm">
             <div class="form-row">
                 <div class="form-group">
                     <label for="firstname">
@@ -559,10 +767,11 @@ function createAdminNotification($message) {
                 <label for="password">
                     <i class="fas fa-lock"></i> Password <span class="required">*</span>
                 </label>
-                <div class="input-group">
-                    <i class="fas fa-lock"></i>
+                <div class="password-field">
+                    <i class="fas fa-lock lock-icon"></i>
                     <input type="password" id="password" name="password" 
                            placeholder="Create a strong password" required>
+                    <i class="fas fa-eye toggle-password" onclick="togglePassword('password')" title="Show/Hide Password"></i>
                 </div>
                 <div class="password-hint" id="password-length">
                     <i class="fas fa-circle"></i> At least 6 characters
@@ -582,10 +791,11 @@ function createAdminNotification($message) {
                 <label for="confirm_password">
                     <i class="fas fa-lock"></i> Confirm Password <span class="required">*</span>
                 </label>
-                <div class="input-group">
-                    <i class="fas fa-lock"></i>
+                <div class="password-field">
+                    <i class="fas fa-lock lock-icon"></i>
                     <input type="password" id="confirm_password" name="confirm_password" 
                            placeholder="Re-enter your password" required>
+                    <i class="fas fa-eye toggle-password" onclick="togglePassword('confirm_password')" title="Show/Hide Password"></i>
                 </div>
                 <div id="password-match" class="password-hint"></div>
             </div>
@@ -603,12 +813,30 @@ function createAdminNotification($message) {
         </form>
         <?php endif; ?>
         
-      <div class="login-link">
-            <p>  Already have an account? </p> <a href="<?php echo SITE_URL; ?>/login">Sign In</a></p>
+        <div class="login-link">
+            <p>Already have an account? <a href="<?php echo SITE_URL ?? ''; ?>/login.php">Sign In</a></p>
         </div>
     </div>
     
     <script>
+        // Toggle password visibility function
+        function togglePassword(fieldId) {
+            const passwordInput = document.getElementById(fieldId);
+            const toggleIcon = passwordInput.parentElement.querySelector('.toggle-password');
+            
+            if (passwordInput.type === 'password') {
+                passwordInput.type = 'text';
+                toggleIcon.classList.remove('fa-eye');
+                toggleIcon.classList.add('fa-eye-slash');
+                toggleIcon.title = 'Hide Password';
+            } else {
+                passwordInput.type = 'password';
+                toggleIcon.classList.remove('fa-eye-slash');
+                toggleIcon.classList.add('fa-eye');
+                toggleIcon.title = 'Show Password';
+            }
+        }
+        
         // Real-time password validation
         const password = document.getElementById('password');
         const confirmPassword = document.getElementById('confirm_password');
@@ -675,56 +903,69 @@ function createAdminNotification($message) {
             }
         }
         
-        password.addEventListener('input', validatePassword);
-        confirmPassword.addEventListener('input', checkPasswordMatch);
+        if (password) {
+            password.addEventListener('input', validatePassword);
+        }
+        if (confirmPassword) {
+            confirmPassword.addEventListener('input', checkPasswordMatch);
+        }
         
         // Username availability check (AJAX)
         const username = document.getElementById('username');
         const usernameFeedback = document.getElementById('username-feedback');
         let usernameTimer;
         
-        username.addEventListener('input', function() {
-            clearTimeout(usernameTimer);
-            const value = this.value;
-            
-            if (value.length < 3) {
-                usernameFeedback.innerHTML = '<i class="fas fa-exclamation-circle"></i> Username must be at least 3 characters';
-                usernameFeedback.classList.remove('valid');
-                return;
-            }
-            
-            if (!/^[a-zA-Z0-9_]+$/.test(value)) {
-                usernameFeedback.innerHTML = '<i class="fas fa-exclamation-circle"></i> Only letters, numbers, and underscores allowed';
-                usernameFeedback.classList.remove('valid');
-                return;
-            }
-            
-            usernameTimer = setTimeout(function() {
-                // AJAX check username availability
-                fetch('<?php echo SITE_URL; ?>/api/check_username.php?username=' + encodeURIComponent(value))
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.available) {
-                            usernameFeedback.innerHTML = '<i class="fas fa-check-circle"></i> Username is available';
-                            usernameFeedback.classList.add('valid');
-                        } else {
-                            usernameFeedback.innerHTML = '<i class="fas fa-exclamation-circle"></i> Username is already taken';
-                            usernameFeedback.classList.remove('valid');
+        if (username) {
+            username.addEventListener('input', function() {
+                clearTimeout(usernameTimer);
+                const value = this.value;
+                
+                if (value.length < 3) {
+                    usernameFeedback.innerHTML = '<i class="fas fa-exclamation-circle"></i> Username must be at least 3 characters';
+                    usernameFeedback.classList.remove('valid');
+                    return;
+                }
+                
+                if (!/^[a-zA-Z0-9_]+$/.test(value)) {
+                    usernameFeedback.innerHTML = '<i class="fas fa-exclamation-circle"></i> Only letters, numbers, and underscores allowed';
+                    usernameFeedback.classList.remove('valid');
+                    return;
+                }
+                
+                usernameTimer = setTimeout(function() {
+                    // Check username availability via AJAX
+                    const xhr = new XMLHttpRequest();
+                    xhr.open('GET', '<?php echo SITE_URL ?? ''; ?>/api/check_username.php?username=' + encodeURIComponent(value), true);
+                    xhr.onload = function() {
+                        if (xhr.status === 200) {
+                            try {
+                                const data = JSON.parse(xhr.responseText);
+                                if (data.available) {
+                                    usernameFeedback.innerHTML = '<i class="fas fa-check-circle"></i> Username is available';
+                                    usernameFeedback.classList.add('valid');
+                                } else {
+                                    usernameFeedback.innerHTML = '<i class="fas fa-exclamation-circle"></i> Username is already taken';
+                                    usernameFeedback.classList.remove('valid');
+                                }
+                            } catch(e) {
+                                console.error('Error parsing response');
+                            }
                         }
-                    })
-                    .catch(error => {
-                        console.error('Error:', error);
-                    });
-            }, 500);
-        });
+                    };
+                    xhr.onerror = function() {
+                        console.error('AJAX error');
+                    };
+                    xhr.send();
+                }, 500);
+            });
+        }
         
         // Form validation before submit
-        function validateForm() {
+        document.getElementById('registerForm')?.addEventListener('submit', function() {
             const btn = document.getElementById('registerBtn');
             btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Submitting...';
             btn.disabled = true;
-            return true;
-        }
+        });
     </script>
     
     <style>
@@ -739,6 +980,15 @@ function createAdminNotification($message) {
         
         #username-feedback.valid {
             color: #4CAF50;
+        }
+        
+        .success a {
+            color: #2E7D32;
+            text-decoration: underline;
+        }
+        
+        .success a:hover {
+            color: #1B5E20;
         }
     </style>
 </body>

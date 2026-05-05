@@ -11,7 +11,7 @@ define('CONFIG_PATH', BASE_PATH . '/config');
 define('UPLOAD_PATH', BASE_PATH . '/uploads');
 define('ASSET_PATH', BASE_PATH . '/assets');
 
-// Site URL - hardcode for now to avoid issues
+// Site URL - Define ONCE
 define('SITE_URL', 'http://localhost/inventory_sys');
 define('ASSET_URL', SITE_URL . '/assets');
 
@@ -44,4 +44,27 @@ if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity'] > 
     exit();
 }
 $_SESSION['last_activity'] = time();
+
+// ============================================
+// EMAIL & SMTP CONFIGURATION
+// ============================================
+
+// System Settings
+define('SITE_NAME', 'IMS');
+
+// Email Configuration
+define('SUPPORT_EMAIL', 'veripoolresort@gmail.com');
+define('ADMIN_EMAIL', 'veripoolresort@gmail.com');
+define('NOREPLY_EMAIL', 'veripoolresort@gmail.com');
+
+// SMTP Configuration (Gmail)
+define('SMTP_HOST', 'smtp.gmail.com');
+define('SMTP_PORT', 587);
+define('SMTP_USER', 'veripoolresort@gmail.com');
+define('SMTP_PASS', 'vxoxgejvdrubhwpz');
+define('SMTP_SECURE', 'tls');
+define('SMTP_AUTH', true);
+
+// Remove spaces from app password if needed
+define('SMTP_PASS_CLEAN', str_replace(' ', '', SMTP_PASS));
 ?>

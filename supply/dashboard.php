@@ -51,12 +51,14 @@ include INCLUDE_PATH . '/header.php';
         <h2>Quick Actions</h2>
     </div>
     <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-        <a href="<?php echo SITE_URL; ?>/supply/add_inventory.php" class="btn btn-primary">
+        <a href="<?php echo SITE_URL; ?>/admin/add_inventory.php" class="btn btn-primary">
             <i class="fas fa-plus"></i> Add Inventory
         </a>
-        <a href="<?php echo SITE_URL; ?>/supply/inventory_list.php" class="btn btn-secondary">
+        <a href="<?php echo SITE_URL; ?>/admin/all_inventory.php" class="btn btn-secondary">
             <i class="fas fa-list"></i> Inventory List
         </a>
+
+   
     </div>
 </div>
 

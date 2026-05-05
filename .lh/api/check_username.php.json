@@ -1,0 +1,18 @@
+{
+    "sourceFile": "api/check_username.php",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 0,
+            "patches": [
+                {
+                    "date": 1777511866363,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                }
+            ],
+            "date": 1777511866363,
+            "name": "Commit-0",
+            "content": "<?php\r\nheader('Content-Type: application/json');\r\nrequire_once __DIR__ . '/../config.php';\r\nrequire_once CONFIG_PATH . '/database.php';\r\n\r\n$username = $_GET['username'] ?? '';\r\n\r\nif (empty($username)) {\r\n    echo json_encode(['available' => false, 'error' => 'Username required']);\r\n    exit;\r\n}\r\n\r\n$stmt = $conn->prepare(\"SELECT id FROM users WHERE username = ?\");\r\n$stmt->bind_param(\"s\", $username);\r\n$stmt->execute();\r\n$result = $stmt->get_result();\r\n\r\necho json_encode(['available' => $result->num_rows === 0]);\r\n?>"
+        }
+    ]
+}

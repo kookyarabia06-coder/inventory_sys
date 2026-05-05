@@ -1,0 +1,18 @@
+{
+    "sourceFile": "test_phpmailer_simple.php",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 0,
+            "patches": [
+                {
+                    "date": 1777520949767,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                }
+            ],
+            "date": 1777520949767,
+            "name": "Commit-0",
+            "content": "<?php\r\nerror_reporting(E_ALL);\r\nini_set('display_errors', 1);\r\n\r\n// Manual include\r\nrequire_once __DIR__ . '/PHPMailer/src/PHPMailer.php';\r\nrequire_once __DIR__ . '/PHPMailer/src/SMTP.php';\r\nrequire_once __DIR__ . '/PHPMailer/src/Exception.php';\r\n\r\nuse PHPMailer\\PHPMailer\\PHPMailer;\r\nuse PHPMailer\\PHPMailer\\SMTP;\r\nuse PHPMailer\\PHPMailer\\Exception;\r\n\r\necho \"<h1>Simple PHPMailer Test</h1>\";\r\n\r\n$mail = new PHPMailer(true);\r\n\r\ntry {\r\n    // Server settings\r\n    $mail->SMTPDebug = SMTP::DEBUG_SERVER;\r\n    $mail->isSMTP();\r\n    $mail->Host       = 'smtp.gmail.com';\r\n    $mail->SMTPAuth   = true;\r\n    $mail->Username   = 'veripoolresort@gmail.com';\r\n    $mail->Password   = 'vxoxgejvdrubhwpz'; // No spaces!\r\n    $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;\r\n    $mail->Port       = 587;\r\n    \r\n    // Recipients\r\n    $mail->setFrom('veripoolresort@gmail.com', 'IMS System');\r\n    $mail->addAddress('veripoolresort@gmail.com'); // Send to yourself\r\n    \r\n    // Content\r\n    $mail->isHTML(true);\r\n    $mail->Subject = 'Test Email from IMS - ' . date('Y-m-d H:i:s');\r\n    $mail->Body    = '<h2>Test Email</h2><p>If you see this, PHPMailer is working!</p>';\r\n    $mail->AltBody = 'Test email from IMS system';\r\n    \r\n    $mail->send();\r\n    echo '<p style=\"color:green; font-weight:bold;\">✓ Email sent successfully!</p>';\r\n    echo '<p>Check your Gmail inbox at veripoolresort@gmail.com</p>';\r\n} catch (Exception $e) {\r\n    echo '<p style=\"color:red; font-weight:bold;\">✗ Email failed to send.</p>';\r\n    echo \"<p>Error: \" . $mail->ErrorInfo . \"</p>\";\r\n}\r\n?>"
+        }
+    ]
+}

@@ -6,8 +6,13 @@
 
 header('Content-Type: application/json');
 
-require_once '../config/database.php';
-require_once '../includes/auth.php';
+// Get the absolute path to the root directory
+$root_path = dirname(__DIR__);
+
+// Load configuration and auth
+require_once $root_path . '/config.php';
+require_once $root_path . '/includes/auth.php';
+require_once $root_path . '/includes/functions.php';
 
 // Check if user is logged in
 if (!isLoggedIn()) {
@@ -52,11 +57,13 @@ if ($user_role == 'user') {
 $result = $conn->query($query);
 
 if ($result && $row = $result->fetch_assoc()) {
-    // Format dates
-    $row['issued_date'] = date('Y-m-d', strtotime($row['issued_date']));
-    $row['expected_return'] = date('Y-m-d', strtotime($row['expected_return']));
-    if ($row['actual_return']) {
-        $row['actual_return'] = date('Y-m-d', strtotime($row['actual_return']));
+    // Format dates safely
+    $row['issued_date_formatted'] = date('M d, Y', strtotime($row['issued_date']));
+    if ($row['expected_return'] && $row['expected_return'] != '0000-00-00') {
+        $row['expected_return_formatted'] = date('M d, Y', strtotime($row['expected_return']));
+    }
+    if ($row['actual_return'] && $row['actual_return'] != '0000-00-00') {
+        $row['actual_return_formatted'] = date('M d, Y', strtotime($row['actual_return']));
     }
     
     // Format numbers

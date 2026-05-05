@@ -1,0 +1,18 @@
+{
+    "sourceFile": "api/get_audit_details.php",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 0,
+            "patches": [
+                {
+                    "date": 1777516198831,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                }
+            ],
+            "date": 1777516198831,
+            "name": "Commit-0",
+            "content": "<?php\r\n/**\r\n * Get Audit Details API\r\n * Returns detailed information about a specific audit log entry\r\n */\r\n\r\nheader('Content-Type: application/json');\r\nrequire_once '../config.php';\r\nrequire_once '../includes/auth.php';\r\n\r\n// Check if user is logged in and has super admin role\r\nif (!isset($_SESSION['user_id'])) {\r\n    echo json_encode(['success' => false, 'message' => 'Unauthorized']);\r\n    exit();\r\n}\r\n\r\n$user_role = $_SESSION['role'] ?? '';\r\nif ($user_role !== 'super_admin') {\r\n    echo json_encode(['success' => false, 'message' => 'Access denied. Super Admin only.']);\r\n    exit();\r\n}\r\n\r\n// Get the audit log ID\r\n$id = isset($_GET['id']) ? (int)$_GET['id'] : 0;\r\n\r\nif (!$id) {\r\n    echo json_encode(['success' => false, 'message' => 'Invalid ID']);\r\n    exit();\r\n}\r\n\r\n// Get audit log details with user information\r\n$stmt = $conn->prepare(\"\r\n    SELECT at.*, \r\n           CONCAT(u.firstname, ' ', u.lastname) as user_name,\r\n           u.username,\r\n           u.email as user_email,\r\n           u.role as user_role\r\n    FROM audit_trail at\r\n    LEFT JOIN users u ON at.user_id = u.id\r\n    WHERE at.id = ?\r\n\");\r\n$stmt->bind_param(\"i\", $id);\r\n$stmt->execute();\r\n$result = $stmt->get_result();\r\n\r\nif ($result && $row = $result->fetch_assoc()) {\r\n    echo json_encode(['success' => true, 'data' => $row]);\r\n} else {\r\n    echo json_encode(['success' => false, 'message' => 'Record not found']);\r\n}\r\n$stmt->close();\r\n?>"
+        }
+    ]
+}
