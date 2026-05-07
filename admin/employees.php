@@ -12,8 +12,8 @@ require_once $root_path . '/config.php';
 require_once INCLUDE_PATH . '/auth.php';
 require_once INCLUDE_PATH . '/functions.php';
 
-// Role checking - FIXED: Use array instead of OR operator
-requireRole('admin' || 'superadmin' || 'supply');
+// Role checking
+requireRole('admin' || 'superadmin');
 
 $page_title = 'Employees';
 $page_description = 'Manage employees linked to user accounts';
@@ -185,7 +185,9 @@ if (isset($_GET['get_employee']) && is_numeric($_GET['get_employee'])) {
     
     $id = (int)$_GET['get_employee'];
     $result = $conn->query("
-        SELECT e.*, d.name as department_name, s.name as section_name,
+        SELECT e.*, 
+               d.name as department_name, d.code as department_code,
+               s.name as section_name,
                u.username, u.role as user_role, u.status as user_status,
                CONCAT(u.firstname, ' ', u.lastname) as user_fullname
         FROM employees e
@@ -224,13 +226,38 @@ if (isset($_GET['get_user_details']) && is_numeric($_GET['get_user_details'])) {
     exit;
 }
 
+// Handle AJAX request to get sections by department
+if (isset($_GET['get_sections_by_department']) && is_numeric($_GET['get_sections_by_department'])) {
+    header('Content-Type: application/json');
+    
+    $department_id = (int)$_GET['get_sections_by_department'];
+    
+    $result = $conn->query("
+        SELECT s.id, s.name
+        FROM sections s
+        WHERE s.department_id = $department_id
+        ORDER BY s.name
+    ");
+    
+    $sections = [];
+    if ($result && $result->num_rows > 0) {
+        while($row = $result->fetch_assoc()) {
+            $sections[] = $row;
+        }
+    }
+    echo json_encode(['success' => true, 'sections' => $sections]);
+    exit;
+}
+
 // ============================================
 // DISPLAY DATA
 // ============================================
 
 // Get all employees with their departments, sections, and linked users
 $employees_result = $conn->query("
-    SELECT e.*, d.name as department_name, s.name as section_name,
+    SELECT e.*, 
+           d.name as department_name, d.code as department_code,
+           s.name as section_name,
            u.username, u.role as user_role, u.status as user_status,
            CONCAT(u.firstname, ' ', u.lastname) as user_fullname,
            CASE WHEN u.id IS NOT NULL THEN 1 ELSE 0 END as has_user_account
@@ -241,16 +268,8 @@ $employees_result = $conn->query("
     ORDER BY e.lastname, e.firstname
 ");
 
-// Get departments for dropdown
-$departments_result = $conn->query("SELECT * FROM departments ORDER BY name");
-
-// Get sections for dropdown
-$sections_result = $conn->query("
-    SELECT s.*, d.name as department_name 
-    FROM sections s 
-    LEFT JOIN departments d ON s.department_id = d.id 
-    ORDER BY d.name, s.name
-");
+// Get departments for dropdown (with code)
+$departments_result = $conn->query("SELECT id, name, code FROM departments ORDER BY code, name");
 
 // Get users NOT yet linked to any employee for dropdown
 $users_result = $conn->query("
@@ -401,38 +420,6 @@ body {
 .table-header h2 i {
     color: var(--accent);
     margin-right: 10px;
-}
-
-/* Search Box */
-.search-box {
-    display: flex;
-    gap: 12px;
-    margin-bottom: 20px;
-    flex-wrap: wrap;
-}
-
-.search-box input[type="text"] {
-    padding: 12px 16px;
-    border: 1px solid var(--border-light);
-    border-radius: 12px;
-    font-size: 14px;
-    flex: 1;
-    min-width: 200px;
-}
-
-.search-box button {
-    padding: 12px 24px;
-    background: var(--primary);
-    color: var(--text-light);
-    border: none;
-    border-radius: 12px;
-    font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
-}
-
-.search-box button:hover {
-    background: #5a7ae6;
 }
 
 /* Employee Table */
@@ -728,6 +715,27 @@ body {
         width: auto;
     }
 }
+
+.detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+}
+.detail-item {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-light);
+}
+.detail-label {
+    font-weight: 600;
+    color: var(--text-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+}
+.detail-value {
+    color: var(--text-primary);
+    font-size: 14px;
+}
 </style>
 
 <!-- Display Success/Error Messages -->
@@ -786,7 +794,7 @@ body {
         <a href="<?php echo SITE_URL; ?>/admin/departments.php" class="btn btn-secondary">
             <i class="fas fa-building"></i> Manage Departments
         </a>
-        <a href="<?php echo SITE_URL; ?>/admin/manage_users.php" class="btn btn-secondary">
+        <a href="<?php echo SITE_URL; ?>/admin/users.php" class="btn btn-secondary">
             <i class="fas fa-users-cog"></i> Manage Users
         </a>
     </div>
@@ -819,19 +827,19 @@ body {
                 <?php if ($employees_result && $employees_result->num_rows > 0): ?>
                     <?php while($emp = $employees_result->fetch_assoc()): ?>
                     <tr>
-                        <td style="vertical-align: top;"><?php echo $emp['id']; ?></td>
-                        <td style="vertical-align: top;">
+                        <td><?php echo $emp['id']; ?></td>
+                        <td>
                             <strong><?php echo htmlspecialchars($emp['lastname'] . ', ' . $emp['firstname']); ?></strong>
                             <?php if (!empty($emp['middlename'])): ?>
                                 <br><small class="text-muted"><?php echo htmlspecialchars($emp['middlename']); ?></small>
                             <?php endif; ?>
                         </td>
-                        <td style="vertical-align: top;"><?php echo htmlspecialchars($emp['email'] ?? 'N/A'); ?></td>
-                        <td style="vertical-align: top;"><?php echo htmlspecialchars($emp['contact'] ?? 'N/A'); ?></td>
-                        <td style="vertical-align: top;"><?php echo htmlspecialchars($emp['department_name'] ?? 'N/A'); ?></td>
-                        <td style="vertical-align: top;"><?php echo htmlspecialchars($emp['section_name'] ?? 'N/A'); ?></td>
-                        <td style="vertical-align: top;"><?php echo htmlspecialchars($emp['position'] ?? 'N/A'); ?></td>
-                        <td style="vertical-align: top;">
+                        <td><?php echo htmlspecialchars($emp['email'] ?? 'N/A'); ?></td>
+                        <td><?php echo htmlspecialchars($emp['contact'] ?? 'N/A'); ?></td>
+                        <td><?php echo htmlspecialchars($emp['department_name'] ?? 'N/A'); ?></td>
+                        <td><?php echo htmlspecialchars($emp['section_name'] ?? 'N/A'); ?></td>
+                        <td><?php echo htmlspecialchars($emp['position'] ?? 'N/A'); ?></td>
+                        <td>
                             <?php if ($emp['has_user_account']): ?>
                                 <span class="badge badge-success"><?php echo htmlspecialchars($emp['username']); ?></span>
                                 <br><small class="text-muted"><?php echo htmlspecialchars($emp['user_role'] ?? ''); ?></small>
@@ -839,14 +847,14 @@ body {
                                 <span class="badge badge-warning">Not Linked</span>
                             <?php endif; ?>
                         </td>
-                        <td style="vertical-align: top;">
+                        <td>
                             <?php if ($emp['status'] == 'Active'): ?>
                                 <span class="badge badge-success">Active</span>
                             <?php else: ?>
                                 <span class="badge badge-danger">Inactive</span>
                             <?php endif; ?>
                         </td>
-                        <td style="vertical-align: top;">
+                        <td>
                             <div class="action-buttons">
                                 <button class="action-btn view" onclick="viewEmployee(<?php echo $emp['id']; ?>)" title="View">
                                     <i class="fas fa-eye"></i>
@@ -945,19 +953,21 @@ body {
                     <div class="form-row">
                         <div class="form-group">
                             <label for="department_id">Department</label>
-                            <select class="form-control" id="department_id" name="department_id" onchange="loadSections()">
+                            <select class="form-control" id="department_id" name="department_id" onchange="loadSectionsByDepartment()">
                                 <option value="">-- Select Department --</option>
                                 <?php if ($departments_result && $departments_result->num_rows > 0): 
                                     $departments_result->data_seek(0);
                                     while($dept = $departments_result->fetch_assoc()): ?>
-                                <option value="<?php echo $dept['id']; ?>"><?php echo htmlspecialchars($dept['name']); ?></option>
+                                <option value="<?php echo $dept['id']; ?>">
+                                    <?php echo htmlspecialchars($dept['code']); ?> - <?php echo htmlspecialchars($dept['name']); ?>
+                                </option>
                                 <?php endwhile; endif; ?>
                             </select>
                         </div>
                         <div class="form-group">
                             <label for="section_id">Section</label>
                             <select class="form-control" id="section_id" name="section_id">
-                                <option value="">-- Select Section --</option>
+                                <option value="">-- First Select Department --</option>
                             </select>
                         </div>
                     </div>
@@ -980,7 +990,7 @@ body {
                     </div>
                 </div>
                 
-                <div class="modal-footer">
+                <div class="modal-footer" style="margin-top: 20px;">
                     <button type="button" class="btn btn-secondary" onclick="closeEmployeeModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Employee</button>
                 </div>
@@ -1006,34 +1016,35 @@ body {
 </div>
 
 <script>
-// Store sections data
-let sectionsData = [];
-
-<?php if ($sections_result && $sections_result->num_rows > 0): 
-    $sections_result->data_seek(0);
-    while($sec = $sections_result->fetch_assoc()): ?>
-sectionsData.push({
-    id: <?php echo $sec['id']; ?>,
-    name: '<?php echo htmlspecialchars(addslashes($sec['name'])); ?>',
-    department_id: <?php echo $sec['department_id'] ?? 'null'; ?>
-});
-<?php endwhile; endif; ?>
-
-function loadSections() {
+// Load sections based on selected department using AJAX
+function loadSectionsByDepartment() {
     let departmentId = document.getElementById('department_id').value;
     let sectionSelect = document.getElementById('section_id');
     
-    sectionSelect.innerHTML = '<option value="">-- Select Section --</option>';
-    
-    if (departmentId) {
-        let filteredSections = sectionsData.filter(s => s.department_id == departmentId);
-        filteredSections.forEach(section => {
-            let option = document.createElement('option');
-            option.value = section.id;
-            option.textContent = section.name;
-            sectionSelect.appendChild(option);
-        });
+    if (!departmentId) {
+        sectionSelect.innerHTML = '<option value="">-- First Select Department --</option>';
+        return;
     }
+    
+    sectionSelect.innerHTML = '<option value="">Loading sections...</option>';
+    
+    fetch('?get_sections_by_department=' + departmentId)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.sections && data.sections.length > 0) {
+                let options = '<option value="">-- Select Section --</option>';
+                data.sections.forEach(section => {
+                    options += `<option value="${section.id}">${escapeHtml(section.name)}</option>`;
+                });
+                sectionSelect.innerHTML = options;
+            } else {
+                sectionSelect.innerHTML = '<option value="">-- No sections available for this department --</option>';
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            sectionSelect.innerHTML = '<option value="">-- Error loading sections --</option>';
+        });
 }
 
 function loadUserDetails() {
@@ -1059,6 +1070,7 @@ function openEmployeeModal() {
     document.getElementById('action').value = 'add';
     document.getElementById('employee_id').value = '';
     document.getElementById('employeeForm').reset();
+    document.getElementById('section_id').innerHTML = '<option value="">-- First Select Department --</option>';
     document.getElementById('employeeModal').style.display = 'block';
 }
 
@@ -1086,10 +1098,14 @@ function editEmployee(id) {
                 document.getElementById('status').value = emp.status || 'Active';
                 document.getElementById('user_id').value = emp.user_id || '';
                 
-                loadSections();
-                setTimeout(() => {
-                    document.getElementById('section_id').value = emp.section_id || '';
-                }, 100);
+                // Load sections after department is set
+                if (emp.department_id) {
+                    loadSectionsByDepartment();
+                    setTimeout(() => {
+                        document.getElementById('section_id').value = emp.section_id || '';
+                    }, 500);
+                }
+                
                 document.getElementById('employeeModal').style.display = 'block';
             }
         })
@@ -1103,30 +1119,44 @@ function viewEmployee(id) {
             if (data.success) {
                 let emp = data.employee;
                 let userInfo = '';
+                
                 if (emp.user_id) {
                     userInfo = `
                         <div class="detail-item"><div class="detail-label">Linked User</div><div class="detail-value">${escapeHtml(emp.user_fullname)}</div></div>
                         <div class="detail-item"><div class="detail-label">Username</div><div class="detail-value">${escapeHtml(emp.username)}</div></div>
                         <div class="detail-item"><div class="detail-label">User Role</div><div class="detail-value">${escapeHtml(emp.user_role)}</div></div>
                     `;
+                } else {
+                    userInfo = `<div class="detail-item"><div class="detail-label">Linked User</div><div class="detail-value"><span class="badge badge-warning">Not linked to any user account</span></div></div>`;
                 }
+                
+                // Combine department and section
+                let departmentDisplay = emp.department_name ?? 'N/A';
+                let sectionDisplay = emp.section_name ?? 'N/A';
+                
                 let content = `
                     <h3 style="text-align:center;margin-bottom:20px;">${escapeHtml(emp.lastname)}, ${escapeHtml(emp.firstname)}</h3>
                     <div class="detail-grid">
                         <div class="detail-item"><div class="detail-label">ID</div><div class="detail-value">${emp.id}</div></div>
                         <div class="detail-item"><div class="detail-label">Email</div><div class="detail-value">${escapeHtml(emp.email || 'N/A')}</div></div>
                         <div class="detail-item"><div class="detail-label">Contact</div><div class="detail-value">${escapeHtml(emp.contact || 'N/A')}</div></div>
-                        <div class="detail-item"><div class="detail-label">Department</div><div class="detail-value">${escapeHtml(emp.department_name || 'N/A')}</div></div>
-                        <div class="detail-item"><div class="detail-label">Section</div><div class="detail-value">${escapeHtml(emp.section_name || 'N/A')}</div></div>
+                        <div class="detail-item"><div class="detail-label">Department</div><div class="detail-value">${escapeHtml(departmentDisplay)}</div></div>
+                        <div class="detail-item"><div class="detail-label">Section</div><div class="detail-value">${escapeHtml(sectionDisplay)}</div></div>
                         <div class="detail-item"><div class="detail-label">Position</div><div class="detail-value">${escapeHtml(emp.position || 'N/A')}</div></div>
-                        <div class="detail-item"><div class="detail-label">Date Hired</div><div class="detail-value">${emp.date_hired || 'N/A'}</div></div>
+                        <div class="detail-item"><div class="detail-label">Date Hired</div><div class="detail-value">${emp.date_hired ? new Date(emp.date_hired).toLocaleDateString() : 'N/A'}</div></div>
                         <div class="detail-item"><div class="detail-label">Status</div><div class="detail-value"><span class="badge ${emp.status == 'Active' ? 'badge-success' : 'badge-danger'}">${emp.status}</span></div></div>
                         ${userInfo}
                     </div>
                 `;
                 document.getElementById('viewEmployeeContent').innerHTML = content;
                 document.getElementById('viewEmployeeModal').style.display = 'block';
+            } else {
+                document.getElementById('viewEmployeeContent').innerHTML = '<div class="alert alert-danger">Error loading employee details</div>';
             }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            document.getElementById('viewEmployeeContent').innerHTML = '<div class="alert alert-danger">Error loading employee details</div>';
         });
 }
 
@@ -1141,33 +1171,23 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// Close modal when clicking outside
 window.onclick = function(event) {
-    if (event.target == document.getElementById('employeeModal')) closeEmployeeModal();
-    if (event.target == document.getElementById('viewEmployeeModal')) closeViewEmployeeModal();
+    let employeeModal = document.getElementById('employeeModal');
+    let viewEmployeeModal = document.getElementById('viewEmployeeModal');
+    
+    if (event.target == employeeModal) {
+        closeEmployeeModal();
+    }
+    if (event.target == viewEmployeeModal) {
+        closeViewEmployeeModal();
+    }
 }
-</script>
 
-<style>
-.detail-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 16px;
-}
-.detail-item {
-    padding: 8px 0;
-    border-bottom: 1px solid var(--border-light);
-}
-.detail-label {
-    font-weight: 600;
-    color: var(--text-muted);
-    font-size: 11px;
-    text-transform: uppercase;
-    margin-bottom: 4px;
-}
-.detail-value {
-    color: var(--text-primary);
-    font-size: 14px;
-}
-</style>
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+    // Any initialization code
+});
+</script>
 
 <?php include INCLUDE_PATH . '/footer.php'; ?>

@@ -922,7 +922,7 @@ tr:hover td {
                         <th class="col-category">Category</th>
                         <th class="col-condition">Condition</th>
                         <th class="col-qty">Qty (PC)</th>
-                        <th class="col-qty">Qty (Count)</th>
+                        <th class="col-qty">Qty (Remaining)</th>
                         <th class="col-diff">Diff</th>
                         <th class="col-value">Unit Value</th>
                         <th class="col-value">Total Value</th>

@@ -30,15 +30,7 @@ $type_of_equipment = $conn->query("SELECT * FROM type_of_equipment ORDER BY code
 // Get Equipment Sub-Type for dropdown (from equipment_sub_type table)
 $equipment_sub_type = $conn->query("SELECT * FROM equipment_sub_type ORDER BY code, name");
 
-// Get sections for dropdown
-$sections = $conn->query("
-SELECT s.*, d.name as department_name 
-FROM sections s
-LEFT JOIN departments d ON s.department_id = d.id
-ORDER BY d.name, s.name
-");
-
-// Get users for dropdown (for approved_by, verified_by, allocate_to)
+// Get users for dropdown (for approved_by, verified_by)
 $users = $conn->query("SELECT id, username, firstname, lastname FROM users WHERE status = 'active' ORDER BY firstname, lastname");
 
 // Handle barcode generation via AJAX
@@ -112,7 +104,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $quantity = floatval($_POST['quantity']);
     $unit_value = floatval($_POST['unit_value']);
     $equipment_id = !empty($_POST['equipment_id']) ? (int)$_POST['equipment_id'] : null;
-    $section_id = !empty($_POST['section_id']) ? (int)$_POST['section_id'] : null;
     $category = sanitize($_POST['category']);
     $type_equipment = sanitize($_POST['type_equipment']);
     $condition_text = sanitize($_POST['condition_text']);
@@ -136,7 +127,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         : [];
     $verified_by = !empty($verified_by_array) ? json_encode($verified_by_array) : null;
     
-    $allocate_to = !empty($_POST['allocate_to']) ? (int)$_POST['allocate_to'] : null;
     $remarks = sanitize($_POST['remarks']);
     
     // Auto-detect if we should use multiple barcodes based on quantity
@@ -188,23 +178,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     INSERT INTO inventory (
                         article_name, description, property_no, uom, 
                         qty_property_card, qty_physical_count, unit_value,
-                        equipment_id, section_id, category, type_equipment, condition_text,
+                        equipment_id, category, type_equipment, condition_text,
                         fund_cluster, certified_correct, approved_by, verified_by,
-                        allocate_to, remarks, created_by, date_added, date_updated,
+                        remarks, created_by, date_added, date_updated,
                         barcode_data
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?)
                 ");
                 
                 $qty_property_card = $quantity;
                 $qty_physical_count = $quantity;
                 
                 $stmt->bind_param(
-                    "sssdddiiisssssiiiiss",
+                    "sssdddiiisssssiiss",
                     $article_name, $description, $property_no, $uom,
                     $qty_property_card, $qty_physical_count, $unit_value,
-                    $equipment_id, $section_id, $category, $type_equipment, $condition_text,
+                    $equipment_id, $category, $type_equipment, $condition_text,
                     $fund_cluster, $certified_correct, $approved_by, $verified_by,
-                    $allocate_to, $remarks, $created_by, $barcode_data
+                    $remarks, $created_by, $barcode_data
                 );
                 
                 if (!$stmt->execute()) {
@@ -215,18 +205,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $inventory_ids[] = $inventory_id;
                 $barcodes_created[] = $barcode_data;
                 $stmt->close();
-                
-                // If allocated to user, create user_inventory record
-                if ($allocate_to) {
-                    $assign_stmt = $conn->prepare("
-                        INSERT INTO user_inventory (user_id, inventory_id, quantity_assigned, status)
-                        VALUES (?, ?, ?, 'active')
-                    ");
-                    $assign_qty = $quantity;
-                    $assign_stmt->bind_param("iid", $allocate_to, $inventory_id, $assign_qty);
-                    $assign_stmt->execute();
-                    $assign_stmt->close();
-                }
                 
             } else {
                 // Multiple items with sequential barcodes
@@ -248,11 +226,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         INSERT INTO inventory (
                             article_name, description, property_no, uom, 
                             qty_property_card, qty_physical_count, unit_value,
-                            equipment_id, section_id, category, type_equipment, condition_text,
+                            equipment_id, category, type_equipment, condition_text,
                             fund_cluster, certified_correct, approved_by, verified_by,
-                            allocate_to, remarks, created_by, date_added, date_updated,
+                            remarks, created_by, date_added, date_updated,
                             barcode_data
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?)
                     ");
                     
                     $qty_per_item = 1;
@@ -260,12 +238,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     $property_no_with_suffix = $property_no . '-' . ($i + 1);
                     
                     $stmt->bind_param(
-                        "sssdddiiisssssiiiiss",
+                        "sssdddiiisssssiiss",
                         $article_name, $description, $property_no_with_suffix, $uom,
                         $qty_per_item, $qty_per_item, $total_value,
-                        $equipment_id, $section_id, $category, $type_equipment, $condition_text,
+                        $equipment_id, $category, $type_equipment, $condition_text,
                         $fund_cluster, $certified_correct, $approved_by, $verified_by,
-                        $allocate_to, $remarks, $created_by, $barcode_data
+                        $remarks, $created_by, $barcode_data
                     );
                     
                     if (!$stmt->execute()) {
@@ -277,18 +255,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     $barcodes_created[] = $barcode_data;
                     $success_count++;
                     $stmt->close();
-                    
-                    // If allocated to user, create user_inventory record
-                    if ($allocate_to) {
-                        $assign_stmt = $conn->prepare("
-                            INSERT INTO user_inventory (user_id, inventory_id, quantity_assigned, status)
-                            VALUES (?, ?, ?, 'active')
-                        ");
-                        $assign_qty = 1;
-                        $assign_stmt->bind_param("iid", $allocate_to, $inventory_id, $assign_qty);
-                        $assign_stmt->execute();
-                        $assign_stmt->close();
-                    }
                 }
             }
             
@@ -312,9 +278,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 'type_equipment' => $type_equipment,
                 'condition' => $condition_text,
                 'fund_cluster' => $fund_cluster,
-                'section_id' => $section_id,
                 'equipment_id' => $equipment_id,
-                'allocate_to' => $allocate_to,
                 'barcode_option' => $barcode_option,
                 'barcode_count' => count($barcodes_created),
                 'barcodes' => $barcodes_created
@@ -868,21 +832,6 @@ textarea.form-control {
                         <?php endwhile; endif; ?>
                     </select>
                 </div>
-                
-                <div class="form-group">
-                    <label for="section_id">Location (Section)</label>
-                    <select class="form-control" id="section_id" name="section_id">
-                        <option value="">-- Select Location --</option>
-                        <?php if ($sections && $sections->num_rows > 0): 
-                        mysqli_data_seek($sections, 0);
-                        while($sec = $sections->fetch_assoc()): ?>
-                        <option value="<?php echo $sec['id']; ?>" 
-                        <?php echo (isset($_POST['section_id']) && $_POST['section_id'] == $sec['id']) ? 'selected' : ''; ?>>
-                        <?php echo htmlspecialchars(($sec['department_name'] ?? '') . ' - ' . $sec['name']); ?>
-                        </option>
-                        <?php endwhile; endif; ?>
-                    </select>
-                </div>
             </div>
         </div>
         
@@ -1019,32 +968,14 @@ textarea.form-control {
             </div>
         </div>
         
-        <!-- Allocation and Remarks -->
+        <!-- Remarks Only -->
         <div class="form-section">
-            <h3><i class="fas fa-tasks"></i> Allocation and Remarks</h3>
-            
-            <div class="form-row">
-                <div class="form-group">
-                    <label for="allocate_to">Allocate To</label>
-                    <select class="form-control" id="allocate_to" name="allocate_to">
-                        <option value="">-- Select User --</option>
-                        <?php if ($users && $users->num_rows > 0): 
-                        mysqli_data_seek($users, 0);
-                        while($user = $users->fetch_assoc()): ?>
-                        <option value="<?php echo $user['id']; ?>" 
-                        <?php echo (isset($_POST['allocate_to']) && $_POST['allocate_to'] == $user['id']) ? 'selected' : ''; ?>>
-                        <?php echo htmlspecialchars($user['firstname'] . ' ' . $user['lastname'] . ' (' . $user['username'] . ')'); ?>
-                        </option>
-                        <?php endwhile; endif; ?>
-                    </select>
-                    <small class="form-text text-muted">Assign this item to a specific user</small>
-                </div>
-            </div>
+            <h3><i class="fas fa-comment"></i> Remarks</h3>
             
             <div class="form-group">
                 <label for="remarks">Remarks</label>
-                <textarea class="form-control" id="remarks" name="remarks" rows="2" 
-                placeholder="Any additional notes"><?php echo isset($_POST['remarks']) ? htmlspecialchars($_POST['remarks']) : ''; ?></textarea>
+                <textarea class="form-control" id="remarks" name="remarks" rows="3" 
+                placeholder="Any additional notes or comments"><?php echo isset($_POST['remarks']) ? htmlspecialchars($_POST['remarks']) : ''; ?></textarea>
             </div>
         </div>
         

@@ -19,8 +19,8 @@ require_once INCLUDE_PATH . '/functions.php';
 require_once $root_path . '/vendor/autoload.php';
 use Picqer\Barcode\BarcodeGeneratorPNG;
 
-// Require admin role
-requireRole(['admin', 'superadmin', 'supply']);
+/// Require admin role
+requireRole('admin');
 
 // Generate CSRF token if not exists
 if (empty($_SESSION['csrf_token'])) {
@@ -30,23 +30,118 @@ if (empty($_SESSION['csrf_token'])) {
 $page_title = 'PPE Equipment';
 $page_description = 'Manage Personal Protective Equipment';
 
-// Get equipment types for dropdown
-$equipment = $conn->query("SELECT * FROM equipment ORDER BY name");
+// Get type of equipment for dropdown (from type_of_equipment table)
+$type_of_equipment = $conn->query("SELECT id, code, name FROM type_of_equipment ORDER BY name");
 
-// Get sections for dropdown
-$sections = $conn->query("
-    SELECT s.*, d.name as department_name 
-    FROM sections s
-    LEFT JOIN departments d ON s.department_id = d.id
-    ORDER BY d.name, s.name
+// Get equipment sub types for dropdown (from equipment_sub_type table)
+$equipment_sub_types = $conn->query("
+    SELECT est.id, est.code, est.name, est.type_of_equipment_id, toe.name as type_name
+    FROM equipment_sub_type est
+    LEFT JOIN type_of_equipment toe ON est.type_of_equipment_id = toe.id
+    ORDER BY toe.name, est.name
 ");
 
 // Get users for dropdown
 $users = $conn->query("SELECT id, username, firstname, lastname FROM users WHERE status = 'active' ORDER BY firstname, lastname");
 
+// Build equipment sub type options array for JavaScript
+$equipment_sub_type_options = [];
+$equipment_sub_types_data = [];
+while ($row = $equipment_sub_types->fetch_assoc()) {
+    $type_id = $row['type_of_equipment_id'];
+    if (!isset($equipment_sub_type_options[$type_id])) {
+        $equipment_sub_type_options[$type_id] = [];
+    }
+    $equipment_sub_type_options[$type_id][] = $row;
+    $equipment_sub_types_data[$row['id']] = $row;
+}
+$equipment_sub_types->data_seek(0);
+
 // ============================================
 // AJAX HANDLERS
 // ============================================
+
+// AJAX endpoint to get equipment sub types by type ID
+if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_sub_types' && isset($_GET['type_id'])) {
+    header('Content-Type: application/json');
+    $type_id = (int)$_GET['type_id'];
+    
+    $stmt = $conn->prepare("SELECT id, code, name FROM equipment_sub_type WHERE type_of_equipment_id = ? ORDER BY name");
+    $stmt->bind_param("i", $type_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    $sub_types = [];
+    while ($row = $result->fetch_assoc()) {
+        $sub_types[] = $row;
+    }
+    $stmt->close();
+    
+    echo json_encode(['success' => true, 'data' => $sub_types]);
+    exit;
+}
+
+// AJAX endpoint to preview property number format
+if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_property_preview' && isset($_GET['type_id']) && isset($_GET['sub_type_id'])) {
+    header('Content-Type: application/json');
+    $type_id = (int)$_GET['type_id'];
+    $sub_type_id = (int)$_GET['sub_type_id'];
+    $quantity = (int)($_GET['quantity'] ?? 1);
+    
+    // Get type code
+    $type_query = $conn->prepare("SELECT code FROM type_of_equipment WHERE id = ?");
+    $type_query->bind_param("i", $type_id);
+    $type_query->execute();
+    $type_result = $type_query->get_result();
+    $type_code = $type_result->fetch_assoc()['code'] ?? '00';
+    $type_query->close();
+    
+    // Get sub type code
+    $subtype_query = $conn->prepare("SELECT code FROM equipment_sub_type WHERE id = ?");
+    $subtype_query->bind_param("i", $sub_type_id);
+    $subtype_query->execute();
+    $subtype_result = $subtype_query->get_result();
+    $subtype_code = $subtype_result->fetch_assoc()['code'] ?? '00';
+    $subtype_query->close();
+    
+    $year = date('Y');
+    $pattern_like = $year . '-' . $type_code . '-' . $subtype_code . '-%';
+    
+    // Get next sequence number
+    $seq_query = $conn->prepare("
+        SELECT MAX(CAST(SUBSTRING_INDEX(property_no, '-', -1) AS UNSIGNED)) as max_seq 
+        FROM inventory 
+        WHERE property_no LIKE ?
+    ");
+    $seq_query->bind_param("s", $pattern_like);
+    $seq_query->execute();
+    $seq_result = $seq_query->get_result();
+    $max_seq = $seq_result->fetch_assoc()['max_seq'] ?? 0;
+    $seq_query->close();
+    
+    $next_seq = $max_seq + 1;
+    $base_format = $year . '-' . $type_code . '-' . $subtype_code;
+    
+    $response = [
+        'success' => true,
+        'property_format' => $base_format . '-XXXX (next: ' . str_pad($next_seq, 4, '0', STR_PAD_LEFT) . ')',
+        'is_multiple' => $quantity > 1 && floor($quantity) == $quantity
+    ];
+    
+    if ($response['is_multiple']) {
+        $sequences = [];
+        for ($i = 0; $i < min($quantity, 5); $i++) {
+            $sequences[] = $base_format . '-' . str_pad($next_seq + $i, 4, '0', STR_PAD_LEFT);
+        }
+        if ($quantity > 5) {
+            $sequences[] = '...';
+        }
+        $response['sequences'] = $sequences;
+    }
+    
+    echo json_encode($response);
+    exit;
+}
 
 // Get multiple items for barcode view
 if (isset($_GET['get_multiple_items'])) {
@@ -102,19 +197,21 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_item' && isset($_GET['id'])) {
     $stmt = $conn->prepare("
         SELECT i.*, 
                e.name as equipment_name, 
-               s.name as section_name,
+               toe.name as type_equipment_name,
+               toe.code as type_equipment_code,
+               est.name as sub_type_name,
+               est.code as sub_type_code,
                CONCAT(ap.firstname, ' ', ap.lastname) as approver_name,
                CONCAT(vr.firstname, ' ', vr.lastname) as verifier_name,
-               CONCAT(al.firstname, ' ', al.lastname) as allocatee_name,
                CONCAT(cr.firstname, ' ', cr.lastname) as created_by_name,
                (SELECT COUNT(*) FROM equipment_issuance WHERE inventory_id = i.id AND status = 'issued') as is_issued,
                CASE WHEN i.property_no LIKE '%-%' THEN 1 ELSE 0 END as is_multiple
         FROM inventory i
         LEFT JOIN equipment e ON i.equipment_id = e.id
-        LEFT JOIN sections s ON i.section_id = s.id
+        LEFT JOIN type_of_equipment toe ON i.type_equipment_id = toe.id
+        LEFT JOIN equipment_sub_type est ON i.equipment_sub_type_id = est.id
         LEFT JOIN users ap ON i.approved_by = ap.id
         LEFT JOIN users vr ON i.verified_by = vr.id
-        LEFT JOIN users al ON i.allocate_to = al.id
         LEFT JOIN users cr ON i.created_by = cr.id
         WHERE i.id = ?
         LIMIT 1
@@ -218,6 +315,56 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_edit_item' && isset($_GET['id'
 }
 
 // ============================================
+// FUNCTION TO GENERATE PROPERTY NUMBER
+// ============================================
+
+function generatePropertyNumber($conn, $type_equipment_id, $equipment_sub_type_id, $sequence_number = null) {
+    // Get equipment type code
+    $type_query = $conn->prepare("SELECT code FROM type_of_equipment WHERE id = ?");
+    $type_query->bind_param("i", $type_equipment_id);
+    $type_query->execute();
+    $type_result = $type_query->get_result();
+    $type_code = $type_result->fetch_assoc()['code'] ?? '00';
+    $type_query->close();
+    
+    // Get equipment sub type code
+    $subtype_query = $conn->prepare("SELECT code FROM equipment_sub_type WHERE id = ?");
+    $subtype_query->bind_param("i", $equipment_sub_type_id);
+    $subtype_query->execute();
+    $subtype_result = $subtype_query->get_result();
+    $subtype_code = $subtype_result->fetch_assoc()['code'] ?? '00';
+    $subtype_query->close();
+    
+    // Get current year
+    $year = date('Y');
+    
+    // Build base property number pattern
+    $base_pattern = $year . '-' . $type_code . '-' . $subtype_code;
+    
+    // If sequence number is provided (for multiple items), use it directly
+    if ($sequence_number !== null) {
+        return $base_pattern . '-' . str_pad($sequence_number, 4, '0', STR_PAD_LEFT);
+    }
+    
+    // For single item, get the next sequence number
+    $pattern_like = $year . '-' . $type_code . '-' . $subtype_code . '-%';
+    $seq_query = $conn->prepare("
+        SELECT MAX(CAST(SUBSTRING_INDEX(property_no, '-', -1) AS UNSIGNED)) as max_seq 
+        FROM inventory 
+        WHERE property_no LIKE ?
+    ");
+    $seq_query->bind_param("s", $pattern_like);
+    $seq_query->execute();
+    $seq_result = $seq_query->get_result();
+    $max_seq = $seq_result->fetch_assoc()['max_seq'] ?? 0;
+    $seq_query->close();
+    
+    $next_seq = $max_seq + 1;
+    
+    return $base_pattern . '-' . str_pad($next_seq, 4, '0', STR_PAD_LEFT);
+}
+
+// ============================================
 // FORM HANDLERS
 // ============================================
 
@@ -227,18 +374,30 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         die('Invalid CSRF token');
     }
     
-    $article_name = sanitize($_POST['article_name']);
-    $description = sanitize($_POST['description']);
-    $property_no_base = 'PPE-' . date('Ymd') . '-' . rand(1000, 9999);
-    $uom = sanitize($_POST['uom']);
-    $quantity = floatval($_POST['quantity']);
-    $unit_value = floatval($_POST['unit_value']);
+    $article_name = sanitize($_POST['article_name'] ?? '');
+    $description = sanitize($_POST['description'] ?? '');
+    $uom = sanitize($_POST['uom'] ?? '');
+    $quantity = floatval($_POST['quantity'] ?? 0);
+    $unit_value = floatval($_POST['unit_value'] ?? 0);
     $equipment_id = !empty($_POST['equipment_id']) ? (int)$_POST['equipment_id'] : null;
-    $section_id = !empty($_POST['section_id']) ? (int)$_POST['section_id'] : null;
     $category = 'PPE';
-    $type_equipment = sanitize($_POST['type_equipment'] ?? 'PPE');
-    $condition_text = sanitize($_POST['condition_text']);
-    $fund_cluster = sanitize($_POST['fund_cluster']);
+    
+    // Get type_equipment_id and equipment_sub_type_id
+    $type_equipment_id = !empty($_POST['type_equipment_id']) ? (int)$_POST['type_equipment_id'] : null;
+    $equipment_sub_type_id = !empty($_POST['equipment_sub_type_id']) ? (int)$_POST['equipment_sub_type_id'] : null;
+    
+    // Fund cluster
+    $fund_cluster = sanitize($_POST['fund_cluster'] ?? '');
+    
+    // Supplier Information
+    $supplier = sanitize($_POST['supplier'] ?? '');
+    $ref_po_number = sanitize($_POST['ref_po_number'] ?? '');
+    $delivery_date = !empty($_POST['delivery_date']) ? sanitize($_POST['delivery_date']) : null;
+    
+    // Set year_acquired
+    $year_acquired = date('Y');
+    
+    $condition_text = sanitize($_POST['condition_text'] ?? 'Serviceable');
     
     $certified_correct_array = isset($_POST['certified_correct']) && is_array($_POST['certified_correct']) 
         ? array_filter(array_map('intval', $_POST['certified_correct'])) : [];
@@ -252,8 +411,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         ? array_filter(array_map('intval', $_POST['verified_by'])) : [];
     $verified_by = !empty($verified_by_array) ? json_encode(array_values($verified_by_array)) : null;
     
-    $allocate_to = !empty($_POST['allocate_to']) ? (int)$_POST['allocate_to'] : null;
-    $remarks = sanitize($_POST['remarks']);
+    $remarks = sanitize($_POST['remarks'] ?? '');
     $barcode_data = sanitize($_POST['barcode_data'] ?? '');
     $created_by = $_SESSION['user_id'];
     $generate_multiple = isset($_POST['generate_multiple_barcodes']) && $_POST['generate_multiple_barcodes'] == '1';
@@ -263,6 +421,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     if (empty($uom)) $errors[] = "Unit of measurement is required";
     if ($quantity <= 0) $errors[] = "Quantity must be greater than 0";
     if ($unit_value <= 0) $errors[] = "Unit value must be greater than 0";
+    if (empty($type_equipment_id)) $errors[] = "Type of Equipment is required";
+    if (empty($equipment_sub_type_id)) $errors[] = "Equipment Category is required";
     
     if (empty($errors)) {
         $conn->begin_transaction();
@@ -270,32 +430,62 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         
         try {
             if ($generate_multiple && $quantity > 1 && floor($quantity) == $quantity) {
-                $base_barcode = $barcode_data ?: 'PPE-' . date('Ymd');
+                // For multiple items, generate sequential property numbers
+                $type_query = $conn->prepare("SELECT code FROM type_of_equipment WHERE id = ?");
+                $type_query->bind_param("i", $type_equipment_id);
+                $type_query->execute();
+                $type_result = $type_query->get_result();
+                $type_code = $type_result->fetch_assoc()['code'] ?? '00';
+                $type_query->close();
+                
+                $subtype_query = $conn->prepare("SELECT code FROM equipment_sub_type WHERE id = ?");
+                $subtype_query->bind_param("i", $equipment_sub_type_id);
+                $subtype_query->execute();
+                $subtype_result = $subtype_query->get_result();
+                $subtype_code = $subtype_result->fetch_assoc()['code'] ?? '00';
+                $subtype_query->close();
+                
+                $year = date('Y');
+                $pattern_like = $year . '-' . $type_code . '-' . $subtype_code . '-%';
+                $seq_query = $conn->prepare("
+                    SELECT MAX(CAST(SUBSTRING_INDEX(property_no, '-', -1) AS UNSIGNED)) as max_seq 
+                    FROM inventory 
+                    WHERE property_no LIKE ?
+                ");
+                $seq_query->bind_param("s", $pattern_like);
+                $seq_query->execute();
+                $seq_result = $seq_query->get_result();
+                $start_seq = ($seq_result->fetch_assoc()['max_seq'] ?? 0) + 1;
+                $seq_query->close();
+                
+                $base_barcode = $barcode_data ?: $type_code . '-' . $subtype_code . '-' . date('Ymd');
                 
                 for ($i = 1; $i <= $quantity; $i++) {
-                    $property_no = $property_no_base . '-' . str_pad($i, 3, '0', STR_PAD_LEFT);
+                    $property_no = $year . '-' . $type_code . '-' . $subtype_code . '-' . str_pad($start_seq + $i - 1, 4, '0', STR_PAD_LEFT);
                     $sequential_barcode = $base_barcode . '-' . str_pad($i, 3, '0', STR_PAD_LEFT);
                     
                     $stmt = $conn->prepare("
                         INSERT INTO inventory (
                             article_name, description, property_no, uom, 
                             qty_property_card, qty_physical_count, unit_value,
-                            equipment_id, section_id, category, type_equipment, condition_text,
+                            equipment_id, category, type_equipment_id, equipment_sub_type_id, condition_text,
                             fund_cluster, certified_correct, approved_by, verified_by,
-                            allocate_to, remarks, barcode_data, created_by, date_added, date_updated
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                            supplier, ref_po_number, delivery_date,
+                            remarks, barcode_data, created_by, year_acquired
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ");
                     
                     $qty_property_card = $quantity;
                     $qty_physical_count = $quantity;
                     
                     $stmt->bind_param(
-                        "ssssddiiisssssiiissi",
+                        "ssssdddiisiiissssssssii",
                         $article_name, $description, $property_no, $uom,
                         $qty_property_card, $qty_physical_count, $unit_value,
-                        $equipment_id, $section_id, $category, $type_equipment, $condition_text,
+                        $equipment_id, $category, $type_equipment_id, $equipment_sub_type_id, $condition_text,
                         $fund_cluster, $certified_correct, $approved_by, $verified_by,
-                        $allocate_to, $remarks, $sequential_barcode, $created_by
+                        $supplier, $ref_po_number, $delivery_date,
+                        $remarks, $sequential_barcode, $created_by, $year_acquired
                     );
                     
                     if ($stmt->execute()) {
@@ -304,34 +494,39 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                     $stmt->close();
                 }
                 $conn->commit();
-                $_SESSION['success'] = "$success_count PPE items added successfully with sequential barcodes.";
+                $_SESSION['success'] = "$success_count PPE items added successfully. Property numbers: $year-$type_code-$subtype_code-XXXX";
             } else {
+                // For single item
+                $property_no = generatePropertyNumber($conn, $type_equipment_id, $equipment_sub_type_id);
+                
                 $stmt = $conn->prepare("
                     INSERT INTO inventory (
                         article_name, description, property_no, uom, 
                         qty_property_card, qty_physical_count, unit_value,
-                        equipment_id, section_id, category, type_equipment, condition_text,
+                        equipment_id, category, type_equipment_id, equipment_sub_type_id, condition_text,
                         fund_cluster, certified_correct, approved_by, verified_by,
-                        allocate_to, remarks, barcode_data, created_by, date_added, date_updated
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                        supplier, ref_po_number, delivery_date,
+                        remarks, barcode_data, created_by, year_acquired
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 
                 $qty_property_card = $quantity;
                 $qty_physical_count = $quantity;
                 
                 $stmt->bind_param(
-                    "ssssddiiisssssiiissi",
-                    $article_name, $description, $property_no_base, $uom,
+                    "ssssdddiisiiissssssssii",
+                    $article_name, $description, $property_no, $uom,
                     $qty_property_card, $qty_physical_count, $unit_value,
-                    $equipment_id, $section_id, $category, $type_equipment, $condition_text,
+                    $equipment_id, $category, $type_equipment_id, $equipment_sub_type_id, $condition_text,
                     $fund_cluster, $certified_correct, $approved_by, $verified_by,
-                    $allocate_to, $remarks, $barcode_data, $created_by
+                    $supplier, $ref_po_number, $delivery_date,
+                    $remarks, $barcode_data, $created_by, $year_acquired
                 );
                 
                 if ($stmt->execute()) {
                     $inventory_id = $stmt->insert_id;
                     $conn->commit();
-                    $_SESSION['success'] = "PPE item added successfully. Property No: $property_no_base";
+                    $_SESSION['success'] = "PPE item added successfully. Property No: $property_no";
                 } else {
                     throw new Exception($conn->error);
                 }
@@ -356,16 +551,26 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     }
     
     $id = (int)$_POST['id'];
-    $article_name = sanitize($_POST['article_name']);
-    $description = sanitize($_POST['description']);
-    $uom = sanitize($_POST['uom']);
-    $quantity = floatval($_POST['quantity']);
-    $unit_value = floatval($_POST['unit_value']);
+    $article_name = sanitize($_POST['article_name'] ?? '');
+    $description = sanitize($_POST['description'] ?? '');
+    $uom = sanitize($_POST['uom'] ?? '');
+    $quantity = floatval($_POST['quantity'] ?? 0);
+    $unit_value = floatval($_POST['unit_value'] ?? 0);
     $equipment_id = !empty($_POST['equipment_id']) ? (int)$_POST['equipment_id'] : null;
-    $section_id = !empty($_POST['section_id']) ? (int)$_POST['section_id'] : null;
-    $type_equipment = sanitize($_POST['type_equipment'] ?? 'PPE');
-    $condition_text = sanitize($_POST['condition_text']);
-    $fund_cluster = sanitize($_POST['fund_cluster']);
+    
+    // Get type_equipment_id and equipment_sub_type_id
+    $type_equipment_id = !empty($_POST['type_equipment_id']) ? (int)$_POST['type_equipment_id'] : null;
+    $equipment_sub_type_id = !empty($_POST['equipment_sub_type_id']) ? (int)$_POST['equipment_sub_type_id'] : null;
+    
+    // Fund cluster
+    $fund_cluster = sanitize($_POST['fund_cluster'] ?? '');
+    
+    // Supplier Information
+    $supplier = sanitize($_POST['supplier'] ?? '');
+    $ref_po_number = sanitize($_POST['ref_po_number'] ?? '');
+    $delivery_date = !empty($_POST['delivery_date']) ? sanitize($_POST['delivery_date']) : null;
+    
+    $condition_text = sanitize($_POST['condition_text'] ?? 'Serviceable');
     
     $certified_correct_array = isset($_POST['certified_correct']) && is_array($_POST['certified_correct']) 
         ? array_filter(array_map('intval', $_POST['certified_correct'])) : [];
@@ -379,33 +584,50 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         ? array_filter(array_map('intval', $_POST['verified_by'])) : [];
     $verified_by = !empty($verified_by_array) ? json_encode(array_values($verified_by_array)) : null;
     
-    $allocate_to = !empty($_POST['allocate_to']) ? (int)$_POST['allocate_to'] : null;
-    $remarks = sanitize($_POST['remarks']);
+    $remarks = sanitize($_POST['remarks'] ?? '');
     $barcode_data = sanitize($_POST['barcode_data'] ?? '');
     
     $stmt = $conn->prepare("
         UPDATE inventory SET 
-            article_name = ?, description = ?, uom = ?,
-            qty_physical_count = ?, unit_value = ?,
-            equipment_id = ?, section_id = ?, type_equipment = ?,
-            condition_text = ?, fund_cluster = ?, certified_correct = ?,
-            approved_by = ?, verified_by = ?, allocate_to = ?,
-            remarks = ?, barcode_data = ?, date_updated = NOW()
+            article_name = ?,
+            description = ?,
+            uom = ?,
+            qty_physical_count = ?,
+            unit_value = ?,
+            equipment_id = ?,
+            type_equipment_id = ?,
+            equipment_sub_type_id = ?,
+            condition_text = ?,
+            fund_cluster = ?,
+            certified_correct = ?,
+            approved_by = ?,
+            verified_by = ?,
+            supplier = ?,
+            ref_po_number = ?,
+            delivery_date = ?,
+            remarks = ?,
+            barcode_data = ?,
+            date_updated = NOW()
         WHERE id = ?
     ");
     
+    if (!$stmt) {
+        die("Prepare failed: " . $conn->error);
+    }
+    
     $stmt->bind_param(
-        "sssddiisssssiissi",
+        "sssddi i i i s s s s s s s s s i",
         $article_name, $description, $uom, $quantity, $unit_value,
-        $equipment_id, $section_id, $type_equipment, $condition_text,
+        $equipment_id, $type_equipment_id, $equipment_sub_type_id, $condition_text,
         $fund_cluster, $certified_correct, $approved_by, $verified_by,
-        $allocate_to, $remarks, $barcode_data, $id
+        $supplier, $ref_po_number, $delivery_date,
+        $remarks, $barcode_data, $id
     );
     
     if ($stmt->execute()) {
         $_SESSION['success'] = "PPE item updated successfully";
     } else {
-        $_SESSION['error'] = "Error updating item: " . $conn->error;
+        $_SESSION['error'] = "Error updating item: " . $stmt->error;
     }
     $stmt->close();
     
@@ -491,24 +713,25 @@ $per_page = 999999;
 $search = isset($_GET['search']) ? sanitize($_GET['search']) : '';
 
 $query = "
-    SELECT i.*, e.name as equipment_name, s.name as section_name,
+    SELECT i.*, e.name as equipment_name,
+           toe.name as type_equipment_name,
+           est.name as sub_type_name,
            CONCAT(ap.firstname, ' ', ap.lastname) as approver_name,
            CONCAT(vr.firstname, ' ', vr.lastname) as verifier_name,
-           CONCAT(al.firstname, ' ', al.lastname) as allocatee_name,
            CONCAT(cr.firstname, ' ', cr.lastname) as created_by_name,
            (SELECT COUNT(*) FROM equipment_issuance WHERE inventory_id = i.id AND status = 'issued') as is_issued,
            CASE WHEN i.property_no LIKE '%-%' THEN 1 ELSE 0 END as is_multiple
     FROM inventory i
     LEFT JOIN equipment e ON i.equipment_id = e.id
-    LEFT JOIN sections s ON i.section_id = s.id
+    LEFT JOIN type_of_equipment toe ON i.type_equipment_id = toe.id
+    LEFT JOIN equipment_sub_type est ON i.equipment_sub_type_id = est.id
     LEFT JOIN users ap ON i.approved_by = ap.id
     LEFT JOIN users vr ON i.verified_by = vr.id
-    LEFT JOIN users al ON i.allocate_to = al.id
     LEFT JOIN users cr ON i.created_by = cr.id
-    WHERE i.category = 'PPE' OR i.type_equipment = 'PPE'
+    WHERE 1=1
 ";
 
-$count_query = "SELECT COUNT(*) as total FROM inventory WHERE category = 'PPE' OR type_equipment = 'PPE'";
+$count_query = "SELECT COUNT(*) as total FROM inventory i WHERE 1=1";
 
 if ($search) {
     $query .= " AND (i.article_name LIKE ? OR i.property_no LIKE ? OR i.description LIKE ?)";
@@ -1431,6 +1654,13 @@ tr.stock-alert-row:hover {
     font-weight: 600;
     display: inline-block;
 }
+
+/* Loading spinner for dropdown */
+.dropdown-loading {
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="%236B8CFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 1 0 10 10"/></svg>');
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+}
 </style>
 
 <!-- Display Success/Error Messages -->
@@ -1452,7 +1682,12 @@ tr.stock-alert-row:hover {
         <div class="card-icon"><i class="fas fa-shield-alt"></i></div>
         <h3>Total PPE Items</h3>
         <?php
-        $stmt = $conn->prepare("SELECT COUNT(*) as count FROM inventory WHERE category = 'PPE' OR type_equipment = 'PPE'");
+        $stmt = $conn->prepare("
+            SELECT COUNT(*) as count 
+            FROM inventory i
+            LEFT JOIN type_of_equipment toe ON i.type_equipment_id = toe.id
+            WHERE i.category = 'PPE' OR toe.name LIKE '%PPE%'
+        ");
         $stmt->execute();
         $result = $stmt->get_result();
         $total_ppe = $result->fetch_assoc()['count'];
@@ -1470,7 +1705,8 @@ tr.stock-alert-row:hover {
             SELECT COUNT(DISTINCT ei.inventory_id) as count 
             FROM equipment_issuance ei
             JOIN inventory i ON ei.inventory_id = i.id
-            WHERE (i.category = 'PPE' OR i.type_equipment = 'PPE') AND ei.status = 'issued'
+            LEFT JOIN type_of_equipment toe ON i.type_equipment_id = toe.id
+            WHERE (i.category = 'PPE' OR toe.name LIKE '%PPE%') AND ei.status = 'issued'
         ");
         $stmt->execute();
         $result = $stmt->get_result();
@@ -1487,8 +1723,9 @@ tr.stock-alert-row:hover {
         <?php
         $stmt = $conn->prepare("
             SELECT COUNT(*) as count 
-            FROM inventory 
-            WHERE (category = 'PPE' OR type_equipment = 'PPE') AND qty_physical_count <= 5
+            FROM inventory i
+            LEFT JOIN type_of_equipment toe ON i.type_equipment_id = toe.id
+            WHERE (i.category = 'PPE' OR toe.name LIKE '%PPE%') AND i.qty_physical_count <= 5
         ");
         $stmt->execute();
         $result = $stmt->get_result();
@@ -1504,9 +1741,10 @@ tr.stock-alert-row:hover {
         <h3>Total Value</h3>
         <?php
         $stmt = $conn->prepare("
-            SELECT SUM(unit_value * qty_physical_count) as total 
-            FROM inventory 
-            WHERE category = 'PPE' OR type_equipment = 'PPE'
+            SELECT SUM(i.unit_value * i.qty_physical_count) as total 
+            FROM inventory i
+            LEFT JOIN type_of_equipment toe ON i.type_equipment_id = toe.id
+            WHERE i.category = 'PPE' OR toe.name LIKE '%PPE%'
         ");
         $stmt->execute();
         $result = $stmt->get_result();
@@ -1578,7 +1816,9 @@ tr.stock-alert-row:hover {
                 <th>Category/Type</th>
                 <th>Quantity</th>
                 <th>Unit Value</th>
-                <th>Location</th>
+                <th>Supplier</th>
+                <th>PO Number</th>
+                <th>Fund Cluster</th>
                 <th>Condition</th>
                 <th>Status</th>
                 <th>Barcode</th>
@@ -1602,21 +1842,25 @@ tr.stock-alert-row:hover {
                         <?php endif; ?>
                     </div>
                     </td>
-                    <td><?php echo htmlspecialchars($item['property_no']); ?></td>
+                    <td><?php echo htmlspecialchars($item['property_no']); ?></div>
                     <td>
-                        <?php echo htmlspecialchars($item['category']); ?>
-                        <br><small><?php echo htmlspecialchars($item['type_equipment'] ?? $item['equipment_name']); ?></small>
+                        <?php 
+                        if ($item['type_equipment_name']):
+                            echo htmlspecialchars($item['type_equipment_name']);
+                            if ($item['sub_type_name']):
+                                echo '<br><small>' . htmlspecialchars($item['sub_type_name']) . '</small>';
+                            endif;
+                        else:
+                            echo htmlspecialchars($item['category']);
+                        endif;
+                        ?>
                     </div>
-                    </td>
-                    <td>
-                        <?php echo $item['total_qty'] . ' ' . $item['uom']; ?>
-                    </div>
-                    </td>
+                    <td><?php echo $item['total_qty'] . ' ' . $item['uom']; ?></div>
                     <td><?php echo formatCurrency($item['unit_value']); ?></div>
-                    </td>
-                    <td><?php echo htmlspecialchars($item['section_name'] ?? 'N/A'); ?>
-                                        </td>
-                    <td><?php echo htmlspecialchars($item['condition_text'] ?? 'Good'); ?></td>
+                    <td><?php echo htmlspecialchars($item['supplier'] ?? 'N/A'); ?></div>
+                    <td><?php echo htmlspecialchars($item['ref_po_number'] ?? 'N/A'); ?></div>
+                    <td><?php echo htmlspecialchars($item['fund_cluster'] ?? 'N/A'); ?></div>
+                    <td><?php echo htmlspecialchars($item['condition_text'] ?? 'Good'); ?></div>
                     <td>
                         <?php if ($item['is_issued'] > 0): ?>
                             <span class="badge-warning">Issued</span>
@@ -1624,7 +1868,6 @@ tr.stock-alert-row:hover {
                             <span class="badge-success">Available</span>
                         <?php endif; ?>
                     </div>
-                    </td>
                     <td>
                         <?php if (!empty($item['barcode_data'])): ?>
                             <button class="btn-xs" onclick="showBarcodeModal('<?php echo htmlspecialchars($item['barcode_data']); ?>', '<?php echo htmlspecialchars($item['article_name']); ?>')">
@@ -1646,7 +1889,6 @@ tr.stock-alert-row:hover {
                                 <i class="fas fa-layer-group"></i>
                             </button>
                         <?php endif; ?>
-                    </div>
                     </div>
                     <td>
                         <div class="action-buttons">
@@ -1674,7 +1916,7 @@ tr.stock-alert-row:hover {
                 <?php endforeach; ?>
             <?php else: ?>
                 <tr>
-                    <td colspan="10" class="text-center">
+                    <td colspan="12" class="text-center">
                         <i class="fas fa-shield-alt" style="font-size: 48px; color: #ccc; margin-bottom: 10px;"></i>
                         <br>
                         No PPE items found
@@ -1736,31 +1978,49 @@ tr.stock-alert-row:hover {
                     <h3><i class="fas fa-tags"></i> Classification</h3>
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="type_equipment">Type of Equipment</label>
-                            <input type="text" class="form-control" id="type_equipment" name="type_equipment" placeholder="e.g., PPE, Safety Gear">
+                            <label for="type_equipment_id">Type of Equipment <span class="text-danger">*</span></label>
+                            <select class="form-control" id="type_equipment_id" name="type_equipment_id" required onchange="loadEquipmentSubTypes(); previewPropertyNumber();">
+                                <option value="">-- Select Type of Equipment --</option>
+                                <?php 
+                                $type_of_equipment->data_seek(0);
+                                while($type = $type_of_equipment->fetch_assoc()): 
+                                ?>
+                                <option value="<?php echo $type['id']; ?>">
+                                    <?php echo htmlspecialchars($type['code'] . ' - ' . $type['name']); ?>
+                                </option>
+                                <?php endwhile; ?>
+                            </select>
+                            <small class="form-text text-muted">Select the main equipment type</small>
                         </div>
                         <div class="form-group">
-                            <label for="equipment_id">Equipment Category</label>
-                            <select class="form-control" id="equipment_id" name="equipment_id">
-                                <option value="">-- Select Equipment Category --</option>
-                                <?php if ($equipment): $equipment->data_seek(0); while($eq = $equipment->fetch_assoc()): ?>
-                                <option value="<?php echo $eq['id']; ?>">
-                                    <?php echo htmlspecialchars($eq['name']); ?>
-                                </option>
-                                <?php endwhile; endif; ?>
+                            <label for="equipment_sub_type_id">Equipment Category <span class="text-danger">*</span></label>
+                            <select class="form-control" id="equipment_sub_type_id" name="equipment_sub_type_id" required onchange="previewPropertyNumber();">
+                                <option value="">-- First select Type of Equipment --</option>
                             </select>
+                            <small class="form-text text-muted">Select the specific equipment sub-category</small>
+                        </div>
+                    </div>
+                    
+                    <!-- Property Number Preview -->
+                    <div id="propertyPreview" class="form-group" style="margin-top: 10px;"></div>
+                </div>
+                
+                <!-- Supplier Information -->
+                <div class="form-section">
+                    <h3><i class="fas fa-truck"></i> Supplier Information</h3>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="supplier">Supplier</label>
+                            <input type="text" class="form-control" id="supplier" name="supplier" placeholder="Enter supplier name">
+                        </div>
+                        <div class="form-group">
+                            <label for="ref_po_number">Reference PO Number</label>
+                            <input type="text" class="form-control" id="ref_po_number" name="ref_po_number" placeholder="Enter PO number">
                         </div>
                     </div>
                     <div class="form-group">
-                        <label for="section_id">Location (Section)</label>
-                        <select class="form-control" id="section_id" name="section_id">
-                            <option value="">-- Select Location --</option>
-                            <?php if ($sections): $sections->data_seek(0); while($sec = $sections->fetch_assoc()): ?>
-                            <option value="<?php echo $sec['id']; ?>">
-                                <?php echo htmlspecialchars(($sec['department_name'] ?? '') . ' - ' . $sec['name']); ?>
-                            </option>
-                            <?php endwhile; endif; ?>
-                        </select>
+                        <label for="delivery_date">Delivery Date</label>
+                        <input type="date" class="form-control" id="delivery_date" name="delivery_date">
                     </div>
                 </div>
                 
@@ -1782,7 +2042,7 @@ tr.stock-alert-row:hover {
                         </div>
                         <div class="form-group">
                             <label for="quantity">Quantity <span class="text-danger">*</span></label>
-                            <input type="number" class="form-control" id="quantity" name="quantity" value="1" min="0.01" step="0.01" required onchange="checkQuantityForMultipleBarcodes()">
+                            <input type="number" class="form-control" id="quantity" name="quantity" value="1" min="0.01" step="0.01" required onchange="checkQuantityForMultipleBarcodes(); previewPropertyNumber();">
                         </div>
                     </div>
                     
@@ -1817,7 +2077,14 @@ tr.stock-alert-row:hover {
                     
                     <div class="form-group">
                         <label for="fund_cluster">Fund Cluster</label>
-                        <input type="text" class="form-control" id="fund_cluster" name="fund_cluster" placeholder="e.g., General Fund, Trust Fund">
+                        <select class="form-control" id="fund_cluster" name="fund_cluster">
+                            <option value="">-- Select Fund Cluster --</option>
+                            <option value="Regular Agency Funds (RAF)">Regular Agency Funds (RAF)</option>
+                            <option value="Internally Generated Funds (IGF)">Internally Generated Funds (IGF)</option>
+                            <option value="FUND 151">FUND 151</option>
+                            <option value="Trust Receipts">Trust Receipts</option>
+                        </select>
+                        <small class="form-text text-muted">Select the appropriate fund cluster for this item</small>
                     </div>
                 </div>
                 
@@ -1876,22 +2143,9 @@ tr.stock-alert-row:hover {
                     </div>
                 </div>
                 
-                <!-- Allocation and Remarks -->
+                <!-- Remarks and Barcode -->
                 <div class="form-section">
-                    <h3><i class="fas fa-tasks"></i> Allocation and Remarks</h3>
-                    
-                    <div class="form-group">
-                        <label for="allocate_to">Allocate To</label>
-                        <select class="form-control" id="allocate_to" name="allocate_to">
-                            <option value="">-- Select User --</option>
-                            <?php if ($users): $users->data_seek(0); while($user = $users->fetch_assoc()): ?>
-                            <option value="<?php echo $user['id']; ?>">
-                                <?php echo htmlspecialchars($user['firstname'] . ' ' . $user['lastname'] . ' (' . $user['username'] . ')'); ?>
-                            </option>
-                            <?php endwhile; endif; ?>
-                        </select>
-                        <small class="form-text text-muted">Assign this item to a specific user</small>
-                    </div>
+                    <h3><i class="fas fa-tasks"></i> Additional Information</h3>
                     
                     <div class="form-group">
                         <label for="remarks">Remarks</label>
@@ -1999,6 +2253,89 @@ tr.stock-alert-row:hover {
 </div>
 
 <script>
+// Store equipment sub types data for JavaScript
+var equipmentSubTypes = <?php echo json_encode($equipment_sub_type_options); ?>;
+
+// Function to load equipment sub types based on selected type
+function loadEquipmentSubTypes() {
+    var typeId = document.getElementById('type_equipment_id').value;
+    var subTypeSelect = document.getElementById('equipment_sub_type_id');
+    
+    subTypeSelect.innerHTML = '<option value="">-- Select Equipment Category --</option>';
+    
+    if (!typeId) {
+        subTypeSelect.innerHTML = '<option value="">-- First select Type of Equipment --</option>';
+        return;
+    }
+    
+    subTypeSelect.disabled = true;
+    subTypeSelect.innerHTML = '<option value="">Loading categories...</option>';
+    
+    var timestamp = new Date().getTime();
+    var url = '?ajax=get_sub_types&type_id=' + encodeURIComponent(typeId) + '&t=' + timestamp;
+    
+    fetch(url)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.data.length > 0) {
+                data.data.forEach(function(subType) {
+                    var option = document.createElement('option');
+                    option.value = subType.id;
+                    option.textContent = subType.code + ' - ' + subType.name;
+                    subTypeSelect.appendChild(option);
+                });
+                subTypeSelect.disabled = false;
+            } else {
+                subTypeSelect.innerHTML = '<option value="">-- No categories found for this type --</option>';
+                subTypeSelect.disabled = false;
+            }
+        })
+        .catch(error => {
+            console.error('Error loading sub types:', error);
+            subTypeSelect.innerHTML = '<option value="">-- Error loading categories --</option>';
+            subTypeSelect.disabled = false;
+        });
+}
+
+// Function to preview property number format
+function previewPropertyNumber() {
+    var typeId = document.getElementById('type_equipment_id').value;
+    var subTypeId = document.getElementById('equipment_sub_type_id').value;
+    var quantity = parseFloat(document.getElementById('quantity').value) || 1;
+    
+    if (!typeId || !subTypeId) {
+        document.getElementById('propertyPreview').innerHTML = '';
+        return;
+    }
+    
+    document.getElementById('propertyPreview').innerHTML = '<div class="loading-spinner"><i class="fas fa-spinner fa-spin"></i> Loading property number format...</div>';
+    
+    var timestamp = new Date().getTime();
+    var url = '?ajax=get_property_preview&type_id=' + typeId + '&sub_type_id=' + subTypeId + '&quantity=' + quantity + '&t=' + timestamp;
+    
+    fetch(url)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                var html = '<div style="background: #e8f4f8; padding: 10px; border-radius: 5px; margin-top: 10px;">';
+                html += '<i class="fas fa-qrcode" style="color: #6B8CFF; margin-right: 5px;"></i>';
+                html += '<strong>Property Number Format:</strong><br>';
+                html += '<code style="font-size: 14px; background: #fff; padding: 5px; border-radius: 3px;">' + data.property_format + '</code>';
+                if (data.is_multiple && data.sequences) {
+                    html += '<br><small class="text-muted">Will generate: ' + data.sequences.join(', ') + '</small>';
+                }
+                html += '</div>';
+                document.getElementById('propertyPreview').innerHTML = html;
+            } else {
+                document.getElementById('propertyPreview').innerHTML = '<div class="alert alert-danger">Error loading property format</div>';
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            document.getElementById('propertyPreview').innerHTML = '';
+        });
+}
+
 // Calculate total value
 document.getElementById('quantity')?.addEventListener('input', calculateTotal);
 document.getElementById('unit_value')?.addEventListener('input', calculateTotal);
@@ -2020,6 +2357,7 @@ function checkQuantityForMultipleBarcodes() {
     if (isInteger && !isEdit) {
         multipleOption.style.display = 'block';
         document.getElementById('itemCountDisplay').textContent = quantity;
+        previewPropertyNumber();
     } else {
         multipleOption.style.display = 'none';
         document.getElementById('multiple_barcodes').checked = false;
@@ -2051,7 +2389,12 @@ function previewMultipleBarcodes() {
         quantity = 1;
     }
     
-    let prefix = 'PPE';
+    let typeSelect = document.getElementById('type_equipment_id');
+    let subTypeSelect = document.getElementById('equipment_sub_type_id');
+    let typeCode = typeSelect.options[typeSelect.selectedIndex]?.text.split(' - ')[0] || 'PPE';
+    let subTypeCode = subTypeSelect.options[subTypeSelect.selectedIndex]?.text.split(' - ')[0] || '00';
+    let prefix = typeCode + '-' + subTypeCode;
+    
     let previewDiv = document.getElementById('multipleBarcodePreview');
     
     previewDiv.innerHTML = '<div class="loading-spinner"><i class="fas fa-spinner fa-spin"></i> Generating preview...</div>';
@@ -2104,6 +2447,13 @@ function openAddModal() {
     document.getElementById('barcodePreviewContainer').style.display = 'none';
     document.getElementById('generate_multiple_barcodes').value = '0';
     document.getElementById('itemCountDisplay').textContent = '1';
+    document.getElementById('propertyPreview').innerHTML = '';
+    
+    var typeSelect = document.getElementById('type_equipment_id');
+    if (typeSelect) typeSelect.value = '';
+    var subTypeSelect = document.getElementById('equipment_sub_type_id');
+    if (subTypeSelect) subTypeSelect.innerHTML = '<option value="">-- First select Type of Equipment --</option>';
+    
     calculateTotal();
 }
 
@@ -2132,7 +2482,11 @@ function closeAllBarcodesModal() {
 
 // Generate Barcode for edit
 function generateBarcodeForEdit() {
-    let prefix = 'PPE';
+    let typeSelect = document.getElementById('type_equipment_id');
+    let subTypeSelect = document.getElementById('equipment_sub_type_id');
+    let typeCode = typeSelect.options[typeSelect.selectedIndex]?.text.split(' - ')[0] || 'PPE';
+    let subTypeCode = subTypeSelect.options[subTypeSelect.selectedIndex]?.text.split(' - ')[0] || '00';
+    let prefix = typeCode + '-' + subTypeCode;
     let date = new Date();
     let dateStr = date.getFullYear() + String(date.getMonth() + 1).padStart(2, '0') + String(date.getDate()).padStart(2, '0');
     let random = Math.floor(1000 + Math.random() * 9000);
@@ -2200,24 +2554,40 @@ function viewItem(id) {
                         <div class="detail-content">
                             <div class="detail-grid">
                                 <div class="detail-item">
-                                    <div class="detail-label">Category</div>
-                                    <div class="detail-value">${escapeHtml(item.category)}</div>
-                                </div>
-                                <div class="detail-item">
                                     <div class="detail-label">Type of Equipment</div>
-                                    <div class="detail-value">${escapeHtml(item.type_equipment || 'N/A')}</div>
+                                    <div class="detail-value">${escapeHtml(item.type_equipment_name || 'N/A')}</div>
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label">Equipment Category</div>
-                                    <div class="detail-value">${escapeHtml(item.equipment_name || 'N/A')}</div>
+                                    <div class="detail-value">${escapeHtml(item.sub_type_name || 'N/A')}</div>
                                 </div>
                                 <div class="detail-item">
-                                    <div class="detail-label">Location (Section)</div>
-                                    <div class="detail-value">${escapeHtml(item.section_name || 'N/A')}</div>
+                                    <div class="detail-label">Year Acquired</div>
+                                    <div class="detail-value">${escapeHtml(item.year_acquired || 'N/A')}</div>
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label">Condition</div>
                                     <div class="detail-value">${escapeHtml(item.condition_text || 'Good')}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="detail-section">
+                        <div class="detail-header"><i class="fas fa-truck"></i> Supplier Information</div>
+                        <div class="detail-content">
+                            <div class="detail-grid">
+                                <div class="detail-item">
+                                    <div class="detail-label">Supplier</div>
+                                    <div class="detail-value">${escapeHtml(item.supplier || 'N/A')}</div>
+                                </div>
+                                <div class="detail-item">
+                                    <div class="detail-label">Reference PO Number</div>
+                                    <div class="detail-value">${escapeHtml(item.ref_po_number || 'N/A')}</div>
+                                </div>
+                                <div class="detail-item">
+                                    <div class="detail-label">Delivery Date</div>
+                                    <div class="detail-value">${item.delivery_date ? new Date(item.delivery_date).toLocaleDateString() : 'N/A'}</div>
                                 </div>
                             </div>
                         </div>
@@ -2251,10 +2621,6 @@ function viewItem(id) {
                         <div class="detail-header"><i class="fas fa-users"></i> Personnel</div>
                         <div class="detail-content">
                             <div class="detail-grid">
-                                <div class="detail-item">
-                                    <div class="detail-label">Allocated To</div>
-                                    <div class="detail-value">${escapeHtml(item.allocatee_name || 'N/A')}</div>
-                                </div>
                                 <div class="detail-item">
                                     <div class="detail-label">Certified Correct By</div>
                                     <div class="detail-value">${escapeHtml(item.certified_correct_names || 'N/A')}</div>
@@ -2571,7 +2937,6 @@ window.onclick = function(event) {
 // Auto-calculate on page load if editing
 window.addEventListener('load', function() {
     <?php if (isset($_GET['edit'])): ?>
-    // Load edit item data
     let editId = <?php echo (int)$_GET['edit']; ?>;
     fetch('?ajax=get_edit_item&id=' + editId)
         .then(response => response.json())
@@ -2580,15 +2945,21 @@ window.addEventListener('load', function() {
                 let item = data.data;
                 document.getElementById('article_name').value = item.article_name;
                 document.getElementById('description').value = item.description || '';
-                document.getElementById('type_equipment').value = item.type_equipment || '';
-                document.getElementById('equipment_id').value = item.equipment_id || '';
-                document.getElementById('section_id').value = item.section_id || '';
+                
+                if (item.type_equipment_id) {
+                    let typeSelect = document.getElementById('type_equipment_id');
+                    typeSelect.value = item.type_equipment_id;
+                    loadEquipmentSubTypesAndSelect(item.equipment_sub_type_id);
+                }
+                
+                document.getElementById('supplier').value = item.supplier || '';
+                document.getElementById('ref_po_number').value = item.ref_po_number || '';
+                document.getElementById('delivery_date').value = item.delivery_date || '';
                 document.getElementById('uom').value = item.uom;
                 document.getElementById('quantity').value = item.qty_physical_count;
                 document.getElementById('unit_value').value = item.unit_value;
                 document.getElementById('fund_cluster').value = item.fund_cluster || '';
                 document.getElementById('condition_text').value = item.condition_text || 'Serviceable';
-                document.getElementById('allocate_to').value = item.allocate_to || '';
                 document.getElementById('remarks').value = item.remarks || '';
                 document.getElementById('barcode_data').value = item.barcode_data || '';
                 
@@ -2617,6 +2988,38 @@ window.addEventListener('load', function() {
         .catch(error => console.error('Error loading edit item:', error));
     <?php endif; ?>
 });
+
+// Helper function to load sub types and select a specific value
+function loadEquipmentSubTypesAndSelect(selectedSubTypeId) {
+    var typeId = document.getElementById('type_equipment_id').value;
+    var subTypeSelect = document.getElementById('equipment_sub_type_id');
+    
+    if (!typeId) return;
+    
+    var url = '?ajax=get_sub_types&type_id=' + encodeURIComponent(typeId);
+    
+    fetch(url)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.data.length > 0) {
+                subTypeSelect.innerHTML = '<option value="">-- Select Equipment Category --</option>';
+                data.data.forEach(function(subType) {
+                    var option = document.createElement('option');
+                    option.value = subType.id;
+                    option.textContent = subType.code + ' - ' + subType.name;
+                    subTypeSelect.appendChild(option);
+                });
+                if (selectedSubTypeId) {
+                    subTypeSelect.value = selectedSubTypeId;
+                }
+                subTypeSelect.disabled = false;
+                previewPropertyNumber();
+            }
+        })
+        .catch(error => {
+            console.error('Error loading sub types:', error);
+        });
+}
 
 // Edit item function for action buttons
 function editItem(id) {

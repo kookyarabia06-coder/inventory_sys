@@ -2,19 +2,34 @@
 /**
  * Authentication and Authorization Handler
  * Manages user sessions, login, and access control
+ * THIS VERSION WORKS WITH ANY FOLDER NAME - NO HARDCODED PATHS
  */
 
-// Get the absolute path to the root directory
+// Get the absolute path to the root directory dynamically
 $root_path = dirname(__DIR__);
 
-// Load configuration first
-require_once $root_path . '/config.php';
+// Load configuration first - with error checking
+if (file_exists($root_path . '/config.php')) {
+    require_once $root_path . '/config.php';
+} else {
+    die('Configuration file not found. Please check your installation.');
+}
 
 // Now load database using absolute path
-require_once CONFIG_PATH . '/database.php';
+if (defined('CONFIG_PATH') && file_exists(CONFIG_PATH . '/database.php')) {
+    require_once CONFIG_PATH . '/database.php';
+} elseif (file_exists($root_path . '/config/database.php')) {
+    require_once $root_path . '/config/database.php';
+} else {
+    die('Database configuration not found.');
+}
 
-// Load functions
-require_once INCLUDE_PATH . '/functions.php';
+// Load functions - with fallback
+if (defined('INCLUDE_PATH') && file_exists(INCLUDE_PATH . '/functions.php')) {
+    require_once INCLUDE_PATH . '/functions.php';
+} elseif (file_exists($root_path . '/includes/functions.php')) {
+    require_once $root_path . '/includes/functions.php';
+}
 
 // Start session with secure settings
 if (session_status() === PHP_SESSION_NONE) {
@@ -35,7 +50,7 @@ function isLoggedIn() {
  */
 function getCurrentUser() {
     global $conn;
-    if (isLoggedIn()) {
+    if (isLoggedIn() && isset($conn) && $conn) {
         $user_id = (int)$_SESSION['user_id'];
         $result = $conn->query("SELECT * FROM users WHERE id = $user_id AND status = 'active'");
         if ($result && $result->num_rows > 0) {
@@ -96,7 +111,7 @@ function hasAnyRole($roles) {
 function requireLogin() {
     if (!isLoggedIn()) {
         logout();
-        header('Location: ' . SITE_URL . '/login');
+        header('Location: ' . SITE_URL . '/login.php');
         exit();
     }
 }
@@ -112,14 +127,16 @@ function requireRole($roles) {
     $user = getCurrentUser();
     if (!$user || !in_array($user['role'], $roles)) {
         // Log unauthorized access attempt
-        logActivity('Unauthorized Access', $_SESSION['user_id'] ?? 0, 
-                   "Attempted to access page requiring roles: " . implode(', ', $roles));
+        if (function_exists('logActivity')) {
+            logActivity('Unauthorized Access', $_SESSION['user_id'] ?? 0, 
+                       "Attempted to access page requiring roles: " . implode(', ', $roles));
+        }
         
         // Redirect to appropriate dashboard
         if ($user) {
             header('Location: ' . getDashboardUrl());
         } else {
-            header('Location: ' . SITE_URL . '/login');
+            header('Location: ' . SITE_URL . '/login.php');
         }
         exit();
     }
@@ -134,13 +151,13 @@ function getUserRoleName() {
     if (!$user) return 'Guest';
     
     $roles = [
-        'super_admin' => 'Super Administrator',
+        'superadmin' => 'Super Administrator',
         'admin' => 'Administrator',
         'supply' => 'Supply Officer',
         'user' => 'End User'
     ];
     
-    return $roles[$user['role']] ?? ucfirst(str_replace('_', ' ', $user['role']));
+    return $roles[$user['role']] ?? ucfirst($user['role']);
 }
 
 /**
@@ -148,7 +165,7 @@ function getUserRoleName() {
  * @return bool
  */
 function isSuperAdmin() {
-    return hasRole('super_admin');
+    return hasRole('superadmin');
 }
 
 /**
@@ -181,18 +198,18 @@ function isUser() {
  */
 function getDashboardUrl() {
     $user = getCurrentUser();
-    if (!$user) return SITE_URL . '/login';
+    if (!$user) return SITE_URL . '/login.php';
     
     switch ($user['role']) {
-        case 'super_admin':
-            return SITE_URL . '/superadmin/dashboard';
+        case 'superadmin':
+            return SITE_URL . '/superadmin/dashboard.php';
         case 'admin':
-            return SITE_URL . '/admin/dashboard';
+            return SITE_URL . '/admin/dashboard.php';
         case 'supply':
-            return SITE_URL . '/supply/dashboard';
+            return SITE_URL . '/supply/dashboard.php';
         case 'user':
         default:
-            return SITE_URL . '/user/dashboard';
+            return SITE_URL . '/user/dashboard.php';
     }
 }
 
@@ -232,11 +249,15 @@ function logActivity($action, $item_id = null, $details = '') {
     $user_id = $_SESSION['user_id'] ?? null;
     $date_created = date('Y-m-d H:i:s');
     
-    $stmt = $conn->prepare("INSERT INTO activity_log (user_id, action, item_id, details, date_created) VALUES (?, ?, ?, ?, ?)");
-    if ($stmt) {
-        $stmt->bind_param("isiss", $user_id, $action, $item_id, $details, $date_created);
-        $stmt->execute();
-        $stmt->close();
+    // Check if table exists before inserting
+    $table_check = $conn->query("SHOW TABLES LIKE 'activity_log'");
+    if ($table_check && $table_check->num_rows > 0) {
+        $stmt = $conn->prepare("INSERT INTO activity_log (user_id, action, item_id, details, date_created) VALUES (?, ?, ?, ?, ?)");
+        if ($stmt) {
+            $stmt->bind_param("isiss", $user_id, $action, $item_id, $details, $date_created);
+            $stmt->execute();
+            $stmt->close();
+        }
     }
 }
 
@@ -258,11 +279,15 @@ function logAudit($action, $table_name, $record_id, $old_value = null, $new_valu
     $user_id = $_SESSION['user_id'] ?? null;
     $ip_address = $_SERVER['REMOTE_ADDR'] ?? '';
     
-    $stmt = $conn->prepare("INSERT INTO audit_trail (user_id, action, table_name, record_id, old_value, new_value, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?)");
-    if ($stmt) {
-        $stmt->bind_param("ississs", $user_id, $action, $table_name, $record_id, $old_value, $new_value, $ip_address);
-        $stmt->execute();
-        $stmt->close();
+    // Check if table exists before inserting
+    $table_check = $conn->query("SHOW TABLES LIKE 'audit_trail'");
+    if ($table_check && $table_check->num_rows > 0) {
+        $stmt = $conn->prepare("INSERT INTO audit_trail (user_id, action, table_name, record_id, old_value, new_value, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        if ($stmt) {
+            $stmt->bind_param("ississs", $user_id, $action, $table_name, $record_id, $old_value, $new_value, $ip_address);
+            $stmt->execute();
+            $stmt->close();
+        }
     }
 }
 ?>

@@ -1,0 +1,26 @@
+{
+    "sourceFile": "admin/init.php",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 2,
+            "patches": [
+                {
+                    "date": 1778026992280,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                },
+                {
+                    "date": 1778027108168,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,6 +1,10 @@\n <?php\r\n // admin/init.php - Include this in all admin files\r\n-require_once dirname(__DIR__) . '/includes/auth.php';\r\n+require_once dirname(__DIR__) . '/config.php';\r\n+require_once INCLUDE_PATH . '/auth.php';\r\n+require_once INCLUDE_PATH . '/functions.php';\r\n+\r\n+// Require admin or superadmin role\r\n requireLogin();\r\n requireRole('admin' || 'superadmin');\r\n ?>\r\n"
+                },
+                {
+                    "date": 1778027372026,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -1,10 +1,6 @@\n <?php\r\n // admin/init.php - Include this in all admin files\r\n-require_once dirname(__DIR__) . '/config.php';\r\n-require_once INCLUDE_PATH . '/auth.php';\r\n-require_once INCLUDE_PATH . '/functions.php';\r\n-\r\n-// Require admin or superadmin role\r\n+require_once dirname(__DIR__) . '/includes/auth.php';\r\n requireLogin();\r\n-requireRole('admin' || 'superadmin');\r\n-?>\r\n+requireRole(['admin', 'super_admin']);\r\n+?>\n\\ No newline at end of file\n"
+                }
+            ],
+            "date": 1778026992280,
+            "name": "Commit-0",
+            "content": "<?php\r\n// admin/init.php - Include this in all admin files\r\nrequire_once dirname(__DIR__) . '/includes/auth.php';\r\nrequireLogin();\r\nrequireRole('admin' || 'superadmin');\r\n?>\r\n"
+        }
+    ]
+}

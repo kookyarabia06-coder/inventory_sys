@@ -4,15 +4,22 @@
  * Define base paths and constants
  */
 
-// Define base path constants - use absolute paths
-define('BASE_PATH', 'C:/xampp/htdocs/inventory_sys');
+// Define base path constants - use __DIR__ for root
+define('BASE_PATH', __DIR__);
 define('INCLUDE_PATH', BASE_PATH . '/includes');
 define('CONFIG_PATH', BASE_PATH . '/config');
 define('UPLOAD_PATH', BASE_PATH . '/uploads');
 define('ASSET_PATH', BASE_PATH . '/assets');
 
-// Site URL - Define ONCE
-define('SITE_URL', 'http://localhost/inventory_sys');
+// Detect the folder name dynamically
+$folder_name = basename(BASE_PATH);
+
+// Site URL - Build dynamically
+$protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https://' : 'http://';
+$host = $_SERVER['HTTP_HOST'];
+
+// For asset URLs - use the full path
+define('SITE_URL', $protocol . $host . '/' . $folder_name);
 define('ASSET_URL', SITE_URL . '/assets');
 
 // Start session with secure settings
@@ -21,7 +28,7 @@ if (session_status() === PHP_SESSION_NONE) {
     ini_set('session.cookie_httponly', 1);
     ini_set('session.use_only_cookies', 1);
     ini_set('session.cookie_samesite', 'Strict');
-    ini_set('session.cookie_path', '/inventory_sys/');
+    ini_set('session.cookie_path', '/' . $folder_name . '/');
     
     session_start();
 }

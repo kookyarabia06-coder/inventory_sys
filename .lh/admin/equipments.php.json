@@ -3,7 +3,7 @@
     "activeCommit": 0,
     "commits": [
         {
-            "activePatchIndex": 1,
+            "activePatchIndex": 3,
             "patches": [
                 {
                     "date": 1777516516414,
@@ -12,6 +12,14 @@
                 {
                     "date": 1777516567639,
                     "content": "Index: \n===================================================================\n--- \n+++ \n@@ -8,9 +8,9 @@\n require_once $root_path . '/config.php';\n require_once INCLUDE_PATH . '/auth.php';\n require_once INCLUDE_PATH . '/functions.php';\n \n-requireRole('admin');\n+requireRole('admin' || 'supera');\n \n $page_title = 'Equipment Management';\n $page_description = 'Manage equipment types and sub-types';\n \n"
+                },
+                {
+                    "date": 1778027218678,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -3,15 +3,10 @@\n  * Equipment Management Page (Admin)\n  * Manage Type of Equipment and Equipment Sub-Types\n  */\n \n-$root_path = dirname(__DIR__);\n-require_once $root_path . '/config.php';\n-require_once INCLUDE_PATH . '/auth.php';\n-require_once INCLUDE_PATH . '/functions.php';\n+require_once __DIR__ . '/init.php';\n \n-requireRole('admin' || 'supera');\n-\n $page_title = 'Equipment Management';\n $page_description = 'Manage equipment types and sub-types';\n \n // Database configuration\n"
+                },
+                {
+                    "date": 1778027623957,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -3,10 +3,15 @@\n  * Equipment Management Page (Admin)\n  * Manage Type of Equipment and Equipment Sub-Types\n  */\n \n-require_once __DIR__ . '/init.php';\n+$root_path = dirname(__DIR__);\n+require_once $root_path . '/config.php';\n+require_once INCLUDE_PATH . '/auth.php';\n+require_once INCLUDE_PATH . '/functions.php';\n \n+requireRole('admin' || 'superadmin');\n+\n $page_title = 'Equipment Management';\n $page_description = 'Manage equipment types and sub-types';\n \n // Database configuration\n"
                 }
             ],
             "date": 1777516516414,

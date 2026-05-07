@@ -14,7 +14,7 @@ require_once INCLUDE_PATH . '/auth.php';
 require_once INCLUDE_PATH . '/functions.php';
 
 // Role checking
-requireRole('admin');
+requireRole('admin' || 'superadmin' || 'supply');
 
 $page_title = 'Issue Items';
 $page_description = 'Issue inventory items to employees';
@@ -551,6 +551,91 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
 .user-location-badge{background:#E8F5E9;color:#2E7D32;padding:4px 10px;border-radius:20px;font-size:11px;margin-left:8px}
 .user-department-badge{background:#E3F2FD;color:#1565C0;padding:4px 10px;border-radius:20px;font-size:11px;margin-left:8px}
 @media(max-width:768px){.stats-grid{grid-template-columns:1fr}}
+
+/* Custom Confirmation Modal */
+.confirm-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    z-index: 10000;
+    justify-content: center;
+    align-items: center;
+}
+.confirm-modal.show {
+    display: flex;
+}
+.confirm-modal-content {
+    background: white;
+    border-radius: 16px;
+    width: 400px;
+    max-width: 90%;
+    padding: 25px;
+    text-align: center;
+    animation: modalBounce 0.3s ease;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+}
+@keyframes modalBounce {
+    0% { opacity: 0; transform: scale(0.8); }
+    100% { opacity: 1; transform: scale(1); }
+}
+.confirm-modal-icon {
+    font-size: 60px;
+    margin-bottom: 15px;
+    color: #FF9800;
+}
+.confirm-modal-icon i {
+    font-size: 60px;
+}
+.confirm-modal h3 {
+    color: #3A3A3A;
+    font-size: 20px;
+    margin-bottom: 10px;
+}
+.confirm-modal p {
+    color: #6B6B6B;
+    font-size: 14px;
+    margin-bottom: 25px;
+    line-height: 1.5;
+}
+.confirm-modal-buttons {
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+}
+.confirm-btn-cancel {
+    background: #f5f5f5;
+    color: #3A3A3A;
+    border: none;
+    padding: 10px 25px;
+    border-radius: 40px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+.confirm-btn-cancel:hover {
+    background: #E0E0E0;
+    transform: translateY(-2px);
+}
+.confirm-btn-confirm {
+    background: linear-gradient(135deg, #6B8CFF 0%, #8FB5FF 100%);
+    color: white;
+    border: none;
+    padding: 10px 25px;
+    border-radius: 40px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+.confirm-btn-confirm:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(107,140,255,0.3);
+}
 </style>
 
 <div class="barcode-search-section">
@@ -587,7 +672,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
     <div class="hardware-scanner-content">
         <div class="hardware-scanner-header"><h2><i class="fas fa-barcode"></i> Hardware Barcode Scanner</h2><button type="button" class="close-btn" onclick="closeHardwareScannerModal()">&times;</button></div>
         <div class="hardware-scanner-body">
-            <div class="scanner-instructions"><strong><i class="fas fa-info-circle"></i> Ready to Scan</strong>Click the input field below and scan barcodes. When done, click "Issue Items".</div>
+            <div class="scanner-instructions"><strong><i class="fas fa-info-circle"></i> Ready to Scan</strong> Click the input field below and scan barcodes. When done, click "Issue Items".</div>
             <div class="scanner-input-container">
                 <label><i class="fas fa-barcode"></i> Scan Barcode</label>
                 <div class="scanner-input-wrapper"><i class="fas fa-barcode"></i><input type="text" id="hardwareScannerInput" class="hardware-scanner-input" placeholder="Place cursor here and scan..." autocomplete="off"></div>
@@ -611,7 +696,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
         <?php if(!empty($reissue_item['original_department'])) echo ' (' . htmlspecialchars($reissue_item['original_department']) . ')'; ?>
         </div>
         <?php endif; ?>
-        <form method="POST" action="" onsubmit="return validateIssueForm()" id="issueForm">
+        <form method="POST" action="" id="issueForm">
             <?php if ($reissue_item): ?>
             <input type="hidden" name="is_reissue" value="1">
             <input type="hidden" name="original_issuance_id" value="<?php echo $reissue_from_id; ?>">
@@ -646,7 +731,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
             <div class="form-group"><label>Condition</label><select name="condition" class="form-control"><option value="Serviceable" >Serviceable</option><option value="Non-Serviceable" >Non-Serviceable</option><option value="For Condemn" >For Condemn</option><option value="Under Repair" >Under Repair</option><option value="For Disposal" >For Disposal</option></select></div>
             <div class="form-group"><label>Purpose *</label><textarea name="purpose" id="purpose" class="form-control" rows="3" required placeholder="Reason for issuing"></textarea></div>
             <div class="form-group"><label>Remarks</label><textarea name="remarks" class="form-control" rows="2" placeholder="Optional notes"></textarea></div>
-            <div class="form-group"><button type="submit" class="btn-primary" id="submitBtn"><i class="fas fa-hand-holding"></i> <?php echo $reissue_item?'Reissue':'Issue Selected Items (<span id="selectedCount">0</span>)'; ?></button></div>
+            <div class="form-group"><button type="button" class="btn-primary" id="submitBtn" onclick="showConfirmModal()"><i class="fas fa-hand-holding"></i> <?php echo $reissue_item?'Reissue':'Issue Selected Items (<span id="selectedCount">0</span>)'; ?></button></div>
         </form>
     </div>
     
@@ -687,7 +772,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
                         <td><?php echo date('M d, Y',strtotime($item['issued_date'])); ?></td>
                         <td><div class="action-buttons">
                             <a href="?print_par=<?php echo $item['id']; ?>" class="action-btn" style="background:#2c3e50" target="_blank" title="Print PAR"><i class="fas fa-file-signature"></i></a>
-                            <a href="?return=<?php echo $item['id']; ?>" class="action-btn success" onclick="return confirm('Return this item?')"><i class="fas fa-undo"></i></a>
+                            <a href="?return=<?php echo $item['id']; ?>" class="action-btn success" onclick="return confirmReturnItem(event, this)"><i class="fas fa-undo"></i></a>
                             <?php if($item['status']==='issued'): ?>
                             <a href="?reissue=<?php echo $item['id']; ?>" class="action-btn edit" title="Reissue"><i class="fas fa-redo"></i></a>
                             <?php else: ?>
@@ -695,7 +780,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
                             <?php endif; ?>
                             <button class="action-btn view" onclick="viewIssuanceDetails(<?php echo $item['id']; ?>)"><i class="fas fa-eye"></i></button>
                         </div></td>
-                     </tr>
+                      </tr>
                     <?php endforeach; endforeach; else: ?>
                     <tr><td colspan="6" class="text-center">No items currently issued</td></tr>
                     <?php endif; ?>
@@ -779,9 +864,100 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
     </table>
 </div>
 
+<!-- Custom Confirmation Modal -->
+<div id="confirmModal" class="confirm-modal">
+    <div class="confirm-modal-content">
+        <div class="confirm-modal-icon">
+            <i class="fas fa-question-circle"></i>
+        </div>
+        <h3>Confirm Issuance</h3>
+        <p id="confirmModalMessage">Issue item(s) to this employee?</p>
+        <div class="confirm-modal-buttons">
+            <button class="confirm-btn-cancel" onclick="closeConfirmModal()">Cancel</button>
+            <button class="confirm-btn-confirm" onclick="submitForm()">Confirm</button>
+        </div>
+    </div>
+</div>
+
 <script>
 const inventoryData = <?php echo json_encode($inventory_data); ?>;
 let cartItems=[],hardwareScannedItems=[],isScannerActive=false;
+let pendingFormSubmit = false;
+
+function showConfirmModal() {
+    const employeeSelect = document.getElementById('issued_to');
+    const purposeField = document.getElementById('purpose');
+    const cartCount = cartItems.length;
+    
+    if (!employeeSelect.value) {
+        alert('Please select an employee');
+        employeeSelect.focus();
+        return false;
+    }
+    if (!purposeField.value.trim()) {
+        alert('Please enter a purpose');
+        purposeField.focus();
+        return false;
+    }
+    if (cartCount === 0 && document.getElementById('selectedItemsList') && document.getElementById('selectedItemsList').innerHTML === '') {
+        alert('Please add at least one item');
+        return false;
+    }
+    
+    // Get employee name
+    const selectedOption = employeeSelect.options[employeeSelect.selectedIndex];
+    const employeeName = selectedOption.text.split(' - ')[0];
+    const itemCount = cartCount > 0 ? cartCount : 1;
+    
+    document.getElementById('confirmModalMessage').innerHTML = `Issue ${itemCount} item(s) to ${employeeName}?`;
+    document.getElementById('confirmModal').classList.add('show');
+}
+
+function closeConfirmModal() {
+    document.getElementById('confirmModal').classList.remove('show');
+}
+
+function submitForm() {
+    closeConfirmModal();
+    const form = document.getElementById('issueForm');
+    const submitBtn = document.getElementById('submitBtn');
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+    form.submit();
+}
+
+function confirmReturnItem(event, element) {
+    event.preventDefault();
+    const itemRow = element.closest('tr');
+    const itemName = itemRow.querySelector('td:first-child strong')?.innerText || 'this item';
+    
+    const modal = document.getElementById('confirmModal');
+    document.getElementById('confirmModalMessage').innerHTML = `Return ${itemName}?`;
+    document.getElementById('confirmModal').classList.add('show');
+    
+    // Store the return URL for later
+    window.pendingReturnUrl = element.getAttribute('href');
+    
+    // Override submitForm temporarily
+    window.submitForm = function() {
+        closeConfirmModal();
+        window.location.href = window.pendingReturnUrl;
+    };
+    
+    return false;
+}
+
+// Reset submitForm to original after use
+function resetSubmitForm() {
+    window.submitForm = function() {
+        closeConfirmModal();
+        const form = document.getElementById('issueForm');
+        const submitBtn = document.getElementById('submitBtn');
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+        form.submit();
+    };
+}
 
 function searchBarcode(){performBarcodeSearch(document.getElementById('barcode_input').value.trim(),'barcode_input','barcode_result')}
 function openScannerModal(){const m=document.getElementById('scannerModal');if(m){m.classList.add('show');setTimeout(()=>document.getElementById('modal_barcode_input').focus(),100)}}
@@ -846,14 +1022,14 @@ function validateIssueForm(){
     if(!document.getElementById('issued_to').value){alert('Select an employee');return false}
     if(!document.getElementById('purpose').value.trim()){alert('Enter purpose');return false}
     if(cartItems.length===0){alert('Add at least one item');return false}
-    return confirm('Issue '+cartItems.length+' item(s) to this employee?')
+    return true
 }
 
 function viewIssuanceDetails(id){
     let m=document.getElementById('dynamic-modal');
     if(!m){m=document.createElement('div');m.id='dynamic-modal';m.style.cssText='display:none;position:fixed;z-index:1000;left:0;top:0;width:100%;height:100%;background:rgba(0,0,0,.5)';m.innerHTML=`<div style="background:#fff;margin:10% auto;width:500px;max-width:90%;border-radius:12px"><div style="padding:20px;border-bottom:2px solid #FFD8E0;display:flex;justify-content:space-between"><h2>Issuance Details</h2><span style="font-size:28px;cursor:pointer" onclick="document.getElementById('dynamic-modal').style.display='none'">&times;</span></div><div style="padding:20px" id="modal-body">Loading...</div></div>`;document.body.appendChild(m)}
     m.style.display='block';document.getElementById('modal-body').innerHTML='<div style="text-align:center"><i class="fas fa-spinner fa-spin"></i> Loading...</div>';
-    fetch('<?php echo SITE_URL; ?>/api/get_issuance_details.php?id='+id).then(r=>r.json()).then(d=>{if(d.error){document.getElementById('modal-body').innerHTML='<div style="color:red">'+d.error+'</div>';return}document.getElementById('modal-body').innerHTML=`<table style="width:100%"><tr><td><strong>Item:</strong>20%<td>20%<td>${escapeHtml(d.article_name||'N/A')}20%</tr>20%<tr>20%<td><strong>Property No.:</strong>20%</td>20%<td>${escapeHtml(d.property_no||'N/A')}20%</td>20%</tr>20%<tr>20%<td><strong>Issued To:</strong>20%</td>20%<td>${escapeHtml(d.issued_to_name||'N/A')}20%</td>20%</tr>20%<tr>20%<td><strong>Department:</strong>20%</td>20%<td>${escapeHtml(d.department_name||'N/A')}20%</td>20%</tr>20%<table>20%</table>`}).catch(()=>{document.getElementById('modal-body').innerHTML='<div style="color:red">Error loading</div>'})
+    fetch('<?php echo SITE_URL; ?>/api/get_issuance_details.php?id='+id).then(r=>r.json()).then(d=>{if(d.error){document.getElementById('modal-body').innerHTML='<div style="color:red">'+d.error+'</div>';return}document.getElementById('modal-body').innerHTML=`<table style="width:100%"><tr><td><strong>Item:</strong>20%</td>20%<td>${escapeHtml(d.article_name||'N/A')}20%</td>20%</tr>20%<tr>20%<td><strong>Property No.:</strong>20%</td>20%<td>${escapeHtml(d.property_no||'N/A')}20%</td>20%</tr>20%<tr>20%<td><strong>Issued To:</strong>20%</td>20%<td>${escapeHtml(d.issued_to_name||'N/A')}20%</td>20%</tr>20%<tr>20%<td><strong>Department:</strong>20%</td>20%<td>${escapeHtml(d.department_name||'N/A')}20%</td>20%</tr>20%<tr>20%<td><strong>Section:</strong>20%</td>20%<td>${escapeHtml(d.section_name||'N/A')}20%</td>20%</tr>20%<tr>20%<td><strong>Quantity:</strong>20%</td>20%<td>${d.quantity_issued} ${escapeHtml(d.uom||'pcs')}20%</td>20%</tr>20%<tr>20%<td><strong>Purpose:</strong>20%</td>20%<td>${escapeHtml(d.purpose||'N/A')}20%</td>20%</tr>20%<tr>20%<td><strong>Condition:</strong>20%</td>20%<td>${escapeHtml(d.condition_on_issue||'N/A')}20%</td>20%</tr>20%<tr>20%<td><strong>Issued Date:</strong>20%</td>20%<td>${d.issued_date}20%</td>20%</tr>20%<table>`}).catch(()=>{document.getElementById('modal-body').innerHTML='<div style="color:red">Error loading</div>'})
 }
 
 function processHardwareBarcode(barcode){const st=barcode.toLowerCase().trim();let fi=null;for(let id in inventoryData){const it=inventoryData[id],be=(it.barcode_data||'').toLowerCase().trim(),bn=be.replace(/[\s\-\.]/g,''),sn=st.replace(/[\s\-\.]/g,''),al=(it.article_name||'').toLowerCase(),pl=(it.property_no||'').toLowerCase();if(bn===sn||(be&&be===st)||(be&&be.includes(st))||al.includes(st)||pl.includes(st)){fi=it;break}}
@@ -877,7 +1053,7 @@ function issueHardwareScannedItems(){
     let ac=0,sk=0;hardwareScannedItems.forEach(item=>{const ec=cartItems.find(i=>i.id==item.id);if(ec){ec.quantity=Math.min(ec.quantity+item.quantity,item.available_qty);ac++}else{const ol=cartItems.length;addToCart(item.id,item.quantity);if(cartItems.length>ol)ac++;else sk++}});
     closeHardwareScannerModal();
     let msg=ac+' item(s) added.';if(sk>0)msg+='\n'+sk+' skipped.';msg+='\n\nClick "Issue Selected Items" to complete.';alert(msg);
-    const sb=document.querySelector('#issueForm button[type="submit"]');if(sb){sb.scrollIntoView({behavior:'smooth',block:'center'});sb.style.boxShadow='0 0 20px rgba(248,176,192,.8)';setTimeout(()=>sb.style.boxShadow='',2000)}
+    const sb=document.getElementById('submitBtn');if(sb){sb.scrollIntoView({behavior:'smooth',block:'center'});sb.style.boxShadow='0 0 20px rgba(248,176,192,.8)';setTimeout(()=>sb.style.boxShadow='',2000)}
 }
 
 document.addEventListener('DOMContentLoaded',function(){
@@ -887,6 +1063,7 @@ document.addEventListener('DOMContentLoaded',function(){
     document.addEventListener('keydown',function(e){if(e.key==='Escape'){const hm=document.getElementById('hardwareScannerModal');if(hm&&hm.classList.contains('show'))closeHardwareScannerModal();const sm=document.getElementById('scannerModal');if(sm&&sm.classList.contains('show'))closeScannerModal()}});
     const hm=document.getElementById('hardwareScannerModal');if(hm)hm.addEventListener('click',function(e){if(e.target===hm)closeHardwareScannerModal()});
     document.getElementById('barcode_input')?.focus();
+    resetSubmitForm();
 });
 </script>
 

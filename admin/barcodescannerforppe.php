@@ -1,7 +1,7 @@
 <?php
 /**
  * PPE Barcode Scanner Page
- * Scan barcodes to quickly find and manage PPE items
+ * Scan barcodes to quickly find and manage PPE items only
  */
 
 // Start session if not already started
@@ -28,7 +28,7 @@ require_once $root_path . '/vendor/autoload.php';
 use Picqer\Barcode\BarcodeGeneratorPNG;
 
 // Require admin role
-requireRole(['admin', 'supply']);
+requireRole('admin');
 
 // Generate CSRF token if not exists
 if (!isset($_SESSION['csrf_token'])) {
@@ -84,6 +84,13 @@ if (isset($_GET['scan_barcode'])) {
         
         // Validate barcode input
         $barcode = isset($_GET['barcode']) ? trim($_GET['barcode']) : '';
+
+        error_log("PPE Scanner: Searching for barcode: '" . $barcode . "'");
+
+if (empty($barcode)) {
+    echo json_encode(['error' => 'Please provide a barcode']);
+    exit;
+}
         
         if (empty($barcode)) {
             echo json_encode(['error' => 'Please provide a barcode']);
@@ -98,28 +105,37 @@ if (isset($_GET['scan_barcode'])) {
         
         // Sanitize and normalize input
         $barcode = sanitize($barcode);
-        $barcode = trim($barcode); // Remove leading/trailing whitespace
-        $barcode = preg_replace('/\s+/', '', $barcode); // Remove all internal whitespace
+        $barcode = trim($barcode);
+        $barcode = preg_replace('/\s+/', '', $barcode);
         
-        // Search for the barcode in PPE inventory with prepared statement
-        $stmt = $conn->prepare("
-            SELECT i.*, e.name as equipment_name, s.name as section_name,
-                   d.name as department_name, b.name as building_name,
-                   CONCAT(ap.firstname, ' ', ap.lastname) as approver_name,
-                   CONCAT(vr.firstname, ' ', vr.lastname) as verifier_name,
-                   CONCAT(al.firstname, ' ', al.lastname) as allocatee_name
-            FROM inventory i
-            LEFT JOIN equipment e ON i.equipment_id = e.id  
-            LEFT JOIN sections s ON i.section_id = s.id
-            LEFT JOIN departments d ON s.department_id = d.id
-            LEFT JOIN buildings b ON d.building_id = b.id
-            LEFT JOIN users ap ON i.approved_by = ap.id
-            LEFT JOIN users vr ON i.verified_by = vr.id
-            LEFT JOIN users al ON i.allocate_to = al.id
-            WHERE TRIM(REPLACE(REPLACE(REPLACE(i.barcode_data, ' ', ''), '\t', ''), '\n', '')) = TRIM(REPLACE(REPLACE(REPLACE(?, ' ', ''), '\t', ''), '\n', ''))
-            AND (i.category = 'PPE' OR i.type_equipment = 'PPE')
-            LIMIT 1
-        ");
+        // Search for the barcode in PPE inventory only - using the new structure
+       // Search for the barcode in PPE inventory - SIMPLIFIED DIRECT MATCH
+$stmt = $conn->prepare("
+    SELECT i.*, 
+           e.name as equipment_name, 
+           s.name as section_name,
+           d.name as department_name, 
+           b.name as building_name,
+           toe.name as type_equipment_name,
+           toe.code as type_equipment_code,
+           est.name as sub_type_name,
+           est.code as sub_type_code,
+           CONCAT(ap.firstname, ' ', ap.lastname) as approver_name,
+           CONCAT(vr.firstname, ' ', vr.lastname) as verifier_name,
+           CONCAT(al.firstname, ' ', al.lastname) as allocatee_name
+    FROM inventory i
+    LEFT JOIN equipment e ON i.equipment_id = e.id  
+    LEFT JOIN sections s ON i.section_id = s.id
+    LEFT JOIN departments d ON s.department_id = d.id
+    LEFT JOIN buildings b ON d.building_id = b.id
+    LEFT JOIN type_of_equipment toe ON i.type_equipment_id = toe.id
+    LEFT JOIN equipment_sub_type est ON i.equipment_sub_type_id = est.id
+    LEFT JOIN users ap ON i.approved_by = ap.id
+    LEFT JOIN users vr ON i.verified_by = vr.id
+    LEFT JOIN users al ON i.allocate_to = al.id
+    WHERE i.barcode_data = ?
+    LIMIT 1
+");
         
         if (!$stmt) {
             throw new Exception("Database prepare error: " . $conn->error);
@@ -134,25 +150,33 @@ if (isset($_GET['scan_barcode'])) {
         $result = $stmt->get_result();
         
         if ($result && $row = $result->fetch_assoc()) {
-            // determine if this record is part of a multiple set
-            $is_multiple = preg_match('/-\d{3}$/', $row['property_no']);
-            $total_qty = (float)($row['qty_physical_count'] ?? 0);
-            if ($is_multiple) {
-                $base = preg_replace('/-\d{3}$/', '', $row['property_no']);
-                $sumStmt = $conn->prepare("SELECT SUM(qty_physical_count) as total FROM inventory WHERE property_no LIKE CONCAT(?, '-%')");
-                if ($sumStmt) {
-                    $sumStmt->bind_param("s", $base);
-                    if ($sumStmt->execute()) {
-                        $sr = $sumStmt->get_result();
-                        if ($sr && $srow = $sr->fetch_assoc()) {
-                            $total_qty = floatval($srow['total']);
-                        }
-                    }
-                    $sumStmt->close();
-                }
-            }
+            // Just use the individual item's quantity - NO SUMMING
+            $quantity = (float)($row['qty_physical_count'] ?? 0);
+            
             // Get issued status safely
             $is_issued = checkIfIssued($conn, $row['id']);
+            
+            // Build location string
+            $location = '';
+            if ($row['section_name']) {
+                $location = htmlspecialchars($row['section_name'], ENT_QUOTES, 'UTF-8');
+                if ($row['department_name']) {
+                    $location .= ' - ' . htmlspecialchars($row['department_name'], ENT_QUOTES, 'UTF-8');
+                }
+            } else {
+                $location = 'N/A';
+            }
+            
+            // Build equipment type display
+            $equipment_type = '';
+            if ($row['type_equipment_name']) {
+                $equipment_type = htmlspecialchars($row['type_equipment_name'], ENT_QUOTES, 'UTF-8');
+                if ($row['sub_type_name']) {
+                    $equipment_type .= ' - ' . htmlspecialchars($row['sub_type_name'], ENT_QUOTES, 'UTF-8');
+                }
+            } else {
+                $equipment_type = htmlspecialchars($row['category'] ?? 'PPE', ENT_QUOTES, 'UTF-8');
+            }
             
             echo json_encode([
                 'success' => true,
@@ -164,13 +188,12 @@ if (isset($_GET['scan_barcode'])) {
                     'description' => htmlspecialchars($row['description'] ?? '', ENT_QUOTES, 'UTF-8'),
                     'barcode_data' => htmlspecialchars($row['barcode_data'] ?? '', ENT_QUOTES, 'UTF-8'),
                     'category' => htmlspecialchars($row['category'] ?? 'PPE', ENT_QUOTES, 'UTF-8'),
-                    'type_equipment' => htmlspecialchars($row['type_equipment'] ?? 'N/A', ENT_QUOTES, 'UTF-8'),
+                    'type_equipment' => $equipment_type,
                     'equipment_name' => htmlspecialchars($row['equipment_name'] ?? 'N/A', ENT_QUOTES, 'UTF-8'),
-                    'quantity' => (float)($row['qty_physical_count'] ?? 0),
-                    'total_qty' => $total_qty,
+                    'quantity' => $quantity,
                     'uom' => htmlspecialchars($row['uom'] ?? 'N/A', ENT_QUOTES, 'UTF-8'),
                     'unit_value' => (float)($row['unit_value'] ?? 0),
-                    'location' => $row['section_name'] ? htmlspecialchars($row['section_name'], ENT_QUOTES, 'UTF-8') . ($row['department_name'] ? ' - ' . htmlspecialchars($row['department_name'], ENT_QUOTES, 'UTF-8') : '') : 'N/A',
+                    'location' => $location,
                     'building' => htmlspecialchars($row['building_name'] ?? 'N/A', ENT_QUOTES, 'UTF-8'),
                     'condition_text' => htmlspecialchars($row['condition_text'] ?? 'Good', ENT_QUOTES, 'UTF-8'),
                     'fund_cluster' => htmlspecialchars($row['fund_cluster'] ?? 'N/A', ENT_QUOTES, 'UTF-8'),
@@ -178,8 +201,8 @@ if (isset($_GET['scan_barcode'])) {
                     'approver_name' => htmlspecialchars($row['approver_name'] ?? 'N/A', ENT_QUOTES, 'UTF-8'),
                     'verifier_name' => htmlspecialchars($row['verifier_name'] ?? 'N/A', ENT_QUOTES, 'UTF-8'),
                     'allocatee_name' => htmlspecialchars($row['allocatee_name'] ?? 'N/A', ENT_QUOTES, 'UTF-8'),
+                    'year_acquired' => htmlspecialchars($row['year_acquired'] ?? date('Y'), ENT_QUOTES, 'UTF-8'),
                     'is_issued' => $is_issued,
-                    'is_multiple' => $is_multiple,
                     'date_added' => $row['date_added'] ?? null,
                     'date_updated' => $row['date_updated'] ?? null,
                     'remarks' => htmlspecialchars($row['remarks'] ?? 'N/A', ENT_QUOTES, 'UTF-8')
@@ -240,18 +263,18 @@ include INCLUDE_PATH . '/header.php';
 
 <style>
 :root {
-    --primary: #6B8CFF;        /* Deeper Periwinkle - Main brand color */
-    --secondary: #8FB5FF;       /* Medium Blue - Secondary elements */
-    --accent: #F8B0C0;          /* Muted Pink - Highlights, buttons */
-    --accent-light: #FFD8E0;    /* Light Pink - Soft highlights */
-    --success-light: #C5E8C5;   /* Muted Mint - Success backgrounds */
-    --light: #F0F0F0;           /* Light Gray - Page background */
-    --white: #FFFFFF;           /* White - Cards, containers */
-    --border-light: #E0E0E0;    /* Light Gray for borders */
-    --text-primary: #3A3A3A;    /* Dark gray for main text */
-    --text-secondary: #6B6B6B;  /* Medium gray for secondary text */
-    --text-muted: #9E9E9E;      /* Light gray for muted text */
-    --text-light: #FFFFFF;      /* White text for dark backgrounds */
+    --primary: #6B8CFF;
+    --secondary: #8FB5FF;
+    --accent: #F8B0C0;
+    --accent-light: #FFD8E0;
+    --success-light: #C5E8C5;
+    --light: #F0F0F0;
+    --white: #FFFFFF;
+    --border-light: #E0E0E0;
+    --text-primary: #3A3A3A;
+    --text-secondary: #6B6B6B;
+    --text-muted: #9E9E9E;
+    --text-light: #FFFFFF;
     --success: #4CAF50;
     --danger: #f44336;
     --info: #8FB5FF;
@@ -303,23 +326,26 @@ include INCLUDE_PATH . '/header.php';
     margin-right: 10px;
 }
 
-/* Search bar styling - No background, at top */
 .search-bar-wrapper {
     margin-bottom: 20px;
 }
+
 .search-input-section {
     margin-bottom: 15px;
 }
+
 .search-input-section label {
     display: block;
     margin-bottom: 8px;
     color: var(--primary);
     font-weight: 500;
 }
+
 .search-input-section .input-group {
     display: flex;
     gap: 10px;
 }
+
 .search-input-section .form-control {
     flex: 1;
     padding: 12px;
@@ -329,6 +355,7 @@ include INCLUDE_PATH . '/header.php';
     transition: all 0.3s;
     background: transparent;
 }
+
 .search-input-section .form-control:focus {
     border-color: var(--primary);
     outline: none;
@@ -339,12 +366,14 @@ include INCLUDE_PATH . '/header.php';
 .scanner-type-selector {
     margin-bottom: 20px;
 }
+
 .button-group {
     display: flex;
     gap: 10px;
     padding: 10px 0;
     flex-wrap: wrap;
 }
+
 .scanner-type-btn {
     flex: 1;
     background: var(--light);
@@ -362,15 +391,18 @@ include INCLUDE_PATH . '/header.php';
     justify-content: center;
     gap: 8px;
 }
+
 .scanner-type-btn i {
     font-size: 16px;
 }
+
 .scanner-type-btn.active {
     background: var(--accent);
     border-color: var(--accent);
     color: var(--text-primary);
     box-shadow: 0 2px 8px rgba(248, 176, 192, 0.3);
 }
+
 .scanner-type-btn:hover:not(.active) {
     background: var(--accent-light);
     border-color: var(--accent);
@@ -647,71 +679,6 @@ include INCLUDE_PATH . '/header.php';
     gap: 10px;
 }
 
-/* Not Found Styles */
-.not-found {
-    text-align: center;
-    padding: 40px;
-    color: var(--danger);
-}
-
-.not-found i {
-    font-size: 48px;
-    margin-bottom: 15px;
-}
-
-/* Modal Styles */
-.modal {
-    display: none;
-    position: fixed;
-    z-index: 1000;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(0,0,0,0.5);
-}
-
-.modal-content {
-    background-color: var(--white);
-    margin: 10% auto;
-    padding: 20px;
-    border-radius: 10px;
-    box-shadow: 0 5px 20px rgba(0,0,0,0.2);
-    position: relative;
-}
-
-.modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid var(--border-light);
-}
-
-.modal-header h2 {
-    color: var(--primary);
-}
-
-.modal-close {
-    font-size: 24px;
-    font-weight: bold;
-    cursor: pointer;
-    color: var(--text-muted);
-}
-
-.modal-close:hover {
-    color: var(--accent);
-}
-
-.modal-footer {
-    margin-top: 20px;
-    padding-top: 10px;
-    border-top: 1px solid var(--border-light);
-    text-align: right;
-}
-
-/* Button Styles */
 .btn {
     padding: 10px 20px;
     border: none;
@@ -770,7 +737,16 @@ include INCLUDE_PATH . '/header.php';
     box-shadow: 0 3px 8px rgba(143, 181, 255, 0.3);
 }
 
-/* Form controls */
+.btn-danger {
+    background-color: var(--danger);
+    color: white;
+}
+
+.btn-danger:hover {
+    background-color: #d32f2f;
+    transform: translateY(-2px);
+}
+
 .form-control {
     padding: 10px;
     border: 1px solid var(--border-light);
@@ -784,7 +760,6 @@ include INCLUDE_PATH . '/header.php';
     box-shadow: 0 0 0 2px rgba(107, 140, 255, 0.1);
 }
 
-/* Loading indicator */
 .loading {
     text-align: center;
     padding: 40px;
@@ -797,7 +772,6 @@ include INCLUDE_PATH . '/header.php';
     color: var(--primary);
 }
 
-/* Error message */
 .error-message {
     background-color: #ffebee;
     color: var(--danger);
@@ -807,7 +781,6 @@ include INCLUDE_PATH . '/header.php';
     text-align: center;
 }
 
-/* PPE Badge */
 .ppe-badge {
     display: inline-block;
     background-color: var(--accent);
@@ -824,6 +797,70 @@ include INCLUDE_PATH . '/header.php';
 .ppe-badge i {
     margin-right: 5px;
     font-size: 10px;
+}
+
+.not-found {
+    text-align: center;
+    padding: 40px;
+    color: var(--danger);
+}
+
+.not-found i {
+    font-size: 48px;
+    margin-bottom: 15px;
+}
+
+/* Modal Styles */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+}
+
+.modal-content {
+    background-color: var(--white);
+    margin: 10% auto;
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+    position: relative;
+    max-width: 600px;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.modal-header h2 {
+    color: var(--primary);
+}
+
+.modal-close {
+    font-size: 24px;
+    font-weight: bold;
+    cursor: pointer;
+    color: var(--text-muted);
+}
+
+.modal-close:hover {
+    color: var(--accent);
+}
+
+.modal-footer {
+    margin-top: 20px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-light);
+    text-align: right;
 }
 
 /* Responsive */
@@ -847,7 +884,7 @@ include INCLUDE_PATH . '/header.php';
     <div class="scanner-header">
         <h2><i class="fas fa-shield-alt"></i> PPE Barcode Scanner</h2>
         <p>Scan barcodes to instantly find and manage Personal Protective Equipment</p>
-        <span class="ppe-badge">PPE Only</span>
+        <span class="ppe-badge"><i class="fas fa-check-circle"></i> PPE Only</span>
     </div>
 
     <div class="scanner-main">
@@ -856,9 +893,8 @@ include INCLUDE_PATH . '/header.php';
             <div class="scanner-card">
                 <h3><i class="fas fa-camera"></i> Scan PPE Barcode</h3>
                 
-                <!-- Search Bar Wrapper - At the top, before buttons -->
+                <!-- Search Bar Wrapper -->
                 <div class="search-bar-wrapper">
-                    <!-- Search Bar for Live Camera Section -->
                     <div id="liveSearchSection" class="search-input-section">
                         <label for="live_barcode_input"><i class="fas fa-search"></i> Search by Barcode:</label>
                         <div class="input-group">
@@ -869,7 +905,6 @@ include INCLUDE_PATH . '/header.php';
                         </div>
                     </div>
 
-                    <!-- Search Bar for Upload Image Section -->
                     <div id="fileSearchSection" class="search-input-section" style="display: none;">
                         <label for="file_barcode_input"><i class="fas fa-search"></i> Search by Barcode:</label>
                         <div class="input-group">
@@ -880,7 +915,6 @@ include INCLUDE_PATH . '/header.php';
                         </div>
                     </div>
 
-                    <!-- Search Bar for Handheld Scanner Section -->
                     <div id="handheldSearchSection" class="search-input-section" style="display: none;">
                         <label for="handheld_barcode_input"><i class="fas fa-search"></i> Enter Barcode Manually:</label>
                         <div class="input-group">
@@ -892,7 +926,7 @@ include INCLUDE_PATH . '/header.php';
                     </div>
                 </div>
 
-                <!-- Scanner Type Selection as Button Group -->
+                <!-- Scanner Type Selection -->
                 <div class="scanner-type-selector">
                     <div class="button-group">
                         <button type="button" class="scanner-type-btn active" data-scanner="live" onclick="setScannerType('live')">
@@ -968,7 +1002,6 @@ include INCLUDE_PATH . '/header.php';
         <!-- Right Column - Results -->
         <div class="scanner-right">
             <div id="scanResult" class="scan-result">
-                <!-- Scan results will appear here -->
                 <div class="scan-placeholder">
                     <i class="fas fa-shield-alt"></i>
                     <p>Scan a PPE barcode to see item details</p>
@@ -1013,8 +1046,7 @@ include INCLUDE_PATH . '/header.php';
     </div>
 </div>
 
-<!-- Success Sound -->
-<audio id="beep-sound" src="data:audio/wav;base64,UklGRlwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YVQAAACAgICAf39/f39/f3+AgICAf39/f39/f3+AgICAf39/f39/f3+AgICAf39/f39/f3+AgICAf39/f39/f3+AgICAf39/f39/f3+AgICAf39/f39/f38=" preload="auto"></audio>
+<audio id="beep-sound" src="data:audio/wav;base64,UklGRlwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YVQAAACAgICAf39/f39/f3+AgICAf39/f39/f3+AgICAf39/f39/f3+AgICAf39/f39/f3+AgICAf39/f39/f3+AgICAf39/f39/f38=" preload="auto"></audio>
 
 <script>
 let currentScannedItem = null;
@@ -1027,7 +1059,6 @@ let csrfToken = '<?php echo $_SESSION['csrf_token']; ?>';
 
 // Function to set scanner type with button group
 function setScannerType(type) {
-    // Update active state on buttons
     document.querySelectorAll('.scanner-type-btn').forEach(btn => {
         btn.classList.remove('active');
         if (btn.getAttribute('data-scanner') === type) {
@@ -1035,7 +1066,6 @@ function setScannerType(type) {
         }
     });
     
-    // Call existing toggle function
     toggleScannerType(type);
 }
 
@@ -1047,13 +1077,11 @@ function toggleScannerType(type) {
         document.getElementById('liveSearchSection').style.display = 'block';
         document.getElementById('fileSearchSection').style.display = 'none';
         document.getElementById('handheldSearchSection').style.display = 'none';
-        // Start camera if not already running
         if (scannerInitialized) {
             startScanner();
         } else {
             initScanner();
         }
-        // Focus on live barcode input
         setTimeout(function() {
             const input = document.getElementById('live_barcode_input');
             if (input) input.focus();
@@ -1065,7 +1093,6 @@ function toggleScannerType(type) {
         document.getElementById('fileSearchSection').style.display = 'block';
         document.getElementById('handheldSearchSection').style.display = 'none';
         stopScanner();
-        // Focus on file barcode input
         setTimeout(function() {
             const input = document.getElementById('file_barcode_input');
             if (input) input.focus();
@@ -1077,7 +1104,6 @@ function toggleScannerType(type) {
         document.getElementById('fileSearchSection').style.display = 'none';
         document.getElementById('handheldSearchSection').style.display = 'block';
         stopScanner();
-        // Focus on handheld barcode input
         setTimeout(function() {
             const input = document.getElementById('handheld_barcode_input');
             if (input) input.focus();
@@ -1085,7 +1111,6 @@ function toggleScannerType(type) {
     }
 }
 
-// Search functions for each section
 function searchLiveBarcode() {
     const barcode = document.getElementById('live_barcode_input').value.trim();
     if (barcode) {
@@ -1113,7 +1138,6 @@ function searchHandheldBarcode() {
     }
 }
 
-// Main search function
 function performBarcodeSearch(barcode) {
     if (!validateBarcode(barcode)) {
         alert('Invalid barcode format. Please use only letters, numbers, and common symbols.');
@@ -1137,7 +1161,6 @@ function performBarcodeSearch(barcode) {
                 if (data.found) {
                     displayScannedItem(data.item);
                     addToRecentScans(data.item);
-                    // Clear the search input after successful scan
                     clearAllSearchInputs();
                 } else {
                     displayNotFound(data.barcode || barcode);
@@ -1153,7 +1176,6 @@ function performBarcodeSearch(barcode) {
         });
 }
 
-// Clear all search inputs
 function clearAllSearchInputs() {
     const liveInput = document.getElementById('live_barcode_input');
     const fileInput = document.getElementById('file_barcode_input');
@@ -1163,9 +1185,7 @@ function clearAllSearchInputs() {
     if (handheldInput) handheldInput.value = '';
 }
 
-// Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
-    // Load recent scans from localStorage
     try {
         recentScans = JSON.parse(localStorage.getItem('ppeRecentScans') || '[]');
         if (!Array.isArray(recentScans)) {
@@ -1178,7 +1198,6 @@ document.addEventListener('DOMContentLoaded', function() {
     
     displayRecentScans();
     
-    // Setup enter key handlers for search inputs
     const liveInput = document.getElementById('live_barcode_input');
     const fileInput = document.getElementById('file_barcode_input');
     const handheldInput = document.getElementById('handheld_barcode_input');
@@ -1207,15 +1226,12 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // File upload area click handler
     document.getElementById('fileUploadArea').addEventListener('click', function() {
         document.getElementById('barcodeImage').click();
     });
     
-    // File input change handler
     document.getElementById('barcodeImage').addEventListener('change', handleImageUpload);
     
-    // Drag and drop handlers
     document.getElementById('fileUploadArea').addEventListener('dragover', function(e) {
         e.preventDefault();
         this.style.borderColor = '#F16D34';
@@ -1239,69 +1255,13 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
     
-    // Auto-start camera after a delay
     setTimeout(function() {
         startScanner();
-        // Focus on live barcode input
         const liveInput = document.getElementById('live_barcode_input');
         if (liveInput) liveInput.focus();
     }, 500);
-    
-    // Hardware scanner modal functionality
-    function initHardwareScanner() {
-        const hardwareScannerInput = document.getElementById('hardwareScannerInput');
-        const hardwareScannerModal = document.getElementById('hardwareScannerModal');
-        
-        if (hardwareScannerInput) {
-            const newInput = hardwareScannerInput.cloneNode(true);
-            hardwareScannerInput.parentNode.replaceChild(newInput, hardwareScannerInput);
-            
-            newInput.addEventListener('keypress', function(e) {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    const barcode = this.value.trim();
-                    if (barcode) {
-                        processHardwareBarcodePPE(barcode);
-                        this.value = '';
-                        this.focus();
-                    }
-                }
-            });
-            
-            newInput.addEventListener('paste', function(e) {
-                setTimeout(() => {
-                    const barcode = this.value.trim();
-                    if (barcode && barcode.length > 3) {
-                        processHardwareBarcodePPE(barcode);
-                        this.value = '';
-                        this.focus();
-                    }
-                }, 100);
-            });
-        }
-        
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape') {
-                const modal = document.getElementById('hardwareScannerModal');
-                if (modal && modal.classList.contains('show')) {
-                    closeHardwareScannerModal();
-                }
-            }
-        });
-        
-        if (hardwareScannerModal) {
-            hardwareScannerModal.addEventListener('click', function(e) {
-                if (e.target === hardwareScannerModal) {
-                    closeHardwareScannerModal();
-                }
-            });
-        }
-    }
-    
-    setTimeout(initHardwareScanner, 300);
 });
 
-// Start scanner
 function startScanner() {
     if (!scannerInitialized) {
         initScanner();
@@ -1319,7 +1279,6 @@ function startScanner() {
     document.getElementById('scanner-status').textContent = 'Scanner running - position barcode in view';
 }
 
-// Stop scanner
 function stopScanner() {
     if (Quagga) {
         try {
@@ -1334,7 +1293,6 @@ function stopScanner() {
     document.getElementById('scanner-status').textContent = 'Scanner stopped';
 }
 
-// Initialize Quagga scanner
 function initScanner() {
     Quagga.CameraAccess.enumerateVideoDevices()
         .then(function(devices) {
@@ -1365,7 +1323,6 @@ function initScanner() {
         });
 }
 
-// Start scanner with specific camera
 function startScannerWithCamera(deviceId) {
     Quagga.init({
         inputStream: {
@@ -1426,10 +1383,8 @@ function startScannerWithCamera(deviceId) {
             let code = result.codeResult.code;
             if (code) {
                 document.getElementById('beep-sound').play().catch(e => console.log('Audio play failed:', e));
-                
                 stopScanner();
                 
-                // Set the value in the live search input and perform search
                 const liveInput = document.getElementById('live_barcode_input');
                 if (liveInput) {
                     liveInput.value = code;
@@ -1450,7 +1405,6 @@ function startScannerWithCamera(deviceId) {
     });
 }
 
-// Switch camera
 function switchCamera() {
     let select = document.getElementById('camera-select');
     let deviceId = select.value;
@@ -1464,7 +1418,6 @@ function switchCamera() {
     }
 }
 
-// Handle image upload
 function handleImageUpload(e) {
     let file = e.target.files[0];
     if (file) {
@@ -1472,7 +1425,6 @@ function handleImageUpload(e) {
     }
 }
 
-// Handle image file
 function handleImageFile(file) {
     if (file.size > 5 * 1024 * 1024) {
         alert('Image too large. Please choose an image under 5MB.');
@@ -1500,18 +1452,15 @@ function handleImageFile(file) {
     reader.readAsDataURL(file);
 }
 
-// Reset image upload
 function resetImageUpload() {
     document.getElementById('imagePreview').style.display = 'none';
     document.getElementById('fileUploadArea').style.display = 'block';
     document.getElementById('barcodeImage').value = '';
     document.getElementById('previewImg').src = '';
-    // Focus back on file search input
     const fileInput = document.getElementById('file_barcode_input');
     if (fileInput) fileInput.focus();
 }
 
-// Scan image file
 function scanImageFile() {
     let img = document.getElementById('previewImg');
     if (!img.src) return;
@@ -1544,7 +1493,6 @@ function scanImageFile() {
         
         if (result && result.codeResult) {
             let code = result.codeResult.code;
-            // Set the value in the file search input and perform search
             const fileInput = document.getElementById('file_barcode_input');
             if (fileInput) {
                 fileInput.value = code;
@@ -1559,14 +1507,15 @@ function scanImageFile() {
     });
 }
 
-// Validate barcode format
 function validateBarcode(barcode) {
     return /^[A-Za-z0-9\-_\.\+\s]+$/.test(barcode);
 }
 
-// Display scanned item
 function displayScannedItem(item) {
     currentScannedItem = item;
+    
+    // Just show the exact quantity of the scanned item
+    let quantityDisplay = `${item.quantity} ${escapeHtml(item.uom)}`;
     
     let html = `
         <div class="found-item">
@@ -1579,16 +1528,16 @@ function displayScannedItem(item) {
                         <span class="detail-value">${escapeHtml(item.property_no)}</span>
                     </div>
                     <div class="detail-item">
-                        <span class="detail-label">Type</span>
-                        <span class="detail-value">${escapeHtml(item.type_equipment || 'N/A')}</span>
+                        <span class="detail-label">Equipment Type</span>
+                        <span class="detail-value">${escapeHtml(item.type_equipment || 'PPE')}</span>
                     </div>
                     <div class="detail-item">
-                        <span class="detail-label">Equipment</span>
-                        <span class="detail-value">${escapeHtml(item.equipment_name || 'N/A')}</span>
+                        <span class="detail-label">Year Acquired</span>
+                        <span class="detail-value">${escapeHtml(item.year_acquired || 'N/A')}</span>
                     </div>
                     <div class="detail-item">
                         <span class="detail-label">Quantity</span>
-                        <span class="detail-value highlight">${item.quantity} ${escapeHtml(item.uom)}</span>
+                        <span class="detail-value highlight">${quantityDisplay}</span>
                     </div>
                     <div class="detail-item">
                         <span class="detail-label">Unit Value</span>
@@ -1597,10 +1546,6 @@ function displayScannedItem(item) {
                     <div class="detail-item">
                         <span class="detail-label">Location</span>
                         <span class="detail-value">${escapeHtml(item.location)}</span>
-                    </div>
-                    <div class="detail-item">
-                        <span class="detail-label">Building</span>
-                        <span class="detail-value">${escapeHtml(item.building)}</span>
                     </div>
                     <div class="detail-item">
                         <span class="detail-label">Condition</span>
@@ -1629,7 +1574,7 @@ function displayScannedItem(item) {
                 <div class="barcode-preview">
                     <img src="generate_barcodeppe.php?code=${encodeURIComponent(item.barcode_data)}&format=png&width=300&height=80" 
                          alt="Barcode" onerror="this.style.display='none'">
-                    <div style="font-family: monospace; font-size: 14px; color: var(--ppe-secondary);">${escapeHtml(item.barcode_data)}</div>
+                    <div style="font-family: monospace; font-size: 14px; color: var(--accent);">${escapeHtml(item.barcode_data)}</div>
                 </div>
             </div>
         </div>
@@ -1639,7 +1584,6 @@ function displayScannedItem(item) {
     document.getElementById('quickActions').style.display = 'block';
 }
 
-// Display not found
 function displayNotFound(barcode) {
     let html = `
         <div class="not-found">
@@ -1661,7 +1605,6 @@ function displayNotFound(barcode) {
     document.getElementById('quickActions').style.display = 'none';
 }
 
-// Show error
 function showError(message) {
     document.getElementById('scanResult').innerHTML = `
         <div class="error-message">
@@ -1674,7 +1617,6 @@ function showError(message) {
     `;
 }
 
-// Reset scanner
 function resetScanner() {
     document.getElementById('scanResult').innerHTML = `
         <div class="scan-placeholder">
@@ -1683,7 +1625,6 @@ function resetScanner() {
         </div>
     `;
     clearAllSearchInputs();
-    // Focus on the active section's input
     const activeType = document.querySelector('.scanner-type-btn.active').getAttribute('data-scanner');
     if (activeType === 'live') {
         const input = document.getElementById('live_barcode_input');
@@ -1697,7 +1638,6 @@ function resetScanner() {
     }
 }
 
-// Add to recent scans
 function addToRecentScans(item) {
     let existingIndex = recentScans.findIndex(scan => scan.id === item.id);
     if (existingIndex !== -1) {
@@ -1724,7 +1664,6 @@ function addToRecentScans(item) {
     displayRecentScans();
 }
 
-// Display recent scans
 function displayRecentScans() {
     let html = '';
     
@@ -1747,9 +1686,7 @@ function displayRecentScans() {
     document.getElementById('recentScansList').innerHTML = html;
 }
 
-// Rescan barcode
 function rescanBarcode(barcode) {
-    // Set the value in the active section's input and perform search
     const activeType = document.querySelector('.scanner-type-btn.active').getAttribute('data-scanner');
     if (activeType === 'live') {
         const input = document.getElementById('live_barcode_input');
@@ -1774,7 +1711,6 @@ function rescanBarcode(barcode) {
     }
 }
 
-// Clear recent scans
 function clearRecentScans() {
     if (confirm('Clear recent PPE scan history?')) {
         recentScans = [];
@@ -1787,7 +1723,6 @@ function clearRecentScans() {
     }
 }
 
-// Quick action functions
 function editCurrentItem() {
     if (currentScannedItem) {
         window.location.href = 'ppe_equipment.php?edit=' + currentScannedItem.id + '&csrf_token=' + encodeURIComponent(csrfToken);
@@ -1812,12 +1747,10 @@ function viewCurrentItem() {
     }
 }
 
-// Open add PPE with barcode
 function openAddPPEWithBarcode(barcode) {
     window.location.href = 'ppe_equipment.php?barcode=' + encodeURIComponent(barcode);
 }
 
-// View item details
 function viewItemDetails(itemId) {
     document.getElementById('itemDetailsContent').innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i><br>Loading...</div>';
     document.getElementById('itemDetailsModal').style.display = 'block';
@@ -1832,19 +1765,16 @@ function viewItemDetails(itemId) {
         .then(data => {
             let content = `
                 <div>
-                    <h3 style="color: var(--ppe-secondary); margin-bottom: 20px;">${escapeHtml(data.article_name || '')}</h3>
+                    <h3 style="color: var(--primary); margin-bottom: 20px;">${escapeHtml(data.article_name || '')}</h3>
                     <table style="width: 100%; border-collapse: collapse;">
-                        <tr><td style="padding: 8px 0;"><strong>Property No:</strong>NonNullConnector<td>${escapeHtml(data.property_no || 'N/A')}ERC20</tr>
-                        <tr><td style="padding: 8px 0;"><strong>Description:</strong>NonNullConnector<td>${escapeHtml(data.description || 'N/A')}ERC20</tr>
-                        <tr><td style="padding: 8px 0;"><strong>Category:</strong>NonNullConnector<td>${escapeHtml(data.category || 'N/A')}ERC20</tr>
-                        <tr><td style="padding: 8px 0;"><strong>Type:</strong>NonNullConnector<td>${escapeHtml(data.type_equipment || 'N/A')}ERC20</tr>
-                        <tr><td style="padding: 8px 0;"><strong>Equipment:</strong>NonNullConnector<td>${escapeHtml(data.equipment_name || 'N/A')}ERC20</tr>
-                        <tr><td style="padding: 8px 0;"><strong>Quantity:</strong>NonNullConnector<td>${escapeHtml((data.total_qty !== undefined ? data.total_qty : data.qty_physical_count) || '0')} ${escapeHtml(data.uom || '')}ERC20</tr>
-                        <tr><td style="padding: 8px 0;"><strong>Unit Value:</strong>NonNullConnector<td>${formatCurrency(data.unit_value)}ERC20</tr>
-                        <tr><td style="padding: 8px 0;"><strong>Location:</strong>NonNullConnector<td>${escapeHtml(data.section_name || 'N/A')}ERC20</tr>
-                        <tr><td style="padding: 8px 0;"><strong>Condition:</strong>NonNullConnector<td>${escapeHtml(data.condition_text || 'Good')}ERC20</tr>
-                        <tr><td style="padding: 8px 0;"><strong>Barcode:</strong>NonNullConnector<td style="font-family: monospace;">${escapeHtml(data.barcode_data || 'N/A')}ERC20</tr>
-                        <tr><td style="padding: 8px 0;"><strong>Date Added:</strong>NonNullConnector<td>${formatDate(data.date_added)}ERC20</tr>
+                        <tr><td style="padding: 8px 0;"><strong>Property No:</strong>ERC20<td>${escapeHtml(data.property_no || 'N/A')}ERC20</td>
+                        <tr><td style="padding: 8px 0;"><strong>Description:</strong>ERC20<td style="color:#333;">${escapeHtml(data.description || 'N/A')}ERC20</tr>
+                        <tr><td style="padding: 8px 0;"><strong>Equipment Type:</strong>ERC20<td style="color:#333;">${escapeHtml(data.type_equipment || 'PPE')}ERC20</tr>
+                        <tr><td style="padding: 8px 0;"><strong>Quantity:</strong>ERC20<td style="color:#F16D34; font-weight:bold;">${escapeHtml(data.qty_physical_count || '0')} ${escapeHtml(data.uom || '')}ERC20</tr>
+                        <tr><td style="padding: 8px 0;"><strong>Unit Value:</strong>ERC20<td style="color:#333;">${formatCurrency(data.unit_value)}ERC20</tr>
+                        <tr><td style="padding: 8px 0;"><strong>Location:</strong>ERC20<td style="color:#333;">${escapeHtml(data.section_name || 'N/A')}ERC20</tr>
+                        <tr><td style="padding: 8px 0;"><strong>Condition:</strong>ERC20<td style="color:#333;">${escapeHtml(data.condition_text || 'Good')}ERC20</tr>
+                        <tr><td style="padding: 8px 0;"><strong>Barcode:</strong>ERC20<td style="font-family: monospace;">${escapeHtml(data.barcode_data || 'N/A')}ERC20</tr>
                     </table>
                 </div>
             `;
@@ -1856,12 +1786,10 @@ function viewItemDetails(itemId) {
         });
 }
 
-// Close item details modal
 function closeItemDetailsModal() {
     document.getElementById('itemDetailsModal').style.display = 'none';
 }
 
-// Print barcode
 function printBarcode(barcodeData, itemName, fundCluster) {
     let printWindow = window.open('', '_blank');
     let timestamp = new Date().getTime();
@@ -1877,11 +1805,11 @@ function printBarcode(barcodeData, itemName, fundCluster) {
             <title>Print PPE Barcode - ${escapeHtml(itemName)}</title>
             <style>
                 body { text-align: center; font-family: Arial, sans-serif; margin: 0; padding: 20px; background: white; }
-                .barcode-container { margin: 20px auto; padding: 30px; max-width: 400px; border: 1px dashed #F16D34; border-radius: 10px; }
+                .barcode-container { margin: 20px auto; padding: 30px; max-width: 400px; border: 1px dashed #6B8CFF; border-radius: 10px; }
                 .barcode-img { max-width: 100%; height: auto; margin-bottom: 15px; }
-                .item-name { margin-top: 15px; font-size: 16px; font-weight: bold; color: #161E54; }
-                .barcode-number { font-family: monospace; font-size: 14px; margin-top: 10px; color: #F16D34; }
-                .ppe-label { background: #F16D34; color: white; padding: 5px 15px; border-radius: 20px; display: inline-block; font-size: 14px; margin-bottom: 15px; }
+                .item-name { margin-top: 15px; font-size: 16px; font-weight: bold; color: #3A3A3A; }
+                .barcode-number { font-family: monospace; font-size: 14px; margin-top: 10px; color: #6B8CFF; }
+                .ppe-label { background: #6B8CFF; color: white; padding: 5px 15px; border-radius: 20px; display: inline-block; font-size: 14px; margin-bottom: 15px; }
                 .fund-cluster { margin-top: 15px; padding: 8px 15px; background: #f0f4ff; border: 1px solid #6B8CFF; border-radius: 6px; font-size: 13px; color: #3A3A3A; }
                 @media print { body { margin: 0; padding: 10px; } .barcode-container { border: none; } }
             </style>
@@ -1906,7 +1834,6 @@ function printBarcode(barcodeData, itemName, fundCluster) {
     printWindow.document.close();
 }
 
-// Helper functions
 function escapeHtml(text) {
     if (!text) return '';
     let div = document.createElement('div');
@@ -1919,18 +1846,6 @@ function formatCurrency(amount) {
     return '₱' + parseFloat(amount).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,');
 }
 
-function formatDate(dateString) {
-    if (!dateString) return 'N/A';
-    try {
-        let date = new Date(dateString);
-        if (isNaN(date.getTime())) return 'N/A';
-        return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    } catch (e) {
-        return 'N/A';
-    }
-}
-
-// Clean up
 window.addEventListener('beforeunload', function() {
     if (Quagga) {
         try {
@@ -1939,447 +1854,12 @@ window.addEventListener('beforeunload', function() {
     }
 });
 
-// Close modal when clicking outside
 window.onclick = function(event) {
     let itemDetailsModal = document.getElementById('itemDetailsModal');
     if (event.target == itemDetailsModal) {
         closeItemDetailsModal();
     }
 }
-
-// ===== HARDWARE BARCODE SCANNER MODAL FUNCTIONS FOR PPE =====
-let hardwareScannedPPEItems = [];
-
-function openHardwareScannerModal() {
-    const modal = document.getElementById('hardwareScannerModal');
-    if (modal) {
-        modal.classList.add('show');
-        hardwareScannedPPEItems = [];
-        updateHardwareScannedItemsDisplay();
-        
-        setTimeout(function() {
-            const input = document.getElementById('hardwareScannerInput');
-            if (input) input.focus();
-        }, 100);
-    }
-}
-
-function closeHardwareScannerModal() {
-    const modal = document.getElementById('hardwareScannerModal');
-    if (modal) {
-        modal.classList.remove('show');
-    }
-}
-
-function processHardwareBarcodePPE(barcode) {
-    const searchTerm = barcode.toLowerCase().trim();
-    let foundItem = null;
-    
-    const input = document.getElementById('hardwareScannerInput');
-    const originalPlaceholder = input.placeholder;
-    input.placeholder = 'Searching...';
-    input.disabled = true;
-    
-    const csrfToken = window.csrfToken || document.querySelector('meta[name="csrf-token"]')?.content || '';
-    
-    fetch(`?scan_barcode=1&barcode=${encodeURIComponent(barcode)}&csrf_token=${encodeURIComponent(csrfToken)}`)
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`Server error: ${response.status}`);
-            }
-            return response.json();
-        })
-        .then(data => {
-            if (data.success && data.found && data.item) {
-                const item = data.item;
-                const existingIndex = hardwareScannedPPEItems.findIndex(i => i.id == item.id);
-                
-                if (existingIndex !== -1) {
-                    hardwareScannedPPEItems[existingIndex].count++;
-                } else {
-                    hardwareScannedPPEItems.push({
-                        id: item.id,
-                        name: item.article_name || item.property_no || 'Unknown Item',
-                        barcode_data: item.barcode_data || barcode,
-                        quantity: parseFloat(item.quantity) || 0,
-                        unit_value: parseFloat(item.unit_value) || 0,
-                        uom: item.uom || 'pcs',
-                        count: 1
-                    });
-                }
-                
-                updateHardwareScannedItemsDisplay();
-                showScanSuccessPPE();
-                
-                displayScannedItem(item);
-                addToRecentScans(item);
-                
-            } else if (data.success && !data.found) {
-                showScanErrorPPE(barcode, 'PPE item not found');
-                displayNotFound(data.barcode || barcode);
-            } else {
-                showScanErrorPPE(barcode, data.error || 'Unknown error');
-            }
-        })
-        .catch(error => {
-            console.error('Scan error:', error);
-            showScanErrorPPE(barcode, error.message || 'Network error');
-        })
-        .finally(() => {
-            input.placeholder = originalPlaceholder;
-            input.disabled = false;
-            input.value = '';
-            setTimeout(() => input.focus(), 100);
-        });
-}
-
-function showScanErrorPPE(barcode, message) {
-    const input = document.getElementById('hardwareScannerInput');
-    if (!input) return;
-    
-    const originalBg = input.style.backgroundColor;
-    const originalBorder = input.style.borderColor;
-    
-    input.style.backgroundColor = '#FFCDD2';
-    input.style.borderColor = '#f44336';
-    input.placeholder = message || 'Item not found';
-    
-    setTimeout(function() {
-        input.style.backgroundColor = originalBg;
-        input.style.borderColor = originalBorder;
-        input.placeholder = 'Place cursor here and scan...';
-    }, 2000);
-}
-
-function showScanSuccessPPE() {
-    const input = document.getElementById('hardwareScannerInput');
-    if (!input) return;
-    const originalBg = input.style.backgroundColor;
-    input.style.backgroundColor = '#C8E6C9';
-    input.style.borderColor = '#4CAF50';
-    
-    setTimeout(function() {
-        input.style.backgroundColor = originalBg;
-        input.style.borderColor = '#FF6B35';
-    }, 500);
-}
-
-function updateHardwareScannedItemsDisplay() {
-    const container = document.getElementById('hardwareScannedItemsContainer');
-    const clearScansBtn = document.getElementById('clearScansBtn');
-    
-    if (!container) return;
-    
-    if (hardwareScannedPPEItems.length === 0) {
-        container.innerHTML = `
-            <div class="empty-scan-state">
-                <i class="fas fa-box"></i>
-                <p>No items scanned yet</p>
-                <small>Start scanning PPE items to see them here</small>
-            </div>
-        `;
-        if (clearScansBtn) clearScansBtn.style.display = 'none';
-    } else {
-        let html = '<div id="hardwareScannedItemsList">';
-        let totalValue = 0;
-        
-        hardwareScannedPPEItems.forEach((item, index) => {
-            const itemTotal = item.count * (item.unit_value || 0);
-            totalValue += itemTotal;
-            
-            html += `
-                <div class="scanned-item-card success">
-                    <div class="scanned-item-info">
-                        <div class="scanned-item-name">
-                            <i class="fas fa-check-circle"></i> ${escapeHtml(item.name)}
-                        </div>
-                        <div class="scanned-item-details">
-                            Barcode: ${escapeHtml(item.barcode_data || 'N/A')} | 
-                            Available: ${item.quantity}
-                        </div>
-                    </div>
-                    <div class="scanned-item-qty-controls">
-                        <button type="button" class="qty-btn" onclick="removeHardwareScannedItemPPE(${index})">
-                            <i class="fas fa-trash"></i> Remove
-                        </button>
-                    </div>
-                </div>
-            `;
-        });
-        
-        html += `
-            <div style="margin-top: 15px; padding: 12px; background: #F5F5F5; border-radius: 8px; text-align: right; font-weight: bold; color: #333;">
-                Total Items Scanned: ${hardwareScannedPPEItems.length}
-            </div>
-        </div>`;
-        
-        container.innerHTML = html;
-        if (clearScansBtn) clearScansBtn.style.display = 'inline-block';
-    }
-}
-
-function removeHardwareScannedItemPPE(index) {
-    hardwareScannedPPEItems.splice(index, 1);
-    updateHardwareScannedItemsDisplay();
-}
-
-function clearHardwareScans() {
-    if (confirm('Are you sure you want to clear all scanned items?')) {
-        hardwareScannedPPEItems = [];
-        updateHardwareScannedItemsDisplay();
-    }
-}
-
-function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-}
-
 </script>
-
-<!-- ===== HARDWARE SCANNER MODAL HTML FOR PPE ===== -->
-<style>
-.hardware-scanner-modal {
-    display: none;
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(0, 0, 0, 0.8);
-    z-index: 3000;
-    align-items: center;
-    justify-content: center;
-}
-
-.hardware-scanner-modal.show {
-    display: flex;
-}
-
-.hardware-scanner-content {
-    background: white;
-    border-radius: 15px;
-    width: 90%;
-    max-width: 600px;
-    max-height: 90vh;
-    overflow-y: auto;
-    box-shadow: 0 10px 50px rgba(0, 0, 0, 0.3);
-    display: flex;
-    flex-direction: column;
-}
-
-.hardware-scanner-header {
-    background: linear-gradient(135deg, #FF6B35 0%, #FF8C42 100%);
-    color: white;
-    padding: 25px;
-    border-radius: 15px 15px 0 0;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-shrink: 0;
-}
-
-.hardware-scanner-header h2 {
-    margin: 0;
-    font-size: 20px;
-    font-weight: bold;
-}
-
-.hardware-scanner-header .close-btn {
-    background: rgba(255, 255, 255, 0.2);
-    border: none;
-    color: white;
-    font-size: 28px;
-    cursor: pointer;
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
-}
-
-.hardware-scanner-header .close-btn:hover {
-    background: rgba(255, 255, 255, 0.3);
-}
-
-.hardware-scanner-body {
-    padding: 25px;
-    flex: 1;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-}
-
-.scanner-instructions {
-    background: #E8F4FD;
-    border-left: 4px solid #2196F3;
-    padding: 15px;
-    border-radius: 8px;
-    margin-bottom: 20px;
-    font-size: 14px;
-    color: #0D47A1;
-}
-
-.scanner-instructions strong {
-    display: block;
-    margin-bottom: 8px;
-    font-size: 15px;
-}
-
-.scanner-input-container {
-    margin-bottom: 20px;
-}
-
-.scanner-input-container label {
-    display: block;
-    font-weight: bold;
-    margin-bottom: 10px;
-    color: #333;
-    font-size: 14px;
-}
-
-.scanner-input-wrapper {
-    position: relative;
-    display: flex;
-    align-items: center;
-}
-
-.scanner-input-wrapper i {
-    position: absolute;
-    left: 12px;
-    color: #FF6B35;
-    font-size: 18px;
-}
-
-.hardware-scanner-input {
-    width: 100%;
-    padding: 15px 15px 15px 45px;
-    border: 2px solid #FF6B35;
-    border-radius: 10px;
-    font-size: 16px;
-    font-weight: bold;
-    background: #FFF8F5;
-    color: #333;
-    box-shadow: 0 2px 8px rgba(255, 107, 53, 0.1);
-    transition: all 0.2s;
-}
-
-.hardware-scanner-input:focus {
-    outline: none;
-    border-color: #FF8C42;
-    box-shadow: 0 2px 12px rgba(255, 107, 53, 0.2);
-}
-
-.scanned-items-list {
-    margin-top: 20px;
-    flex: 1;
-    overflow-y: auto;
-}
-
-.empty-scan-state {
-    text-align: center;
-    padding: 40px 20px;
-    color: #999;
-}
-
-.empty-scan-state i {
-    font-size: 48px;
-    margin-bottom: 15px;
-    color: #CCC;
-}
-
-.empty-scan-state p {
-    font-size: 16px;
-    font-weight: bold;
-    margin: 10px 0;
-}
-
-.hardware-scanner-footer {
-    padding: 15px 25px;
-    border-top: 1px solid #E0E0E0;
-    display: flex;
-    gap: 10px;
-    justify-content: flex-end;
-    flex-shrink: 0;
-}
-
-.btn-clear-scans {
-    background: #FF6B35;
-    color: white;
-    border: none;
-    padding: 12px 25px;
-    border-radius: 8px;
-    cursor: pointer;
-    font-weight: bold;
-    font-size: 14px;
-    transition: all 0.2s;
-}
-
-.btn-clear-scans:hover {
-    background: #FF8C42;
-}
-
-.btn-close-hardware-scanner {
-    background: #757575;
-    color: white;
-    border: none;
-    padding: 12px 25px;
-    border-radius: 8px;
-    cursor: pointer;
-    font-weight: bold;
-    font-size: 14px;
-    transition: all 0.2s;
-}
-
-.btn-close-hardware-scanner:hover {
-    background: #616161;
-}
-</style>
-
-<div id="hardwareScannerModal" class="hardware-scanner-modal">
-    <div class="hardware-scanner-content">
-        <div class="hardware-scanner-header">
-            <h2><i class="fas fa-barcode"></i> Hardware Barcode Scanner</h2>
-            <button type="button" class="close-btn" onclick="closeHardwareScannerModal()">&times;</button>
-        </div>
-        
-        <div class="hardware-scanner-body">
-            <div class="scanner-instructions">
-                <strong><i class="fas fa-info-circle"></i> Ready to Scan</strong>
-                Click the input field below and scan PPE barcodes with your device. Items will be added to the list as you scan. When done, close the modal to continue.
-            </div>
-            
-            <div class="scanner-input-container">
-                <label><i class="fas fa-barcode"></i> Scan Barcode</label>
-                <div class="scanner-input-wrapper">
-                    <i class="fas fa-barcode"></i>
-                    <input type="text" id="hardwareScannerInput" class="hardware-scanner-input" placeholder="Place cursor here and scan..." autocomplete="off" autofocus>
-                </div>
-            </div>
-            
-            <div class="scanned-items-list">
-                <div id="hardwareScannedItemsContainer">
-                    <div class="empty-scan-state">
-                        <i class="fas fa-box"></i>
-                        <p>No items scanned yet</p>
-                        <small>Start scanning PPE items to see them here</small>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <div class="hardware-scanner-footer">
-            <button type="button" class="btn-clear-scans" onclick="clearHardwareScans()" id="clearScansBtn" style="display: none;">
-                <i class="fas fa-trash"></i> Clear All
-            </button>
-            <button type="button" class="btn-close-hardware-scanner" onclick="closeHardwareScannerModal()">
-                <i class="fas fa-times"></i> Close
-            </button>
-        </div>
-    </div>
-</div>
 
 <?php include INCLUDE_PATH . '/footer.php'; ?>

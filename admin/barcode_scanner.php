@@ -28,7 +28,8 @@ require_once $root_path . '/vendor/autoload.php';
 use Picqer\Barcode\BarcodeGeneratorPNG;
 
 // Require admin role
-requireRole(['admin', 'supply']);
+requireRole('admin' || 'superadmin' || 'supply');
+
 
 // Generate CSRF token if not exists
 if (!isset($_SESSION['csrf_token'])) {

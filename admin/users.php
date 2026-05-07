@@ -26,6 +26,48 @@ if ($user_role !== 'admin' && $user_role !== 'super_admin') {
 $page_title = 'Users';
 $page_description = 'View and manage system users';
 
+// Handle unlock account action
+if (isset($_POST['unlock_user'])) {
+    $user_id = (int)$_POST['user_id'];
+    
+    // Get user data before unlocking for audit
+    $user_query = $conn->prepare("SELECT username, email, locked_until FROM users WHERE id = ?");
+    $user_query->bind_param("i", $user_id);
+    $user_query->execute();
+    $user_data = $user_query->get_result()->fetch_assoc();
+    $user_query->close();
+    
+    if ($user_data && !empty($user_data['locked_until']) && strtotime($user_data['locked_until']) > time()) {
+        $stmt = $conn->prepare("UPDATE users SET login_attempts = 0, locked_until = NULL WHERE id = ?");
+        $stmt->bind_param("i", $user_id);
+        
+        if ($stmt->execute()) {
+            $_SESSION['success'] = "Account for " . htmlspecialchars($user_data['username']) . " has been unlocked successfully.";
+            
+            // Log to audit trail
+            if (function_exists('logAuditEvent')) {
+                logAuditEvent($conn, $_SESSION['user_id'], 'MANUAL_UNLOCK', 'SECURITY', "Manually unlocked account for user: " . $user_data['username']);
+            }
+            
+            if (function_exists('logActivity')) {
+                logActivity('Account Unlocked', $user_id, "Account for " . $user_data['username'] . " was manually unlocked by " . ($_SESSION['username'] ?? 'Admin'));
+            }
+        } else {
+            $_SESSION['error'] = "Failed to unlock account.";
+        }
+        $stmt->close();
+    } elseif ($user_data && (!empty($user_data['locked_until']) && strtotime($user_data['locked_until']) <= time())) {
+        // Lock has already expired, just clear it
+        $conn->query("UPDATE users SET login_attempts = 0, locked_until = NULL WHERE id = $user_id");
+        $_SESSION['success'] = "Account for " . htmlspecialchars($user_data['username']) . " was already expired. Lock has been cleared.";
+    } else {
+        $_SESSION['error'] = "This account is not locked.";
+    }
+    
+    header("Location: " . $_SERVER['PHP_SELF']);
+    exit();
+}
+
 // Handle approve/reject actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     $action = $_POST['action'];
@@ -127,7 +169,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_user') {
     header('Content-Type: application/json');
     $user_id = (int)$_GET['user_id'];
-    $stmt = $conn->prepare("SELECT id, username, email, firstname, lastname, role, status, created_at, avatar FROM users WHERE id = ?");
+    $stmt = $conn->prepare("SELECT id, username, email, firstname, lastname, role, status, locked_until, login_attempts, created_at, avatar FROM users WHERE id = ?");
     $stmt->bind_param("i", $user_id);
     $stmt->execute();
     $result = $stmt->get_result();
@@ -251,7 +293,7 @@ include INCLUDE_PATH . '/header.php';
     --text-light: #FFFFFF;
     --success: #4CAF50;
     --danger: #f44336;
-    --warning: #FFB74D;
+    --warning: #FF9800;
     --info: #8FB5FF;
 }
 
@@ -413,6 +455,7 @@ body {
 .status-active { color: var(--success); }
 .status-inactive { color: var(--danger); }
 .status-pending { color: var(--warning); }
+.status-locked { color: #f44336; }
 
 .modal-user-name {
     text-align: center;
@@ -595,6 +638,16 @@ select.form-control {
     box-shadow: 0 6px 14px rgba(244, 67, 54, 0.4);
 }
 
+.btn-modal-warning {
+    background: linear-gradient(135deg, var(--warning) 0%, #f57c00 100%);
+    color: var(--white);
+}
+
+.btn-modal-warning:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 14px rgba(255, 152, 0, 0.4);
+}
+
 .delete-warning {
     text-align: center;
     margin-bottom: 20px;
@@ -636,6 +689,11 @@ select.form-control {
     color: #1976D2;
 }
 
+.badge-locked {
+    background: #FFEBEE;
+    color: #f44336;
+}
+
 .pending-container {
     background: linear-gradient(135deg, #FFF9E6 0%, var(--white) 100%);
     border-left: 4px solid var(--warning);
@@ -654,6 +712,15 @@ select.form-control {
 
 .pending-row:hover {
     background-color: #FFE082 !important;
+}
+
+.locked-row {
+    background-color: #FFEBEE;
+    border-left: 3px solid #f44336;
+}
+
+.locked-row:hover {
+    background-color: #FFCDD2 !important;
 }
 
 .table-container {
@@ -756,7 +823,7 @@ tr:hover {
 
 .action-buttons {
     display: flex;
-    gap: 10px;
+    gap: 8px;
     flex-wrap: wrap;
     align-items: center;
 }
@@ -765,21 +832,20 @@ tr:hover {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    padding: 8px 16px;
+    gap: 6px;
+    padding: 6px 12px;
     border-radius: 8px;
     border: none;
     color: var(--white);
     text-decoration: none;
     transition: all 0.3s;
     cursor: pointer;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
-    min-width: 70px;
 }
 
 .action-btn i {
-    font-size: 14px;
+    font-size: 12px;
 }
 
 .action-btn.edit { background-color: var(--secondary); }
@@ -787,6 +853,7 @@ tr:hover {
 .action-btn.delete { background-color: var(--danger); }
 .action-btn.approve { background-color: var(--success); }
 .action-btn.reject { background-color: var(--danger); }
+.action-btn.unlock { background-color: var(--warning); }
 
 .action-btn:hover {
     transform: translateY(-2px);
@@ -1024,6 +1091,45 @@ tr:hover {
     </div>
 </div>
 
+<!-- Unlock User Modal -->
+<div id="unlockModal" class="modal">
+    <div class="modal-content">
+        <form method="POST" action="" id="unlockForm">
+            <div class="modal-header" style="background: linear-gradient(135deg, var(--warning) 0%, #f57c00 100%);">
+                <h3><i class="fas fa-unlock-alt"></i> Unlock Account</h3>
+                <span class="modal-close" onclick="closeModal('unlockModal')">&times;</span>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" name="unlock_user" value="1">
+                <input type="hidden" name="user_id" id="unlock_user_id">
+                <div class="delete-warning">
+                    <div class="delete-icon" style="background: rgba(255, 152, 0, 0.1);">
+                        <i class="fas fa-lock" style="color: var(--warning);"></i>
+                    </div>
+                    <p style="font-size: 16px; font-weight: 500; margin-bottom: 8px;">Unlock User Account</p>
+                    <p style="color: var(--text-muted); font-size: 13px;">This will reset login attempts and remove the lock.</p>
+                </div>
+                <div class="info-card" style="margin-top: 16px;">
+                    <div class="info-label"><i class="fas fa-user"></i> User to unlock</div>
+                    <div class="info-value">
+                        <strong id="unlock_username">-</strong><br>
+                        <small id="unlock_email" style="color: var(--text-muted);">-</small>
+                        <div id="unlock_locked_until" style="margin-top: 8px; font-size: 12px; color: var(--warning);"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-modal btn-modal-secondary" onclick="closeModal('unlockModal')">
+                    <i class="fas fa-times"></i> Cancel
+                </button>
+                <button type="submit" class="btn-modal btn-modal-warning">
+                    <i class="fas fa-unlock-alt"></i> Unlock Account
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <!-- Display Success/Error Messages -->
 <?php if (isset($_SESSION['success'])): ?>
     <div class="alert alert-success">
@@ -1136,13 +1242,16 @@ tr:hover {
                     <th>Role</th>
                     <th>Status</th>
                     <th>Created</th>
-                    <th style="min-width: 250px;">Actions</th>
+                    <th style="min-width: 300px;">Actions</th>
                 </tr>
             </thead>
             <tbody>
                 <?php if ($users && $users->num_rows > 0): ?>
-                    <?php while($user = $users->fetch_assoc()): ?>
-                    <tr>
+                    <?php while($user = $users->fetch_assoc()): 
+                        $is_locked = !empty($user['locked_until']) && strtotime($user['locked_until']) > time();
+                        $row_class = $is_locked ? 'locked-row' : '';
+                    ?>
+                    <tr class="<?php echo $row_class; ?>">
                         <td><?php echo $user['id']; ?></td>
                         <td><strong><?php echo htmlspecialchars($user['username']); ?></strong></td>
                         <td><?php echo htmlspecialchars($user['firstname'] . ' ' . $user['lastname']); ?></td>
@@ -1153,7 +1262,7 @@ tr:hover {
                             $badge_class = $role_badges[$user['role']] ?? 'badge-info';
                             ?>
                             <span class="badge <?php echo $badge_class; ?>"><?php echo ucfirst(str_replace('_', ' ', $user['role'])); ?></span>
-                        </td>
+                         </td>
                         <td>
                             <?php if ($user['status'] == 'active'): ?>
                                 <span class="badge badge-success">Active</span>
@@ -1162,11 +1271,17 @@ tr:hover {
                             <?php else: ?>
                                 <span class="badge badge-danger">Inactive</span>
                             <?php endif; ?>
+                            <?php if ($is_locked): ?>
+                                <span class="badge badge-locked">Locked</span>
+                            <?php endif; ?>
                         </td>
                         <td><?php echo date('M d, Y', strtotime($user['created_at'])); ?></td>
                         <td class="action-buttons">
                             <button onclick="viewUser(<?php echo $user['id']; ?>)" class="action-btn view" title="View User"><i class="fas fa-eye"></i> View</button>
                             <button onclick="editUser(<?php echo $user['id']; ?>)" class="action-btn edit" title="Edit User"><i class="fas fa-edit"></i> Edit</button>
+                            <?php if ($is_locked): ?>
+                                <button onclick="unlockUser(<?php echo $user['id']; ?>, '<?php echo htmlspecialchars($user['username']); ?>', '<?php echo htmlspecialchars($user['email']); ?>', '<?php echo htmlspecialchars($user['locked_until']); ?>')" class="action-btn unlock" title="Unlock Account"><i class="fas fa-unlock-alt"></i> Unlock</button>
+                            <?php endif; ?>
                             <?php if ($user['id'] != $_SESSION['user_id'] && ($user['role'] != 'super_admin' || $_SESSION['role'] == 'super_admin')): ?>
                                 <button onclick="deleteUserModal(<?php echo $user['id']; ?>, '<?php echo htmlspecialchars($user['username']); ?>', '<?php echo htmlspecialchars($user['email']); ?>')" class="action-btn delete" title="Delete User"><i class="fas fa-trash"></i> Delete</button>
                             <?php endif; ?>
@@ -1174,7 +1289,7 @@ tr:hover {
                     </tr>
                     <?php endwhile; ?>
                 <?php else: ?>
-                    <tr><td colspan="8" class="text-center">No users found</td>
+                    <tr><td colspan="8" class="text-center">No users found</td></tr>
                 <?php endif; ?>
             </tbody>
         </table>
@@ -1280,6 +1395,15 @@ function deleteUserModal(userId, username, email) {
     document.getElementById('deleteModal').style.display = 'block';
 }
 
+function unlockUser(userId, username, email, lockedUntil) {
+    document.getElementById('unlock_user_id').value = userId;
+    document.getElementById('unlock_username').innerText = username;
+    document.getElementById('unlock_email').innerText = email;
+    var lockedDate = new Date(lockedUntil);
+    document.getElementById('unlock_locked_until').innerHTML = '<i class="fas fa-clock"></i> Locked until: ' + lockedDate.toLocaleString();
+    document.getElementById('unlockModal').style.display = 'block';
+}
+
 function closeModal(modalId) {
     document.getElementById(modalId).style.display = 'none';
 }
@@ -1319,13 +1443,24 @@ function time_elapsed_string($datetime, $full = false) {
     $now = new DateTime();
     $ago = new DateTime($datetime);
     $diff = $now->diff($ago);
-    $diff->w = floor($diff->d / 7);
-    $diff->d -= $diff->w * 7;
+    
+    $diff_array = array(
+        'y' => $diff->y,
+        'm' => $diff->m,
+        'd' => $diff->d,
+        'h' => $diff->h,
+        'i' => $diff->i,
+        's' => $diff->s
+    );
+    
+    $diff_array['w'] = floor($diff_array['d'] / 7);
+    $diff_array['d'] -= $diff_array['w'] * 7;
+    
     $string = array('y' => 'year', 'm' => 'month', 'w' => 'week', 'd' => 'day', 'h' => 'hour', 'i' => 'minute', 's' => 'second');
     $has_value = false;
     foreach ($string as $k => &$v) {
-        if ($diff->$k) {
-            $v = $diff->$k . ' ' . $v . ($diff->$k > 1 ? 's' : '');
+        if ($diff_array[$k]) {
+            $v = $diff_array[$k] . ' ' . $v . ($diff_array[$k] > 1 ? 's' : '');
             $has_value = true;
         } else {
             unset($string[$k]);

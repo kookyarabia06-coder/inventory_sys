@@ -992,27 +992,6 @@ body {
     </div>
 </div>
 
-<!-- Quick Actions -->
-<div class="table-container">
-    <div class="table-header">
-        <h2><i class="fas fa-bolt"></i> Quick Actions</h2>
-    </div>
-    <div class="quick-actions">
-        <a href="<?php echo SITE_URL; ?>/admin/add_inventory.php" class="btn btn-primary">
-            <i class="fas fa-plus-circle"></i> Add New Item
-        </a>
-        <a href="<?php echo SITE_URL; ?>/admin/issue_items.php" class="btn btn-primary">
-            <i class="fas fa-hand-holding"></i> Issue Item
-        </a>
-        <a href="<?php echo SITE_URL; ?>/admin/barcode_scanner.php" class="btn btn-secondary">
-            <i class="fas fa-camera"></i> Scan Barcode
-        </a>
-        <a href="<?php echo SITE_URL; ?>/admin/report.php" class="btn btn-secondary">
-            <i class="fas fa-chart-bar"></i> Generate Report
-        </a>
-    </div>
-</div>
-
 <!-- Search -->
 <div class="table-container">
     <div class="table-header">

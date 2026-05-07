@@ -1,0 +1,18 @@
+{
+    "sourceFile": "api/unlock_accounts.php",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 0,
+            "patches": [
+                {
+                    "date": 1778044315765,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                }
+            ],
+            "date": 1778044315765,
+            "name": "Commit-0",
+            "content": "<?php\r\n/**\r\n * API endpoint to manually unlock locked accounts\r\n */\r\nheader('Content-Type: application/json');\r\n\r\nrequire_once __DIR__ . '/../config.php';\r\nrequire_once CONFIG_PATH . '/database.php';\r\n\r\n$response = ['success' => false, 'message' => ''];\r\n\r\n// Check if the request is from an admin (simple check)\r\n// In production, add proper authentication\r\n$result = $conn->query(\"UPDATE users SET login_attempts = 0, locked_until = NULL WHERE locked_until IS NOT NULL AND locked_until < NOW()\");\r\n\r\nif ($conn->affected_rows > 0) {\r\n    $response['success'] = true;\r\n    $response['message'] = $conn->affected_rows . ' account(s) unlocked successfully.';\r\n} else {\r\n    // Also force unlock all (including future locks) - for testing\r\n    $conn->query(\"UPDATE users SET login_attempts = 0, locked_until = NULL\");\r\n    $response['success'] = true;\r\n    $response['message'] = 'All accounts have been unlocked.';\r\n}\r\n\r\necho json_encode($response);\r\n?>"
+        }
+    ]
+}

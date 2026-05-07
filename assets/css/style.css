@@ -34,6 +34,8 @@ Refined Color Palette - Professional & Balanced
     --danger: #f44336;
     --warning: #FFB74D;
     --info: #8FB5FF;
+    --sidebar-width: 280px;
+    --sidebar-collapsed-width: 70px;
 }
 
 * {
@@ -47,6 +49,7 @@ body {
     background-color: var(--light);
     color: var(--text-primary);
     line-height: 1.6;
+    overflow-x: hidden;
 }
 
 /* ================================================
@@ -59,25 +62,44 @@ body {
 
 .main-content {
     flex: 1;
-    margin-left: 280px;
+    margin-left: var(--sidebar-width);
     padding: 20px;
     background-color: var(--light);
+    overflow-x: auto;
+    position: relative;
 }
 
 /* ================================================
    3. SIDEBAR NAVIGATION
    ================================================ */
 .sidebar {
-    width: 280px;
+    width: var(--sidebar-width);
     background: linear-gradient(135deg, #2C3E50 0%, #34495E 100%);
     color: var(--text-light);
     padding: 20px;
     position: fixed;
     height: 100vh;
     overflow-y: auto;
-    transition: all 0.3s;
+    transition: all 0.3s ease-in-out;
     box-shadow: 2px 0 10px rgba(0,0,0,0.1);
     padding-bottom: 80px;
+    z-index: 1000;
+    scrollbar-width: thin;
+    scrollbar-color: var(--primary) #4a627a;
+}
+
+.sidebar::-webkit-scrollbar {
+    width: 6px;
+}
+
+.sidebar::-webkit-scrollbar-track {
+    background: #4a627a;
+    border-radius: 10px;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+    background: var(--primary);
+    border-radius: 10px;
 }
 
 .sidebar-logo {
@@ -174,7 +196,7 @@ body {
 }
 
 /* ================================================
-   4. HEADER SECTION
+   4. HEADER SECTION - STICKY FOR MOBILE
    ================================================ */
 .header {
     background-color: var(--white);
@@ -186,6 +208,48 @@ body {
     justify-content: space-between;
     align-items: center;
     border: 1px solid var(--border-light);
+    transition: all 0.3s;
+}
+
+/* Sticky header positioning for different screen sizes */
+@media (max-width: 768px) {
+    .header {
+        position: sticky;
+        top: 10px;
+        z-index: 99;
+        backdrop-filter: blur(10px);
+        background-color: rgba(255, 255, 255, 0.95);
+        margin-top: 0;
+        margin-bottom: 20px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        padding: 12px 20px;
+    }
+}
+
+@media (max-width: 480px) {
+    .header {
+        position: sticky;
+        top: 10px;
+        z-index: 99;
+        backdrop-filter: blur(10px);
+        background-color: rgba(255, 255, 255, 0.95);
+        padding: 12px 15px;
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    
+    .header-title {
+        flex: 1;
+    }
+    
+    .header-title h1 {
+        font-size: 20px;
+    }
+    
+    .header-actions {
+        margin-right: 0;
+    }
 }
 
 .header-title h1 {
@@ -381,7 +445,7 @@ body {
 }
 
 /* ================================================
-   6. TABLES
+   6. TABLES - HORIZONTAL SCROLL FOR MOBILE
    ================================================ */
 .table-container {
     background-color: var(--white);
@@ -391,6 +455,22 @@ body {
     overflow-x: auto;
     margin-bottom: 25px;
     border: 1px solid var(--border-light);
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+}
+
+.table-container::-webkit-scrollbar {
+    height: 8px;
+}
+
+.table-container::-webkit-scrollbar-track {
+    background: var(--border-light);
+    border-radius: 10px;
+}
+
+.table-container::-webkit-scrollbar-thumb {
+    background: var(--primary);
+    border-radius: 10px;
 }
 
 .table-header {
@@ -398,6 +478,8 @@ body {
     justify-content: space-between;
     align-items: center;
     margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 10px;
 }
 
 .table-header h2 {
@@ -409,6 +491,7 @@ body {
 table {
     width: 100%;
     border-collapse: collapse;
+    min-width: 600px;
 }
 
 th {
@@ -491,6 +574,7 @@ tr:hover td {
     display: flex;
     gap: 10px;
     margin-bottom: 20px;
+    flex-wrap: wrap;
 }
 
 .search-box input {
@@ -645,6 +729,7 @@ tr:hover td {
 .action-buttons {
     display: flex;
     gap: 5px;
+    flex-wrap: wrap;
 }
 
 .action-btn {
@@ -734,6 +819,7 @@ tr:hover td {
     width: 100%;
     height: 100%;
     background-color: rgba(0,0,0,0.3);
+    overflow-y: auto;
 }
 
 .modal-content {
@@ -1130,6 +1216,7 @@ tr:hover td {
     margin-bottom: 20px;
     border-bottom: 1px solid var(--border-light);
     padding-bottom: 10px;
+    flex-wrap: wrap;
 }
 
 .tab {
@@ -1182,6 +1269,7 @@ tr:hover td {
     gap: 8px;
     margin-bottom: 20px;
     font-size: 14px;
+    flex-wrap: wrap;
 }
 
 .breadcrumb a {
@@ -1364,6 +1452,22 @@ tr:hover td {
     gap: 20px;
     overflow-x: auto;
     padding: 10px 0;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+}
+
+.kanban-board::-webkit-scrollbar {
+    height: 8px;
+}
+
+.kanban-board::-webkit-scrollbar-track {
+    background: var(--border-light);
+    border-radius: 10px;
+}
+
+.kanban-board::-webkit-scrollbar-thumb {
+    background: var(--primary);
+    border-radius: 10px;
 }
 
 .kanban-column {
@@ -1465,6 +1569,7 @@ tr:hover td {
     justify-content: center;
     gap: 5px;
     margin-top: 20px;
+    flex-wrap: wrap;
 }
 
 .pagination a,
@@ -1622,6 +1727,8 @@ input:checked + .slider:before {
     justify-content: space-between;
     margin-top: 50px;
     padding: 0 50px;
+    flex-wrap: wrap;
+    gap: 20px;
 }
 
 .signature-line {
@@ -1653,33 +1760,77 @@ input:checked + .slider:before {
 }
 
 /* ================================================
-   27.2 LIGHTER BLUE SCROLLBAR (ALTERNATIVE)
+   27. SCROLLBAR STYLES - IMPROVED FOR ALL ELEMENTS
    ================================================ */
-/* Uncomment this section for a lighter blue variant */
-
+/* Global Scrollbar Styles */
 ::-webkit-scrollbar {
     width: 8px;
     height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-    background: #4a627a;
+    background: #e0e0e0;
     border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: #2C3E50;
+    background: var(--primary);
     border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: #1a2632;
+    background: var(--secondary);
 }
 
-* {
+/* Main Content Scroll - Horizontal & Vertical */
+.main-content {
     scrollbar-width: thin;
-    scrollbar-color: #2C3E50 #4a627a;
+    scrollbar-color: var(--primary) #e0e0e0;
+    max-height: 100vh;
+    overflow-y: auto;
 }
+
+.main-content::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.main-content::-webkit-scrollbar-track {
+    background: #e0e0e0;
+    border-radius: 10px;
+}
+
+.main-content::-webkit-scrollbar-thumb {
+    background: var(--primary);
+    border-radius: 10px;
+}
+
+/* Table Container Horizontal Scroll Enhancement */
+.table-container {
+    scrollbar-width: thin;
+    scrollbar-color: var(--primary) var(--border-light);
+}
+
+.table-container::-webkit-scrollbar {
+    height: 8px;
+}
+
+.table-container::-webkit-scrollbar-track {
+    background: var(--border-light);
+    border-radius: 10px;
+}
+
+.table-container::-webkit-scrollbar-thumb {
+    background: var(--primary);
+    border-radius: 10px;
+}
+
+/* Kanban Board Scroll */
+.kanban-board {
+    scrollbar-width: thin;
+    scrollbar-color: var(--primary) var(--border-light);
+}
+
 /* ================================================
    28. ANIMATIONS
    ================================================ */
@@ -1774,18 +1925,32 @@ input:checked + .slider:before {
 .w-100 { width: 100%; }
 .h-100 { height: 100%; }
 
+/* Overflow Utilities */
+.overflow-x-auto { overflow-x: auto; }
+.overflow-y-auto { overflow-y: auto; }
+.overflow-scroll { overflow: scroll; }
+
 /* ================================================
-   30. RESPONSIVE DESIGN
+   30. RESPONSIVE DESIGN - ENHANCED
    ================================================ */
 @media (max-width: 1024px) {
     .stats-grid {
         grid-template-columns: 1fr;
     }
+    
+    .main-content {
+        margin-left: var(--sidebar-width);
+        padding: 15px;
+    }
 }
 
 @media (max-width: 768px) {
+    :root {
+        --sidebar-width: 70px;
+    }
+    
     .sidebar {
-        width: 70px;
+        width: var(--sidebar-collapsed-width);
         padding: 15px 10px;
     }
     
@@ -1820,23 +1985,34 @@ input:checked + .slider:before {
         padding-left: 0;
     }
     
+    .menu-category small i {
+        margin: 0;
+    }
+    
     .main-content {
-        margin-left: 70px;
+        margin-left: var(--sidebar-collapsed-width);
+        padding: 15px;
     }
     
     .header {
-        flex-direction: column;
+        flex-direction: row;
+        flex-wrap: wrap;
         gap: 15px;
-        text-align: center;
+        position: sticky;
+        top: 10px;
+        z-index: 99;
+        backdrop-filter: blur(10px);
+        background-color: rgba(255, 255, 255, 0.95);
     }
     
     .header-user {
-        width: 100%;
+        width: auto;
         justify-content: center;
     }
     
     .dashboard-cards {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 10px;
     }
     
     .form-row {
@@ -1855,6 +2031,25 @@ input:checked + .slider:before {
         width: 280px;
         right: -70px;
     }
+    
+    /* Table responsive adjustments */
+    .table-container {
+        padding: 15px;
+    }
+    
+    th, td {
+        padding: 12px;
+        font-size: 13px;
+    }
+    
+    /* Cards adjustments */
+    .card {
+        padding: 10px 12px;
+    }
+    
+    .card .card-value {
+        font-size: 20px;
+    }
 }
 
 @media (max-width: 480px) {
@@ -1863,7 +2058,7 @@ input:checked + .slider:before {
     }
     
     .card .card-value {
-        font-size: 26px;
+        font-size: 18px;
     }
     
     .modal-content {
@@ -1877,12 +2072,119 @@ input:checked + .slider:before {
     }
     
     .table-container {
-        padding: 15px;
+        padding: 12px;
     }
     
     th, td {
         padding: 10px;
-        font-size: 13px;
+        font-size: 12px;
+    }
+    
+    /* Make dashboard cards stack on very small screens */
+    .dashboard-cards {
+        grid-template-columns: 1fr;
+    }
+    
+    /* Adjust header for very small screens */
+    .header {
+        flex-direction: column;
+        align-items: stretch;
+        text-align: center;
+    }
+    
+    .header-title {
+        margin-bottom: 5px;
+    }
+    
+    .header-user {
+        justify-content: center;
+    }
+    
+    .header-actions {
+        justify-content: center;
+        margin-right: 0;
+    }
+    
+    .user-info {
+        text-align: center;
+    }
+    
+    /* Adjust search box */
+    .search-box {
+        flex-direction: column;
+    }
+    
+    .search-box button {
+        width: 100%;
+    }
+    
+    /* Pagination adjustments */
+    .pagination {
+        gap: 3px;
+    }
+    
+    .pagination a,
+    .pagination span {
+        padding: 6px 10px;
+        min-width: 32px;
+        font-size: 12px;
+    }
+    
+    /* Tabs adjustments */
+    .tabs {
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 5px;
+    }
+    
+    .tab {
+        white-space: nowrap;
+    }
+}
+
+/* Small landscape orientation optimization */
+@media (max-width: 768px) and (orientation: landscape) {
+    .sidebar {
+        height: 100vh;
+        overflow-y: auto;
+    }
+    
+    .main-content {
+        min-height: 100vh;
+    }
+    
+    .header {
+        position: relative;
+        top: 0;
+    }
+}
+
+/* Touch device optimizations */
+@media (hover: none) and (pointer: coarse) {
+    .btn, 
+    .action-btn, 
+    .pop-icon,
+    .sidebar-menu a,
+    .tab {
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+    }
+    
+    .btn:active,
+    .action-btn:active,
+    .pop-icon:active,
+    .sidebar-menu a:active,
+    .tab:active {
+        transform: scale(0.97);
+        transition: transform 0.1s;
+    }
+    
+    /* Improve scroll on touch devices */
+    .table-container,
+    .kanban-board,
+    .main-content {
+        -webkit-overflow-scrolling: touch;
     }
 }
 
@@ -1906,12 +2208,14 @@ input:checked + .slider:before {
     .main-content {
         margin-left: 0;
         padding: 0;
+        overflow: visible;
     }
     
     .table-container {
         box-shadow: none;
         border: 1px solid #ddd;
         page-break-inside: avoid;
+        overflow: visible;
     }
     
     body {

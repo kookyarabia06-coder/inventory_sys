@@ -1,5 +1,3 @@
-
-
 <?php
 /**
  * Locations Page (Admin)
@@ -11,7 +9,7 @@ require_once $root_path . '/config.php';
 require_once INCLUDE_PATH . '/auth.php';
 require_once INCLUDE_PATH . '/functions.php';
 
-requireRole('admin' || 'superadmin');
+requireRole('admin');
 
 $page_title = 'Locations';
 $page_description = 'Manage buildings, departments, and sections';
@@ -235,18 +233,14 @@ if (isset($_GET['delete'])) {
     exit();
 }
 
-// Get all buildings for dropdowns
+// Refresh data after potential deletions
 $buildings = $conn->query("SELECT * FROM buildings ORDER BY name");
-
-// Get all departments with building names and codes
 $departments = $conn->query("
     SELECT d.*, b.name as building_name 
     FROM departments d
     LEFT JOIN buildings b ON d.building_id = b.id
     ORDER BY d.code ASC, d.name
 ");
-
-// Get all sections with department names and codes
 $sections = $conn->query("
     SELECT s.*, d.name as department_name, d.code as department_code
     FROM sections s
@@ -280,12 +274,15 @@ body {
     color: var(--text-primary);
 }
 
+/* Stats Grid - Vertical Layout */
 .stats-grid {
-    display: grid;
-    gap: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 25px;
     margin-bottom: 30px;
 }
 
+/* Card Style */
 .stat-chart {
     background: var(--white);
     border-radius: 12px;
@@ -293,13 +290,16 @@ body {
     box-shadow: 0 4px 12px rgba(107, 140, 255, 0.1);
     border-left: 4px solid var(--primary);
     transition: transform 0.2s, box-shadow 0.2s;
+    width: 100%;
+    overflow-x: auto;
 }
 
 .stat-chart:hover {
-    transform: translateY(-4px);
+    transform: translateY(-2px);
     box-shadow: 0 8px 20px rgba(107, 140, 255, 0.15);
 }
 
+/* Table Header */
 .table-header {
     display: flex;
     justify-content: space-between;
@@ -307,6 +307,8 @@ body {
     margin-bottom: 15px;
     padding-bottom: 10px;
     border-bottom: 2px solid var(--accent-light);
+    flex-wrap: wrap;
+    gap: 10px;
 }
 
 .table-header h3 {
@@ -320,9 +322,16 @@ body {
     margin-right: 10px;
 }
 
+/* Table Styles */
+.table-wrapper {
+    overflow-x: auto;
+    width: 100%;
+}
+
 table {
     width: 100%;
     border-collapse: collapse;
+    min-width: 500px;
 }
 
 th {
@@ -346,6 +355,7 @@ tr:hover {
     background-color: var(--accent-light);
 }
 
+/* Code Badge */
 .code-badge {
     display: inline-block;
     background: var(--primary);
@@ -357,6 +367,7 @@ tr:hover {
     margin-right: 8px;
 }
 
+/* Action Buttons */
 .action-buttons {
     display: flex;
     gap: 5px;
@@ -397,6 +408,7 @@ tr:hover {
     box-shadow: 0 4px 8px rgba(244, 67, 54, 0.3);
 }
 
+/* Modal Styles */
 .modal {
     display: none;
     position: fixed;
@@ -411,13 +423,14 @@ tr:hover {
 
 .modal-content {
     background-color: var(--white);
-    margin: 10% auto;
+    margin: 5% auto;
     padding: 25px;
     border-radius: 12px;
     box-shadow: 0 10px 30px rgba(107, 140, 255, 0.2);
     position: relative;
     animation: modalSlideIn 0.3s;
     max-width: 500px;
+    width: 90%;
 }
 
 @keyframes modalSlideIn {
@@ -458,6 +471,7 @@ tr:hover {
     color: var(--accent);
 }
 
+/* Form Styles */
 .form-group {
     margin-bottom: 20px;
 }
@@ -504,6 +518,7 @@ select.form-control {
     color: var(--text-muted);
 }
 
+/* Button Styles */
 .btn {
     display: inline-flex;
     align-items: center;
@@ -546,6 +561,7 @@ select.form-control {
     box-shadow: 0 4px 12px rgba(143, 181, 255, 0.3);
 }
 
+/* Alert Styles */
 .alert {
     padding: 15px 20px;
     border-radius: 8px;
@@ -578,32 +594,45 @@ select.form-control {
     padding: 20px;
 }
 
-.info-message {
-    background-color: var(--accent-light);
-    padding: 10px 15px;
-    border-radius: 8px;
-    margin-bottom: 15px;
-    font-size: 13px;
-    color: var(--text-secondary);
-}
-
-.info-message i {
-    color: var(--primary);
-    margin-right: 8px;
-}
-
+/* Responsive Design */
 @media (max-width: 768px) {
-    .stats-grid {
-        grid-template-columns: 1fr !important;
-    }
-    
     .modal-content {
-        margin: 20px;
-        width: auto;
+        margin: 20% auto;
+        width: 95%;
     }
     
     .action-buttons {
         flex-wrap: wrap;
+    }
+    
+    th, td {
+        padding: 8px 6px;
+        font-size: 12px;
+    }
+    
+    .table-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .code-badge {
+        font-size: 10px;
+        padding: 2px 6px;
+    }
+}
+
+@media (max-width: 480px) {
+    .stat-chart {
+        padding: 15px;
+    }
+    
+    .btn-sm {
+        padding: 4px 10px;
+        font-size: 12px;
+    }
+    
+    .table-header h3 {
+        font-size: 16px;
     }
 }
 </style>
@@ -628,18 +657,17 @@ select.form-control {
     </div>
 <?php endif; ?>
 
-<div class="stats-grid" style="grid-template-columns: repeat(3, 1fr); gap: 20px;">
-    <!-- Buildings -->
+<div class="stats-grid">
+    <!-- Buildings Section -->
     <div class="stat-chart">
         <div class="table-header">
             <h3><i class="fas fa-building"></i> Buildings</h3>
             <button class="btn btn-sm btn-primary" onclick="openBuildingModal()">
-                <i class="fas fa-plus"></i> Add
+                <i class="fas fa-plus"></i> Add Building
             </button>
         </div>
-        
-        <div style="max-height: 400px; overflow-y: auto;">
-            <table style="width: 100%;">
+        <div class="table-wrapper">
+            <table>
                 <thead>
                     <tr>
                         <th>Name</th>
@@ -678,17 +706,16 @@ select.form-control {
         </div>
     </div>
     
-    <!-- Departments -->
+    <!-- Departments Section -->
     <div class="stat-chart">
         <div class="table-header">
             <h3><i class="fas fa-sitemap"></i> Departments</h3>
             <button class="btn btn-sm btn-primary" onclick="openDepartmentModal()">
-                <i class="fas fa-plus"></i> Add
+                <i class="fas fa-plus"></i> Add Department
             </button>
         </div>
-        
-        <div style="max-height: 400px; overflow-y: auto;">
-            <table style="width: 100%;">
+        <div class="table-wrapper">
+            <table>
                 <thead>
                     <tr>
                         <th>Code</th>
@@ -729,17 +756,16 @@ select.form-control {
         </div>
     </div>
     
-    <!-- Sections -->
+    <!-- Sections Section -->
     <div class="stat-chart">
         <div class="table-header">
             <h3><i class="fas fa-layer-group"></i> Sections</h3>
             <button class="btn btn-sm btn-primary" onclick="openSectionModal()">
-                <i class="fas fa-plus"></i> Add
+                <i class="fas fa-plus"></i> Add Section
             </button>
         </div>
-        
-        <div style="max-height: 400px; overflow-y: auto;">
-            <table style="width: 100%;">
+        <div class="table-wrapper">
+            <table>
                 <thead>
                     <tr>
                         <th>Name</th>
@@ -899,18 +925,6 @@ select.form-control {
 </div>
 
 <script>
-// Get next department code via AJAX
-function fetchNextDepartmentCode() {
-    fetch('ajax/get_next_department_code.php')
-        .then(response => response.json())
-        .then(data => {
-            if (data.code) {
-                document.getElementById('department_code').value = data.code;
-            }
-        })
-        .catch(error => console.error('Error fetching department code:', error));
-}
-
 // Building Modal Functions
 function openBuildingModal() {
     document.getElementById('buildingModalTitle').textContent = 'Add Building';
@@ -956,7 +970,7 @@ function editDepartment(id, name, code, buildingId) {
     document.getElementById('department_action').value = 'edit';
     document.getElementById('department_id').value = id;
     document.getElementById('department_code').value = code;
-    document.getElementById('department_code').readOnly = false; // Make editable for edit
+    document.getElementById('department_code').readOnly = false;
     document.getElementById('department_name').value = name;
     document.getElementById('department_building').value = buildingId || '';
     document.getElementById('departmentModal').style.display = 'block';
