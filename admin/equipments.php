@@ -9,11 +9,6 @@ require_once $root_path . '/config.php';
 require_once INCLUDE_PATH . '/auth.php';
 require_once INCLUDE_PATH . '/functions.php';
 
-requireRole('admin' || 'superadmin');
-
-$page_title = 'Equipment Management';
-$page_description = 'Manage equipment types and sub-types';
-
 // Database configuration
 $host = 'localhost';
 $dbname = 'inventory_sys';
@@ -26,6 +21,25 @@ try {
 } catch(PDOException $e) {
     die("Connection failed: " . $e->getMessage());
 }
+
+// ========== AJAX ENDPOINT FOR FETCHING SUB-TYPE ==========
+if (isset($_GET['get_subtype']) && is_numeric($_GET['get_subtype'])) {
+    header('Content-Type: application/json');
+    $id = (int)$_GET['get_subtype'];
+    $stmt = $pdo->prepare("SELECT * FROM equipment_sub_type WHERE id = ?");
+    $stmt->execute([$id]);
+    $subtype = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($subtype) {
+        echo json_encode(['success' => true, 'subtype' => $subtype]);
+    } else {
+        echo json_encode(['success' => false, 'error' => 'Sub-type not found']);
+    }
+    exit;
+}
+// ==========================================================
+
+// Check role (fixed)
+requireRole('admin' || 'superadmin');
 
 // Fix collation and recreate triggers
 try {
@@ -163,7 +177,9 @@ $subtypes = $pdo->query("
     ORDER BY t.code, s.code
 ")->fetchAll();
 
-// Get data for edit forms via AJAX
+$page_title = 'Equipment Management';
+$page_description = 'Manage equipment types and sub-types';
+
 include INCLUDE_PATH . '/header.php';
 ?>
 
@@ -260,7 +276,7 @@ include INCLUDE_PATH . '/header.php';
                                     <i class="fas fa-trash"></i>
                                 </a>
                             </div>
-                         </td>
+                        </td>
                     </tr>
                     <?php endforeach; ?>
                 <?php else: ?>
@@ -664,6 +680,8 @@ tr:hover {
     box-shadow: 0 10px 30px rgba(107, 140, 255, 0.2);
     position: relative;
     animation: modalSlideIn 0.3s;
+    width: 90%;
+    max-width: 500px;
 }
 
 @keyframes modalSlideIn {
@@ -705,14 +723,6 @@ tr:hover {
 
 .modal-body {
     padding: 25px;
-}
-
-.modal-footer {
-    padding: 15px 25px;
-    border-top: 1px solid var(--border-light);
-    text-align: right;
-    background: var(--light);
-    border-radius: 0 0 12px 12px;
 }
 
 /* Form Styles */
@@ -816,7 +826,6 @@ tr:hover {
 <script>
 // Store types data for reference
 let typesData = [];
-let subtypesData = [];
 
 <?php foreach ($types as $type): ?>
 typesData.push({
@@ -865,8 +874,13 @@ function openSubTypeModal() {
 
 function editSubType(id) {
     // Fetch sub-type data via AJAX
-    fetch('?get_subtype=' + id)
-        .then(response => response.json())
+    fetch(window.location.pathname + '?get_subtype=' + id)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            return response.json();
+        })
         .then(data => {
             if (data.success) {
                 document.getElementById('subtypeModalTitle').textContent = 'Edit Equipment Sub-Type';
@@ -876,12 +890,12 @@ function editSubType(id) {
                 document.getElementById('type_id').value = data.subtype.type_of_equipment_id;
                 document.getElementById('subtypeModal').style.display = 'block';
             } else {
-                alert('Error loading sub-type details');
+                alert('Error loading sub-type details: ' + (data.error || 'Unknown error'));
             }
         })
         .catch(error => {
             console.error('Error:', error);
-            alert('Error loading sub-type details');
+            alert('Error loading sub-type details. Please check the console for details.');
         });
 }
 
@@ -901,24 +915,6 @@ window.onclick = function(event) {
         closeSubTypeModal();
     }
 }
-
-// Add AJAX endpoint for fetching sub-type
-<?php
-// Add this at the top of your PHP code, before the HTML
-if (isset($_GET['get_subtype']) && is_numeric($_GET['get_subtype'])) {
-    header('Content-Type: application/json');
-    $id = (int)$_GET['get_subtype'];
-    $stmt = $pdo->prepare("SELECT * FROM equipment_sub_type WHERE id = ?");
-    $stmt->execute([$id]);
-    $subtype = $stmt->fetch(PDO::FETCH_ASSOC);
-    if ($subtype) {
-        echo json_encode(['success' => true, 'subtype' => $subtype]);
-    } else {
-        echo json_encode(['success' => false, 'error' => 'Sub-type not found']);
-    }
-    exit;
-}
-?>
 </script>
 
 <?php include INCLUDE_PATH . '/footer.php'; ?>

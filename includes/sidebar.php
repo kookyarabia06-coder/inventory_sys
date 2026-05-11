@@ -1,3 +1,5 @@
+
+
 <?php
 /**
  * Sidebar Navigation Template
@@ -34,7 +36,7 @@ if (isset($conn) && $conn && ($user_role == 'super_admin' || $user_role == 'admi
         $pending_issues_count = getPendingIssuesCount($conn);
     } else {
         // Fallback query if function doesn't exist
-        $query = "SELECT COUNT(*) as count FROM issued_items WHERE status = 'pending'";
+        $query = "SELECT COUNT(*) as count FROM equipment_issuance WHERE status = 'pending'";
         $result = mysqli_query($conn, $query);
         if ($result) {
             $row = mysqli_fetch_assoc($result);
@@ -136,6 +138,12 @@ if (isset($conn) && $conn && ($user_role == 'super_admin' || $user_role == 'admi
                 <span>Equipments</span>
             </a>
         </li>
+        <li>
+            <a href="<?php echo SITE_URL; ?>/admin/settings.php" class="<?php echo basename($_SERVER['PHP_SELF']) == 'settings.php' ? 'active' : ''; ?>">
+                <i class="fas fa-coins"></i>
+                <span>Settings</span>
+            </a>
+        </li>
         <li class="menu-category">
             <small> USER MANAGEMENT</small>
         </li>
@@ -219,6 +227,12 @@ if (isset($conn) && $conn && ($user_role == 'super_admin' || $user_role == 'admi
             <a href="<?php echo SITE_URL; ?>/admin/equipments.php" class="<?php echo basename($_SERVER['PHP_SELF']) == 'equipments.php' ? 'active' : ''; ?>">
                 <i class="fas fa-laptop"></i>
                 <span>Equipments</span>
+            </a>
+        </li>
+        <li>
+            <a href="<?php echo SITE_URL; ?>/admin/settings.php" class="<?php echo basename($_SERVER['PHP_SELF']) == 'settings.php' ? 'active' : ''; ?>">
+                <i class="fas fa-coins"></i>
+                <span>Settings</span>
             </a>
         </li>
         <li class="menu-category">

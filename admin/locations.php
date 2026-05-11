@@ -9,7 +9,7 @@ require_once $root_path . '/config.php';
 require_once INCLUDE_PATH . '/auth.php';
 require_once INCLUDE_PATH . '/functions.php';
 
-requireRole('admin');
+requireRole('admin' || 'superadmin' || 'supply');
 
 $page_title = 'Locations';
 $page_description = 'Manage buildings, departments, and sections';

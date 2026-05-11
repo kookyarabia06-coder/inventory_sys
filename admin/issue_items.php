@@ -14,7 +14,7 @@ require_once INCLUDE_PATH . '/auth.php';
 require_once INCLUDE_PATH . '/functions.php';
 
 // Role checking
-requireRole('admin' || 'superadmin' || 'supply');
+requireRole('admin');
 
 $page_title = 'Issue Items';
 $page_description = 'Issue inventory items to employees';
@@ -469,14 +469,14 @@ include INCLUDE_PATH . '/header.php';
 ?>
 
 <style>
-:root{--primary:#2196F3;--secondary:#64B5F6;--accent:#42A5F5;--accent-light:#90CAF9;--success-light:#C8E6C9;--light:#F0F0F0;--white:#FFF;--border-light:#E0E0E0;--text-primary:#3A3A3A;--text-secondary:#6B6B6B;--text-muted:#9E9E9E;--success:#4CAF50;--danger:#f44336;--warning:#FF9800;--info:#2196F3}
+:root{--primary:#6B8CFF;--secondary:#8FB5FF;--accent:#F8B0C0;--accent-light:#FFD8E0;--success-light:#C5E8C5;--light:#F0F0F0;--white:#FFF;--border-light:#E0E0E0;--text-primary:#3A3A3A;--text-secondary:#6B6B6B;--text-muted:#9E9E9E;--success:#4CAF50;--danger:#f44336;--warning:#FF9800;--info:#2196F3}
 body{background:var(--light);color:var(--text-primary)}
 .barcode-search-section{background:linear-gradient(135deg,#6B8CFF,#8FB5FF);border-radius:12px;padding:20px;margin-bottom:25px;color:#fff}
 .barcode-search-section h4{margin:0 0 10px;font-size:16px}
 .barcode-search-box{display:flex;gap:10px;align-items:center;background:#fff;border-radius:50px;padding:5px 5px 5px 20px}
 .barcode-search-box input{flex:1;border:none;padding:12px 0;font-size:16px;outline:none;background:transparent}
 .barcode-search-box button{background:var(--accent);border:none;padding:10px 25px;border-radius:50px;color:var(--text-primary);font-weight:500;cursor:pointer;transition:all .2s}
-.barcode-search-box button:hover{background:#1E88E5;transform:scale(1.02)}
+.barcode-search-box button:hover{background:#e69eb0;transform:scale(1.02)}
 .barcode-search-result{background:rgba(255,255,255,.15);border-radius:10px;padding:15px;margin-top:15px;display:none}
 .barcode-search-result.show{display:block;animation:fadeIn .3s}
 @keyframes fadeIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
@@ -512,7 +512,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
 .scanner-modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.6);z-index:1500;align-items:center;justify-content:center}
 .scanner-modal.show{display:flex}
 .scanner-modal-content{background:#fff;border-radius:12px;width:90%;max-width:500px;box-shadow:0 5px 30px rgba(0,0,0,.3)}
-.scanner-modal-header{display:flex;justify-content:space-between;align-items:center;padding:20px;background:#2196F3;color:#fff;border-radius:12px 12px 0 0}
+.scanner-modal-header{display:flex;justify-content:space-between;align-items:center;padding:20px;background:#6B8CFF;color:#fff;border-radius:12px 12px 0 0}
 .close-modal-btn{background:rgba(255,255,255,.2);border:none;color:#fff;font-size:24px;cursor:pointer;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center}
 .scanner-modal-body{padding:25px}.scanner-input-section{margin-bottom:20px}
 .scanner-input-section input{width:100%;padding:14px;border:2px solid var(--border-light);border-radius:8px;font-size:16px;box-sizing:border-box}
@@ -521,7 +521,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
 .hardware-scanner-modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.8);z-index:3000;align-items:center;justify-content:center}
 .hardware-scanner-modal.show{display:flex}
 .hardware-scanner-content{background:#fff;border-radius:15px;width:90%;max-width:600px;max-height:90vh;overflow-y:auto;box-shadow:0 10px 50px rgba(0,0,0,.3);display:flex;flex-direction:column}
-.hardware-scanner-header{background:#2196F3;color:#fff;padding:25px;border-radius:15px 15px 0 0;display:flex;justify-content:space-between;align-items:center}
+.hardware-scanner-header{background:#6B8CFF;color:#fff;padding:25px;border-radius:15px 15px 0 0;display:flex;justify-content:space-between;align-items:center}
 .hardware-scanner-header h2{margin:0;font-size:20px}
 .hardware-scanner-header .close-btn{background:rgba(255,255,255,.2);border:none;color:#fff;font-size:28px;cursor:pointer;width:40px;height:40px;border-radius:50%}
 .hardware-scanner-body{padding:25px;flex:1;overflow-y:auto}
@@ -535,8 +535,8 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
 .scanned-item-card.success{background:#E8F5E9;border-color:#4CAF50}
 .scanned-item-info{flex:1}.scanned-item-name{font-weight:bold;font-size:14px;color:#333}.scanned-item-details{font-size:12px;color:#666}
 .scanned-item-qty-controls{display:flex;align-items:center;gap:8px;margin-left:10px}
-.qty-btn{background:#2196F3;color:#fff;border:none;width:28px;height:28px;border-radius:50%;cursor:pointer;font-weight:bold}
-.qty-btn:hover{background:#1976D2}
+.qty-btn{background:#6B8CFF;color:#fff;border:none;width:28px;height:28px;border-radius:50%;cursor:pointer;font-weight:bold}
+.qty-btn:hover{background:#5a7ae6}
 .qty-input{width:50px;text-align:center;padding:5px;border:1px solid #E0E0E0;border-radius:5px;font-weight:bold;font-size:13px}
 .remove-scanned-item{background:#f44336;color:#fff;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;font-size:12px;margin-left:8px}
 .empty-scan-state{text-align:center;padding:40px 20px;color:#999}.empty-scan-state i{font-size:48px;margin-bottom:15px;color:#CCC}
@@ -544,8 +544,8 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
 .btn-add-all-to-cart{background:#4CAF50;color:#fff;border:none;padding:12px 25px;border-radius:8px;cursor:pointer;font-weight:bold}
 .btn-add-all-to-cart:hover{background:#388E3C}
 .btn-add-all-to-cart:disabled{opacity:.5;cursor:not-allowed}
-.btn-clear-scans{background:#2196F3;color:#fff;border:none;padding:12px 25px;border-radius:8px;cursor:pointer;font-weight:bold}
-.btn-clear-scans:hover{background:#1976D2}
+.btn-clear-scans{background:#6B8CFF;color:#fff;border:none;padding:12px 25px;border-radius:8px;cursor:pointer;font-weight:bold}
+.btn-clear-scans:hover{background:#5a7ae6}
 .btn-close-hardware-scanner{background:#757575;color:#fff;border:none;padding:12px 25px;border-radius:8px;cursor:pointer;font-weight:bold}
 .btn-close-hardware-scanner:hover{background:#616161}
 .user-location-badge{background:#E8F5E9;color:#2E7D32;padding:4px 10px;border-radius:20px;font-size:11px;margin-left:8px}
@@ -641,8 +641,8 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
 <div class="barcode-search-section">
     <h4><i class="fas fa-barcode"></i> Physical Barcode Scanner</h4>
     <div style="display:flex;gap:10px;margin-bottom:15px">
-        <button type="button" onclick="openHardwareScannerModal()" class="btn-primary" style="flex:1;padding:12px;background:linear-gradient(135deg,#eea5d6,#eea5d6);border:none;color:#fff"><i class="fas fa-barcode"></i> <strong>Open Hardware Scanner</strong></button>
-        <button type="button" onclick="openScannerModal()" class="btn-primary" style="flex:1;padding:12px"><i class="fas fa-camera"></i> Webcam / Manual</button>
+        <button type="button" onclick="openHardwareScannerModal()" class="btn-primary" style="flex:1;padding:12px;background:linear-gradient(135deg,#F8B0C0,#e69eb0);border:none;color:#fff"><i class="fas fa-barcode"></i> <strong>Open Hardware Scanner</strong></button>
+        <button type="button" onclick="openScannerModal()" class="btn-primary" style="flex:1;padding:12px;background:linear-gradient(135deg,#6B8CFF,#8FB5FF);border:none;color:#fff"><i class="fas fa-camera"></i> Webcam / Manual</button>
         <div style="background:rgba(255,255,255,.2);padding:10px 15px;border-radius:8px;font-size:13px"><i class="fas fa-check-circle"></i> Scanner Ready</div>
     </div>
     <div class="barcode-search-box">
@@ -672,7 +672,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
     <div class="hardware-scanner-content">
         <div class="hardware-scanner-header"><h2><i class="fas fa-barcode"></i> Hardware Barcode Scanner</h2><button type="button" class="close-btn" onclick="closeHardwareScannerModal()">&times;</button></div>
         <div class="hardware-scanner-body">
-            <div class="scanner-instructions"><strong><i class="fas fa-info-circle"></i> Ready to Scan</strong> Click the input field below and scan barcodes. When done, click "Issue Items".</div>
+            <div class="scanner-instructions"><strong><i class="fas fa-info-circle"></i> Ready to Scan</strong> Click the input field below and scan barcodes. When done, click "Add to Cart".</div>
             <div class="scanner-input-container">
                 <label><i class="fas fa-barcode"></i> Scan Barcode</label>
                 <div class="scanner-input-wrapper"><i class="fas fa-barcode"></i><input type="text" id="hardwareScannerInput" class="hardware-scanner-input" placeholder="Place cursor here and scan..." autocomplete="off"></div>
@@ -681,7 +681,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
         </div>
         <div class="hardware-scanner-footer">
             <button type="button" class="btn-clear-scans" onclick="clearHardwareScans()" id="clearScansBtn" style="display:none"><i class="fas fa-trash"></i> Clear All</button>
-            <button type="button" class="btn-add-all-to-cart" onclick="issueHardwareScannedItems()" id="issueItemBtn" disabled><i class="fas fa-hand-holding"></i> Issue Items</button>
+            <button type="button" class="btn-add-all-to-cart" onclick="addHardwareScannedToCart()" id="addToCartBtn" disabled><i class="fas fa-cart-plus"></i> Add to Cart</button>
             <button type="button" class="btn-close-hardware-scanner" onclick="closeHardwareScannerModal()">Close</button>
         </div>
     </div>
@@ -728,65 +728,75 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
                     <?php endwhile; endif; ?>
                 </select>
             </div>
-            <div class="form-group"><label>Condition</label><select name="condition" class="form-control"><option value="Serviceable" >Serviceable</option><option value="Non-Serviceable" >Non-Serviceable</option><option value="For Condemn" >For Condemn</option><option value="Under Repair" >Under Repair</option><option value="For Disposal" >For Disposal</option></select></div>
+            <div class="form-group"><label>Condition</label><select name="condition" class="form-control"><option value="Serviceable">Serviceable</option><option value="Non-Serviceable">Non-Serviceable</option><option value="For Condemn">For Condemn</option><option value="Under Repair">Under Repair</option><option value="For Disposal">For Disposal</option></select></div>
             <div class="form-group"><label>Purpose *</label><textarea name="purpose" id="purpose" class="form-control" rows="3" required placeholder="Reason for issuing"></textarea></div>
             <div class="form-group"><label>Remarks</label><textarea name="remarks" class="form-control" rows="2" placeholder="Optional notes"></textarea></div>
             <div class="form-group"><button type="button" class="btn-primary" id="submitBtn" onclick="showConfirmModal()"><i class="fas fa-hand-holding"></i> <?php echo $reissue_item?'Reissue':'Issue Selected Items (<span id="selectedCount">0</span>)'; ?></button></div>
         </form>
     </div>
-    
-    <div class="stat-chart">
-        <h3><i class="fas fa-clipboard-list"></i> Currently Issued Items</h3>
-        <div style="max-height:500px;overflow-y:auto">
-            <table style="width:100%">
-                <thead><tr><th>Employee</th><th>Department / Section</th><th>Location Code</th><th>Items</th><th>Total Qty</th><th>Actions</th></tr></thead>
-                <tbody>
-                    <?php if(!empty($employee_issuances)): foreach($employee_issuances as $eid=>$edata): $ti=0;$tq=0;foreach($edata['items'] as $it){$ti++;$tq+=$it['quantity_issued'];} ?>
-                    <tr style="background:#f8f9fa"><td colspan="6" style="padding:15px;border-bottom:2px solid #6B8CFF">
-                        <strong style="color:#6B8CFF;font-size:16px"><i class="fas fa-user"></i> <?php echo htmlspecialchars($edata['employee_name']); ?></strong>
-                        <?php if(!empty($edata['position'])): ?>
-                        <span class="user-department-badge"><i class="fas fa-briefcase"></i> <?php echo htmlspecialchars($edata['position']); ?></span>
-                        <?php endif; ?>
-                        <?php if(!empty($edata['location_code']) && $edata['location_code'] != '000000'): ?>
-                        <span class="user-location-badge"><i class="fas fa-location-dot"></i> LOC: <?php echo htmlspecialchars($edata['location_code']); ?></span>
-                        <?php endif; ?>
-                        <?php if(!empty($edata['location_string'])): ?>
-                        <span class="user-department-badge"><i class="fas fa-building"></i> <?php echo htmlspecialchars($edata['location_string']); ?></span>
-                        <?php endif; ?>
-                        <span style="float:right;background:#6B8CFF;color:#fff;padding:4px 12px;border-radius:20px;font-size:12px"><?php echo $ti; ?> item(s) • <?php echo $tq; ?> total qty</span>
-                    </td></tr>
-                    <?php foreach($edata['items'] as $item): ?>
-                    <tr style="background:#fafafa">
-                        <td style="padding-left:30px"><strong><?php echo htmlspecialchars($item['article_name']); ?></strong><br><small><?php echo htmlspecialchars($item['property_no']??'N/A'); ?></small></td>
-                        <td class="text-muted" style="font-size:11px">
-                            <?php 
-                            $loc_parts = [];
-                            if(!empty($item['building_name'])) $loc_parts[] = $item['building_name'];
-                            if(!empty($item['department_name'])) $loc_parts[] = $item['department_name'];
-                            if(!empty($item['section_name'])) $loc_parts[] = $item['section_name'];
-                            echo !empty($loc_parts) ? htmlspecialchars(implode(' → ', $loc_parts)) : '-';
-                            ?>
-                        </td>
-                        <td class="text-muted" style="font-size:11px"><?php echo htmlspecialchars($item['location_code'] ?? '-'); ?></td>
-                        <td><?php echo $item['quantity_issued'].' '.htmlspecialchars($item['uom']??'pcs'); ?></td>
-                        <td><?php echo date('M d, Y',strtotime($item['issued_date'])); ?></td>
-                        <td><div class="action-buttons">
-                            <a href="?print_par=<?php echo $item['id']; ?>" class="action-btn" style="background:#2c3e50" target="_blank" title="Print PAR"><i class="fas fa-file-signature"></i></a>
-                            <a href="?return=<?php echo $item['id']; ?>" class="action-btn success" onclick="return confirmReturnItem(event, this)"><i class="fas fa-undo"></i></a>
-                            <?php if($item['status']==='issued'): ?>
-                            <a href="?reissue=<?php echo $item['id']; ?>" class="action-btn edit" title="Reissue"><i class="fas fa-redo"></i></a>
-                            <?php else: ?>
-                            <span class="action-btn" style="background:#ccc;cursor:not-allowed"><i class="fas fa-redo"></i></span>
-                            <?php endif; ?>
-                            <button class="action-btn view" onclick="viewIssuanceDetails(<?php echo $item['id']; ?>)"><i class="fas fa-eye"></i></button>
-                        </div></td>
-                      </tr>
-                    <?php endforeach; endforeach; else: ?>
-                    <tr><td colspan="6" class="text-center">No items currently issued</td></tr>
+</div>
+
+<!-- Currently Issued Items Section -->
+<div class="stat-chart">
+    <h3><i class="fas fa-clipboard-list"></i> Currently Issued Items</h3>
+    <div style="max-height:500px;overflow-y:auto">
+        <table style="width:100%">
+            <thead>
+                <tr>
+                    <th>Employee</th>
+                    <th>Department / Section</th>
+                    <th>Location Code</th>
+                    <th>Items</th>
+                    <th>Total Qty</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if(!empty($employee_issuances)): foreach($employee_issuances as $eid=>$edata): $ti=0;$tq=0;foreach($edata['items'] as $it){$ti++;$tq+=$it['quantity_issued'];} ?>
+                <tr style="background:#f8f9fa"><td colspan="6" style="padding:15px;border-bottom:2px solid #6B8CFF">
+                    <strong style="color:#6B8CFF;font-size:16px"><i class="fas fa-user"></i> <?php echo htmlspecialchars($edata['employee_name']); ?></strong>
+                    <?php if(!empty($edata['position'])): ?>
+                    <span class="user-department-badge"><i class="fas fa-briefcase"></i> <?php echo htmlspecialchars($edata['position']); ?></span>
                     <?php endif; ?>
-                </tbody>
-            </table>
-        </div>
+                    <?php if(!empty($edata['location_code']) && $edata['location_code'] != '000000'): ?>
+                    <span class="user-location-badge"><i class="fas fa-location-dot"></i> LOC: <?php echo htmlspecialchars($edata['location_code']); ?></span>
+                    <?php endif; ?>
+                    <?php if(!empty($edata['location_string'])): ?>
+                    <span class="user-department-badge"><i class="fas fa-building"></i> <?php echo htmlspecialchars($edata['location_string']); ?></span>
+                    <?php endif; ?>
+                    <span style="float:right;background:#6B8CFF;color:#fff;padding:4px 12px;border-radius:20px;font-size:12px"><?php echo $ti; ?> item(s) • <?php echo $tq; ?> total qty</span>
+                 </tr>
+                 <?php foreach($edata['items'] as $item): ?>
+                 <tr style="background:#fafafa">
+                     <td style="padding-left:30px"><strong><?php echo htmlspecialchars($item['article_name']); ?></strong><br><small><?php echo htmlspecialchars($item['property_no']??'N/A'); ?></small></td>
+                     <td class="text-muted" style="font-size:11px">
+                         <?php 
+                         $loc_parts = [];
+                         if(!empty($item['building_name'])) $loc_parts[] = $item['building_name'];
+                         if(!empty($item['department_name'])) $loc_parts[] = $item['department_name'];
+                         if(!empty($item['section_name'])) $loc_parts[] = $item['section_name'];
+                         echo !empty($loc_parts) ? htmlspecialchars(implode(' → ', $loc_parts)) : '-';
+                         ?>
+                     </td>
+                     <td class="text-muted" style="font-size:11px"><?php echo htmlspecialchars($item['location_code'] ?? '-'); ?></td>
+                     <td><?php echo $item['quantity_issued'].' '.htmlspecialchars($item['uom']??'pcs'); ?></td>
+                     <td><?php echo date('M d, Y',strtotime($item['issued_date'])); ?></td>
+                     <td><div class="action-buttons">
+                         <a href="?print_par=<?php echo $item['id']; ?>" class="action-btn" style="background:#2c3e50" target="_blank" title="Print PAR"><i class="fas fa-file-signature"></i></a>
+                         <a href="?return=<?php echo $item['id']; ?>" class="action-btn success" onclick="return confirmReturnItem(event, this)"><i class="fas fa-undo"></i></a>
+                         <?php if($item['status']==='issued'): ?>
+                         <a href="?reissue=<?php echo $item['id']; ?>" class="action-btn edit" title="Reissue"><i class="fas fa-redo"></i></a>
+                         <?php else: ?>
+                         <span class="action-btn" style="background:#ccc;cursor:not-allowed"><i class="fas fa-redo"></i></span>
+                         <?php endif; ?>
+                         <button class="action-btn view" onclick="viewIssuanceDetails(<?php echo $item['id']; ?>)"><i class="fas fa-eye"></i></button>
+                     </div></td>
+                 </tr>
+                 <?php endforeach; endforeach; else: ?>
+                 <tr><td colspan="6" class="text-center">No items currently issued</td></tr>
+                <?php endif; ?>
+            </tbody>
+        </table>
     </div>
 </div>
 
@@ -1029,7 +1039,7 @@ function viewIssuanceDetails(id){
     let m=document.getElementById('dynamic-modal');
     if(!m){m=document.createElement('div');m.id='dynamic-modal';m.style.cssText='display:none;position:fixed;z-index:1000;left:0;top:0;width:100%;height:100%;background:rgba(0,0,0,.5)';m.innerHTML=`<div style="background:#fff;margin:10% auto;width:500px;max-width:90%;border-radius:12px"><div style="padding:20px;border-bottom:2px solid #FFD8E0;display:flex;justify-content:space-between"><h2>Issuance Details</h2><span style="font-size:28px;cursor:pointer" onclick="document.getElementById('dynamic-modal').style.display='none'">&times;</span></div><div style="padding:20px" id="modal-body">Loading...</div></div>`;document.body.appendChild(m)}
     m.style.display='block';document.getElementById('modal-body').innerHTML='<div style="text-align:center"><i class="fas fa-spinner fa-spin"></i> Loading...</div>';
-    fetch('<?php echo SITE_URL; ?>/api/get_issuance_details.php?id='+id).then(r=>r.json()).then(d=>{if(d.error){document.getElementById('modal-body').innerHTML='<div style="color:red">'+d.error+'</div>';return}document.getElementById('modal-body').innerHTML=`<table style="width:100%"><tr><td><strong>Item:</strong>20%</td>20%<td>${escapeHtml(d.article_name||'N/A')}20%</td>20%</tr>20%<tr>20%<td><strong>Property No.:</strong>20%</td>20%<td>${escapeHtml(d.property_no||'N/A')}20%</td>20%</tr>20%<tr>20%<td><strong>Issued To:</strong>20%</td>20%<td>${escapeHtml(d.issued_to_name||'N/A')}20%</td>20%</tr>20%<tr>20%<td><strong>Department:</strong>20%</td>20%<td>${escapeHtml(d.department_name||'N/A')}20%</td>20%</tr>20%<tr>20%<td><strong>Section:</strong>20%</td>20%<td>${escapeHtml(d.section_name||'N/A')}20%</td>20%</tr>20%<tr>20%<td><strong>Quantity:</strong>20%</td>20%<td>${d.quantity_issued} ${escapeHtml(d.uom||'pcs')}20%</td>20%</tr>20%<tr>20%<td><strong>Purpose:</strong>20%</td>20%<td>${escapeHtml(d.purpose||'N/A')}20%</td>20%</tr>20%<tr>20%<td><strong>Condition:</strong>20%</td>20%<td>${escapeHtml(d.condition_on_issue||'N/A')}20%</td>20%</tr>20%<tr>20%<td><strong>Issued Date:</strong>20%</td>20%<td>${d.issued_date}20%</td>20%</tr>20%<table>`}).catch(()=>{document.getElementById('modal-body').innerHTML='<div style="color:red">Error loading</div>'})
+    fetch('<?php echo SITE_URL; ?>/api/get_issuance_details.php?id='+id).then(r=>r.json()).then(d=>{if(d.error){document.getElementById('modal-body').innerHTML='<div style="color:red">'+d.error+'</div>';return}document.getElementById('modal-body').innerHTML=`<table style="width:100%"><tr><td><strong>Item:</strong>20%</td>20%<td>${escapeHtml(d.article_name||'N/A')}20%</td>20%</tr>20%<tr>20%<td><strong>Property No.:</strong>20%</td>20%<td>${escapeHtml(d.property_no||'N/A')}20%</td>20%</td>20%<tr>20%<td><strong>Issued To:</strong>20%</td>20%<td>${escapeHtml(d.issued_to_name||'N/A')}20%</td>20%</tr>20%<tr>20%<td><strong>Department:</strong>20%</td>20%<td>${escapeHtml(d.department_name||'N/A')}20%</td>20%</tr>20%<tr>20%<td><strong>Section:</strong>20%</td>20%<td>${escapeHtml(d.section_name||'N/A')}20%</td>20%</tr>20%<tr>20%<td><strong>Quantity:</strong>20%</td>20%<td>${d.quantity_issued} ${escapeHtml(d.uom||'pcs')}20%</td>20%</tr>20%<tr>20%<td><strong>Purpose:</strong>20%</td>20%<td>${escapeHtml(d.purpose||'N/A')}20%</td>20%</tr>20%<tr>20%<td><strong>Condition:</strong>20%</td>20%<td>${escapeHtml(d.condition_on_issue||'N/A')}20%</td>20%</tr>20%<td>`}).catch(()=>{document.getElementById('modal-body').innerHTML='<div style="color:red">Error loading</div>'})
 }
 
 function processHardwareBarcode(barcode){const st=barcode.toLowerCase().trim();let fi=null;for(let id in inventoryData){const it=inventoryData[id],be=(it.barcode_data||'').toLowerCase().trim(),bn=be.replace(/[\s\-\.]/g,''),sn=st.replace(/[\s\-\.]/g,''),al=(it.article_name||'').toLowerCase(),pl=(it.property_no||'').toLowerCase();if(bn===sn||(be&&be===st)||(be&&be.includes(st))||al.includes(st)||pl.includes(st)){fi=it;break}}
@@ -1039,21 +1049,40 @@ function showScanSuccess(n,q){const i=document.getElementById('hardwareScannerIn
 function showScanWarning(n,m){const i=document.getElementById('hardwareScannerInput');if(!i)return;i.style.backgroundColor='#FFF3E0';i.style.borderColor='#FF9800';i.placeholder=m>0?'⚠ Max: '+n+' ('+m+')':'⚠ Out of stock: '+n;setTimeout(()=>{i.style.backgroundColor='';i.style.borderColor='#FF6B35';i.placeholder='Place cursor here and scan...'},2000)}
 function showScanError(b){const i=document.getElementById('hardwareScannerInput');if(!i)return;i.style.backgroundColor='#FFCDD2';i.style.borderColor='#f44336';i.placeholder='✗ Not found: '+b;setTimeout(()=>{i.style.backgroundColor='';i.style.borderColor='#FF6B35';i.placeholder='Place cursor here and scan...'},2000)}
 
-function updateHardwareScannedItemsDisplay(){const c=document.getElementById('hardwareScannedItemsContainer'),ib=document.getElementById('issueItemBtn'),cb=document.getElementById('clearScansBtn');if(!c)return;if(hardwareScannedItems.length===0){c.innerHTML='<div class="empty-scan-state"><i class="fas fa-box"></i><p>No items scanned yet</p></div>';if(ib)ib.disabled=true;if(cb)cb.style.display='none'}else{let h='',ti=0,tv=0;hardwareScannedItems.forEach((item,idx)=>{const it=item.quantity*item.unit_value;ti+=item.quantity;tv+=it;h+=`<div class="scanned-item-card success"><div class="scanned-item-info"><div class="scanned-item-name"><i class="fas fa-check-circle"></i> ${escapeHtml(item.name)}</div><div class="scanned-item-details">Property: ${escapeHtml(item.property_no||'N/A')} | Stock: ${item.available_qty} ${escapeHtml(item.uom||'pcs')} | Value: ${formatCurrency(item.unit_value)}</div></div><div class="scanned-item-qty-controls"><button class="qty-btn" onclick="decreaseHardwareQty(${idx})">−</button><input type="number" class="qty-input" value="${item.quantity}" min="1" max="${item.available_qty}" onchange="updateHardwareQty(${idx},this.value)"><button class="qty-btn" onclick="increaseHardwareQty(${idx})">+</button><button class="remove-scanned-item" onclick="removeHardwareScannedItem(${idx})"><i class="fas fa-trash"></i> Remove</button></div></div>`});h+=`<div style="margin-top:15px;padding:12px;background:#F5F5F5;border-radius:8px;text-align:right;font-weight:bold">Items: ${hardwareScannedItems.length} | Total Qty: ${ti} | Total Value: ${formatCurrency(tv)}</div>`;c.innerHTML=h;if(ib)ib.disabled=false;if(cb)cb.style.display='inline-block'}}
+function updateHardwareScannedItemsDisplay(){const c=document.getElementById('hardwareScannedItemsContainer'),ab=document.getElementById('addToCartBtn'),cb=document.getElementById('clearScansBtn');if(!c)return;if(hardwareScannedItems.length===0){c.innerHTML='<div class="empty-scan-state"><i class="fas fa-box"></i><p>No items scanned yet</p></div>';if(ab)ab.disabled=true;if(cb)cb.style.display='none'}else{let h='',ti=0,tv=0;hardwareScannedItems.forEach((item,idx)=>{const it=item.quantity*item.unit_value;ti+=item.quantity;tv+=it;h+=`<div class="scanned-item-card success"><div class="scanned-item-info"><div class="scanned-item-name"><i class="fas fa-check-circle"></i> ${escapeHtml(item.name)}</div><div class="scanned-item-details">Property: ${escapeHtml(item.property_no||'N/A')} | Stock: ${item.available_qty} ${escapeHtml(item.uom||'pcs')} | Value: ${formatCurrency(item.unit_value)}</div></div><div class="scanned-item-qty-controls"><button class="qty-btn" onclick="decreaseHardwareQty(${idx})">−</button><input type="number" class="qty-input" value="${item.quantity}" min="1" max="${item.available_qty}" onchange="updateHardwareQty(${idx},this.value)"><button class="qty-btn" onclick="increaseHardwareQty(${idx})">+</button><button class="remove-scanned-item" onclick="removeHardwareScannedItem(${idx})"><i class="fas fa-trash"></i> Remove</button></div></div>`});h+=`<div style="margin-top:15px;padding:12px;background:#F5F5F5;border-radius:8px;text-align:right;font-weight:bold">Items: ${hardwareScannedItems.length} | Total Qty: ${ti} | Total Value: ${formatCurrency(tv)}</div>`;c.innerHTML=h;if(ab)ab.disabled=false;if(cb)cb.style.display='inline-block'}}
 function increaseHardwareQty(idx){if(idx<hardwareScannedItems.length){const it=hardwareScannedItems[idx];if(it.quantity<it.available_qty){it.quantity++;updateHardwareScannedItemsDisplay()}else showScanWarning(it.name,it.available_qty)}}
 function decreaseHardwareQty(idx){if(idx<hardwareScannedItems.length&&hardwareScannedItems[idx].quantity>1){hardwareScannedItems[idx].quantity--;updateHardwareScannedItemsDisplay()}}
 function updateHardwareQty(idx,v){if(idx<hardwareScannedItems.length){const it=hardwareScannedItems[idx],nq=parseInt(v);it.quantity=isNaN(nq)||nq<1?1:nq>it.available_qty?it.available_qty:nq;updateHardwareScannedItemsDisplay()}}
 function removeHardwareScannedItem(idx){if(confirm('Remove "'+hardwareScannedItems[idx].name+'"?')){hardwareScannedItems.splice(idx,1);updateHardwareScannedItemsDisplay()}}
 function clearHardwareScans(){if(hardwareScannedItems.length>0&&confirm('Clear all '+hardwareScannedItems.length+' item(s)?')){hardwareScannedItems=[];updateHardwareScannedItemsDisplay()}}
 
-function issueHardwareScannedItems(){
-    if(hardwareScannedItems.length===0){alert('No items to issue');return}
-    const isl=document.getElementById('issued_to');if(!isl||!isl.value){alert('Please select an employee first');closeHardwareScannerModal();if(isl)isl.focus();return}
-    const pt=document.getElementById('purpose');if(!pt||!pt.value.trim()){alert('Please enter a purpose');closeHardwareScannerModal();if(pt)pt.focus();return}
-    let ac=0,sk=0;hardwareScannedItems.forEach(item=>{const ec=cartItems.find(i=>i.id==item.id);if(ec){ec.quantity=Math.min(ec.quantity+item.quantity,item.available_qty);ac++}else{const ol=cartItems.length;addToCart(item.id,item.quantity);if(cartItems.length>ol)ac++;else sk++}});
+function addHardwareScannedToCart(){
+    if(hardwareScannedItems.length===0){alert('No items to add');return}
+    let ac=0,sk=0;
+    hardwareScannedItems.forEach(item=>{
+        const ec=cartItems.find(i=>i.id==item.id);
+        if(ec){
+            const nq=Math.min(ec.quantity+item.quantity,item.available_qty);
+            if(nq!==ec.quantity){
+                ec.quantity=nq;
+                ac++;
+            } else sk++;
+        } else {
+            addToCart(item.id,item.quantity);
+            if(cartItems.find(i=>i.id==item.id)) ac++;
+            else sk++;
+        }
+    });
     closeHardwareScannerModal();
-    let msg=ac+' item(s) added.';if(sk>0)msg+='\n'+sk+' skipped.';msg+='\n\nClick "Issue Selected Items" to complete.';alert(msg);
-    const sb=document.getElementById('submitBtn');if(sb){sb.scrollIntoView({behavior:'smooth',block:'center'});sb.style.boxShadow='0 0 20px rgba(248,176,192,.8)';setTimeout(()=>sb.style.boxShadow='',2000)}
+    let msg=ac+' item(s) added to cart.';
+    if(sk>0) msg+='\n'+sk+' item(s) skipped (max stock reached).';
+    alert(msg);
+    const sb=document.getElementById('submitBtn');
+    if(sb){
+        sb.scrollIntoView({behavior:'smooth',block:'center'});
+        sb.style.boxShadow='0 0 20px rgba(248,176,192,.8)';
+        setTimeout(()=>sb.style.boxShadow='',2000);
+    }
 }
 
 document.addEventListener('DOMContentLoaded',function(){

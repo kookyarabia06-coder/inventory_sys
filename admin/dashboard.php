@@ -9,13 +9,20 @@ $root_path = dirname(__DIR__);
 // Load configuration and auth
 require_once $root_path . '/config.php';
 require_once INCLUDE_PATH . '/auth.php';
-require_once INCLUDE_PATH . '/functions.php'; // Add this for helper functions
+require_once INCLUDE_PATH . '/functions.php';
 
 // Require admin role
 requireRole('admin');
 
 $page_title = 'Admin Dashboard';
 $page_description = 'Manage inventory and track items';
+
+// Get low stock threshold from settings
+$threshold_result = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key = 'low_stock_threshold'");
+$threshold = 5; // default value
+if ($threshold_result && $threshold_result->num_rows > 0) {
+    $threshold = intval($threshold_result->fetch_assoc()['setting_value']);
+}
 
 // Initialize stats array
 $stats = [];
@@ -32,32 +39,83 @@ if ($result) {
     $stats['inventory'] = ['total_items' => 0, 'total_qty' => 0, 'total_value' => 0];
 }
 
-// Pending issues
-$result = $conn->query("SELECT COUNT(*) as count FROM equipment_issuance WHERE status = 'issued'");
-$stats['pending_issues'] = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['count'] : 0;
+// Issued items count
+$result = $conn->query("SELECT COUNT(DISTINCT inventory_id) as count FROM equipment_issuance WHERE status IN ('issued', 'pending')");
+$stats['issued_items'] = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['count'] : 0;
 
-// Low stock items
-$result = $conn->query("SELECT COUNT(*) as count FROM inventory WHERE qty_physical_count <= 5");
+// Low stock items count
+$result = $conn->query("SELECT COUNT(*) as count FROM inventory WHERE qty_physical_count <= $threshold");
 $stats['low_stock'] = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['count'] : 0;
 
-// Recent issuances
-$recent_issues = $conn->query("
-    SELECT ei.*, 
-           i.article_name,
-           CONCAT(u.firstname, ' ', u.lastname) as issued_to_name
-    FROM equipment_issuance ei
-    JOIN inventory i ON ei.inventory_id = i.id
-    JOIN users u ON ei.issued_to = u.id
-    ORDER BY ei.issued_date DESC
-    LIMIT 10
+// Total value
+$result = $conn->query("SELECT SUM(unit_value * qty_physical_count) as total FROM inventory");
+if ($result && $result->num_rows > 0) {
+    $stats['total_value'] = $result->fetch_assoc()['total'] ?? 0;
+}
+
+// Get distinct categories
+$result = $conn->query("SELECT COUNT(DISTINCT category) as count FROM inventory WHERE category IS NOT NULL AND category != ''");
+$stats['categories'] = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['count'] : 0;
+
+// Sections count
+$result = $conn->query("SELECT COUNT(*) as count FROM sections");
+$stats['sections'] = ($result && $result->num_rows > 0) ? $result->fetch_assoc()['count'] : 0;
+
+// ============================================
+// RECENT INVENTORY ADDITIONS - GROUPED BY BATCH
+// ============================================
+// Group recent items by date_added (same date/time = same batch)
+$recent_batches = $conn->query("
+    SELECT 
+        DATE_FORMAT(date_added, '%Y-%m-%d %H:%i:00') as batch_time,
+        DATE_FORMAT(date_added, '%M %d, %Y at %h:%i %p') as batch_display,
+        COUNT(*) as item_count,
+        GROUP_CONCAT(id) as item_ids,
+        MIN(date_added) as batch_date
+    FROM inventory 
+    GROUP BY DATE_FORMAT(date_added, '%Y-%m-%d %H:%i:00')
+    ORDER BY batch_date DESC
+    LIMIT 5
 ");
+
+// Get actual items for each batch (for display)
+$batch_items = [];
+if ($recent_batches && $recent_batches->num_rows > 0) {
+    while ($batch = $recent_batches->fetch_assoc()) {
+        $item_ids = explode(',', $batch['item_ids']);
+        $ids_string = implode(',', array_map('intval', $item_ids));
+        
+        $items_query = $conn->query("
+            SELECT i.*, s.name as section_name
+            FROM inventory i
+            LEFT JOIN sections s ON i.section_id = s.id
+            WHERE i.id IN ($ids_string)
+            ORDER BY i.id DESC
+            LIMIT 5
+        ");
+        
+        $items = [];
+        if ($items_query && $items_query->num_rows > 0) {
+            while ($item = $items_query->fetch_assoc()) {
+                $items[] = $item;
+            }
+        }
+        
+        $batch_items[] = [
+            'batch_time' => $batch['batch_time'],
+            'batch_display' => $batch['batch_display'],
+            'item_count' => $batch['item_count'],
+            'items' => $items
+        ];
+    }
+}
 
 // Low stock items list
 $low_stock_items = $conn->query("
-    SELECT i.*, s.name as section_name 
+    SELECT i.*, s.name as section_name
     FROM inventory i
     LEFT JOIN sections s ON i.section_id = s.id
-    WHERE i.qty_physical_count <= 5 
+    WHERE i.qty_physical_count <= $threshold 
     ORDER BY i.qty_physical_count ASC 
     LIMIT 10
 ");
@@ -67,21 +125,22 @@ include INCLUDE_PATH . '/header.php';
 
 <style>
 :root {
-    --primary: #6B8CFF;        /* Deeper Periwinkle - Main brand color */
-    --secondary: #8FB5FF;       /* Medium Blue - Secondary elements */
-    --accent: #F8B0C0;          /* Muted Pink - Highlights, buttons */
-    --accent-light: #FFD8E0;    /* Light Pink - Soft highlights */
-    --success-light: #C5E8C5;   /* Muted Mint - Success backgrounds */
-    --light: #F0F0F0;           /* Light Gray - Page background */
-    --white: #FFFFFF;           /* White - Cards, containers */
-    --border-light: #E0E0E0;    /* Light Gray for borders */
-    --text-primary: #3A3A3A;    /* Dark gray for main text */
-    --text-secondary: #6B6B6B;  /* Medium gray for secondary text */
-    --text-muted: #9E9E9E;      /* Light gray for muted text */
-    --text-light: #FFFFFF;      /* White text for dark backgrounds */
-    --success: #4CAF50;
-    --danger: #f44336;
-    --info: #8FB5FF;
+    --primary: #6B8CFF;
+    --secondary: #8FB5FF;
+    --accent: #F8B0C0;
+    --accent-light: #FFD8E0;
+    --success-light: #C5E8C5;
+    --light: #F5F7FA;
+    --white: #FFFFFF;
+    --border-light: #E2E8F0;
+    --text-primary: #1E293B;
+    --text-secondary: #475569;
+    --text-muted: #94A3B8;
+    --text-light: #FFFFFF;
+    --success: #10B981;
+    --danger: #EF4444;
+    --warning: #F59E0B;
+    --info: #3B82F6;
 }
 
 body {
@@ -92,52 +151,54 @@ body {
 /* Dashboard Cards */
 .dashboard-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
     gap: 20px;
     margin-bottom: 30px;
 }
 
 .card {
     background: var(--white);
-    border-radius: 12px;
+    border-radius: 16px;
     padding: 20px;
-    box-shadow: 0 4px 12px rgba(107, 140, 255, 0.1);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     border-left: 4px solid var(--primary);
-    transition: transform 0.2s, box-shadow 0.2s;
+    transition: all 0.2s ease;
 }
 
 .card:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 8px 20px rgba(107, 140, 255, 0.15);
+    transform: translateY(-2px);
+    box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1);
 }
 
 .card-icon {
-    width: 50px;
-    height: 50px;
+    width: 48px;
+    height: 48px;
     background: var(--accent-light);
-    border-radius: 10px;
+    border-radius: 12px;
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: 15px;
+    margin-bottom: 12px;
 }
 
 .card-icon i {
-    font-size: 24px;
+    font-size: 22px;
     color: var(--primary);
 }
 
 .card h3 {
     color: var(--text-secondary);
-    font-size: 14px;
-    margin-bottom: 5px;
+    font-size: 13px;
+    margin-bottom: 8px;
     font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 .card .card-value {
     color: var(--primary);
     font-size: 28px;
-    font-weight: bold;
+    font-weight: 700;
     margin-bottom: 5px;
 }
 
@@ -146,179 +207,209 @@ body {
     font-size: 12px;
 }
 
-/* Table Container */
-.table-container {
-    background: var(--white);
-    border-radius: 12px;
-    padding: 20px;
-    margin-bottom: 30px;
-    box-shadow: 0 4px 12px rgba(107, 140, 255, 0.1);
+.card .card-link {
+    display: inline-block;
+    margin-top: 10px;
+    color: var(--secondary);
+    font-size: 12px;
+    text-decoration: none;
 }
 
-.table-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+.card .card-link:hover {
+    color: var(--primary);
+    text-decoration: underline;
+}
+
+.text-warning {
+    color: var(--warning) !important;
+}
+
+.text-success {
+    color: var(--success) !important;
+}
+
+/* Stats Grid */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+    gap: 25px;
+    margin-bottom: 30px;
+}
+
+.stat-chart {
+    background: var(--white);
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.stat-chart h3 {
+    color: var(--primary);
+    font-size: 16px;
     margin-bottom: 20px;
-    padding-bottom: 10px;
+    padding-bottom: 12px;
     border-bottom: 2px solid var(--accent-light);
 }
 
-.table-header h2 {
-    color: var(--primary);
-    font-size: 18px;
-    margin: 0;
-}
-
-.table-header h2 i {
-    color: var(--accent);
+.stat-chart h3 i {
     margin-right: 10px;
-}
-
-.table-header p {
-    color: var(--text-muted);
-    font-size: 14px;
-    margin: 0;
-}
-
-/* Search Box */
-.search-box {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 20px;
-}
-
-.search-box input[type="text"],
-.search-box select {
-    padding: 12px 15px;
-    border: 1px solid var(--border-light);
-    border-radius: 8px;
-    font-size: 14px;
-    flex: 1;
-    transition: border-color 0.2s, box-shadow 0.2s;
-}
-
-.search-box input[type="text"]:focus,
-.search-box select:focus {
-    outline: none;
-    border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.1);
-}
-
-.search-box button {
-    padding: 12px 24px;
-    background: var(--primary);
-    color: var(--text-light);
-    border: none;
-    border-radius: 8px;
-    font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-.search-box button:hover {
-    background: #5a7ae6;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(107, 140, 255, 0.3);
+    color: var(--accent);
 }
 
 /* Table Styles */
-table {
+.stat-chart table {
     width: 100%;
     border-collapse: collapse;
 }
 
-thead tr {
-    background: linear-gradient(to right, var(--light), var(--white));
-    border-bottom: 2px solid var(--accent-light);
-}
-
-th {
-    padding: 15px 10px;
+.stat-chart th {
+    padding: 12px 8px;
     text-align: left;
-    color: var(--primary);
+    color: var(--text-secondary);
     font-weight: 600;
-    font-size: 13px;
-    white-space: nowrap;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border-light);
 }
 
-td {
-    padding: 15px 10px;
+.stat-chart td {
+    padding: 12px 8px;
     border-bottom: 1px solid var(--border-light);
     color: var(--text-secondary);
     font-size: 13px;
+    vertical-align: top;
 }
 
-tr:hover {
+.stat-chart tr:hover {
     background-color: var(--light);
 }
 
-tr.stock-alert-row {
-    background-color: white;
+/* Batch Card Styles */
+.batch-card {
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    margin-bottom: 20px;
+    overflow: hidden;
 }
 
-tr.stock-alert-row:hover {
-     background-color: #f0c0d0;
+.batch-header {
+    background: linear-gradient(135deg, var(--accent-light) 0%, #ffe4ec 100%);
+    padding: 12px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.batch-header:hover {
+    background: linear-gradient(135deg, #ffe0e8 0%, #ffd8e4 100%);
+}
+
+.batch-header strong {
+    color: var(--primary);
+    font-size: 14px;
+}
+
+.batch-header .badge {
+    background: var(--primary);
+    color: white;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+}
+
+.batch-content {
+    padding: 0;
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+}
+
+.batch-content.expanded {
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+.batch-content table {
+    width: 100%;
+    margin: 0;
+}
+
+.batch-content table td {
+    padding: 10px 12px;
+}
+
+.batch-toggle-icon {
+    transition: transform 0.2s;
+}
+
+.batch-toggle-icon.rotated {
+    transform: rotate(90deg);
+}
+
+/* Badges */
+.badge {
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    display: inline-block;
+}
+
+.badge-danger {
+    background-color: #FEF2F2;
+    color: var(--danger);
+}
+
+.badge-warning {
+    background-color: #FEF3C7;
+    color: var(--warning);
+}
+
+.badge-success {
+    background-color: #ECFDF5;
+    color: var(--success);
+}
+
+.badge-info {
+    background-color: #EFF6FF;
+    color: var(--info);
+}
+
+.badge-primary {
+    background-color: var(--primary);
+    color: white;
 }
 
 /* Action Buttons */
 .action-buttons {
     display: flex;
-    gap: 5px;
-    flex-wrap: wrap;
+    gap: 6px;
 }
 
 .action-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 32px;
-    border-radius: 6px;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
     border: none;
     color: var(--text-light);
     text-decoration: none;
     transition: all 0.2s;
     cursor: pointer;
-    font-size: 14px;
+    font-size: 12px;
 }
 
-.action-btn.edit { background-color: var(--secondary); }
 .action-btn.view { background-color: var(--primary); }
-.action-btn.delete { background-color: var(--danger); }
-.action-btn.success { background-color: var(--success); }
+.action-btn.edit { background-color: var(--secondary); }
 
 .action-btn:hover {
     transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-}
-
-.action-btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-    transform: none;
-}
-
-/* Badges */
-.badge-warning {
-    background-color: var(--secondary);
-    color: var(--text-primary);
-    padding: 4px 10px;
-    border-radius: 20px;
-    font-size: 11px;
-    font-weight: 600;
-    display: inline-block;
-}
-
-.badge-success {
-    background-color: var(--success-light);
-    color: var(--success);
-    padding: 4px 10px;
-    border-radius: 20px;
-    font-size: 11px;
-    font-weight: 600;
-    display: inline-block;
+    filter: brightness(0.95);
 }
 
 /* Button Styles */
@@ -329,8 +420,8 @@ tr.stock-alert-row:hover {
     gap: 8px;
     padding: 8px 16px;
     border: none;
-    border-radius: 6px;
-    font-size: 13px;
+    border-radius: 10px;
+    font-size: 12px;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.2s;
@@ -338,14 +429,13 @@ tr.stock-alert-row:hover {
 }
 
 .btn-primary {
-    background-color: var(--accent);
+    background: linear-gradient(135deg, var(--accent) 0%, #e69eb0 100%);
     color: var(--text-primary);
 }
 
 .btn-primary:hover {
-    background-color: #e69eb0;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(248, 176, 192, 0.3);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(248, 176, 192, 0.4);
 }
 
 .btn-secondary {
@@ -355,684 +445,300 @@ tr.stock-alert-row:hover {
 
 .btn-secondary:hover {
     background-color: #7a9fe6;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(143, 181, 255, 0.3);
 }
 
-.btn-info {
-    background-color: var(--info);
-    color: var(--text-light);
-}
-
-.btn-info:hover {
-    background-color: #7a9fe6;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(143, 181, 255, 0.3);
-}
-
-.btn-xs {
-    padding: 4px 8px;
+.btn-sm {
+    padding: 6px 12px;
     font-size: 11px;
-    border-radius: 4px;
-    background-color: var(--secondary);
-    color: var(--text-light);
-    border: none;
-    cursor: pointer;
 }
 
-.btn-xs:hover {
-    background-color: #7a9fe6;
+/* Condition Badge */
+.condition-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
 }
 
-/* Modal Styles */
-.modal {
-    display: none;
-    position: fixed;
-    z-index: 1000;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-    background-color: rgba(0,0,0,0.5);
-    backdrop-filter: blur(3px);
-}
+.condition-good { background: #DBEAFE; color: #2563EB; }
+.condition-new { background: #D1FAE5; color: #059669; }
+.condition-fair { background: #FEF3C7; color: #D97706; }
+.condition-poor { background: #FEE2E2; color: #DC2626; }
 
-.modal-content {
-    background: var(--white);
-    margin: 5% auto;
-    border-radius: 12px;
-    box-shadow: 0 10px 30px rgba(107, 140, 255, 0.2);
-    position: relative;
-    animation: modalSlideIn 0.3s;
-}
-
-@keyframes modalSlideIn {
-    from {
-        transform: translateY(-30px);
-        opacity: 0;
-    }
-    to {
-        transform: translateY(0);
-        opacity: 1;
-    }
-}
-
-.modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px 25px;
-    border-bottom: 2px solid var(--accent-light);
-}
-
-.modal-header h2 {
-    color: var(--primary);
-    font-size: 20px;
-    margin: 0;
-}
-
-.modal-close {
-    font-size: 28px;
-    font-weight: bold;
-    cursor: pointer;
-    color: var(--text-muted);
-    transition: color 0.2s;
-}
-
-.modal-close:hover {
-    color: var(--accent);
-}
-
-.modal-body {
-    padding: 25px;
-    max-height: calc(90vh - 150px);
-    overflow-y: auto;
-}
-
-.modal-footer {
-    padding: 15px 25px;
-    border-top: 1px solid var(--border-light);
-    text-align: right;
-    background: var(--light);
-    border-radius: 0 0 12px 12px;
-}
-
-/* Form Section */
-.form-section {
-    background: var(--white);
-    padding: 20px;
-    margin-bottom: 25px;
-    border-radius: 10px;
-    border-left: 4px solid var(--primary);
-    box-shadow: 0 2px 8px rgba(107, 140, 255, 0.1);
-}
-
-.form-section h3 {
-    color: var(--primary);
-    margin-bottom: 20px;
-    font-size: 16px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid var(--accent-light);
-}
-
-.form-section h3 i {
-    color: var(--accent);
-    margin-right: 10px;
-}
-
-.form-group {
-    margin-bottom: 20px;
-}
-
-.form-group label {
-    display: block;
-    margin-bottom: 8px;
-    color: var(--text-secondary);
-    font-weight: 500;
-    font-size: 14px;
-}
-
-.form-control {
-    width: 100%;
-    padding: 10px 12px;
-    border: 1px solid var(--border-light);
-    border-radius: 8px;
-    font-size: 14px;
-    color: var(--text-primary);
-    transition: border-color 0.2s, box-shadow 0.2s;
-}
-
-.form-control:focus {
-    outline: none;
-    border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.1);
-}
-
-.form-control[readonly], .form-control[disabled] {
-    background-color: var(--light);
-    color: var(--text-secondary);
-    cursor: not-allowed;
-}
-
-.form-row {
-    display: flex;
-    gap: 15px;
-    margin-bottom: 15px;
-}
-
-.form-row .form-group {
-    flex: 1;
-}
-
-.form-text {
+/* Property Number */
+.property-no {
+    font-family: monospace;
     font-size: 12px;
-    color: var(--text-muted);
-    margin-top: 5px;
-}
-
-/* Barcode Preview Grid */
-.barcode-preview-grid,
-.all-barcodes-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 15px;
-    margin: 15px 0;
-    padding: 15px;
-    background: var(--light);
-    border-radius: 8px;
-    max-height: 400px;
-    overflow-y: auto;
-}
-
-.barcode-preview-card,
-.barcode-item-card {
-    background: var(--white);
-    border: 1px solid var(--border-light);
-    border-radius: 8px;
-    padding: 15px;
-    text-align: center;
-    transition: all 0.2s;
-}
-
-.barcode-preview-card:hover,
-.barcode-item-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(107, 140, 255, 0.15);
-    border-color: var(--primary);
-}
-
-.barcode-preview-card .item-number,
-.barcode-item-card .item-property {
-    font-weight: bold;
-    color: var(--primary);
-    margin-bottom: 10px;
-    font-size: 13px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--accent-light);
-}
-
-.barcode-img {
-    margin: 10px 0;
-    padding: 10px;
-    background: var(--white);
-}
-
-.barcode-img img {
-    max-width: 100%;
-    height: auto;
-}
-
-.barcode-value {
-    font-family: monospace;
-    font-size: 11px;
-    color: var(--text-secondary);
-    margin-top: 8px;
-    word-break: break-all;
-}
-
-/* Barcode Detail Item */
-.barcode-detail-item {
-    margin: 15px 0;
-    padding: 20px;
-    background: var(--light);
-    border-radius: 8px;
-    border-left: 4px solid var(--accent);
-}
-
-.barcode-detail-item .barcode-label {
-    font-weight: bold;
-    color: var(--primary);
-    margin-bottom: 10px;
-}
-
-.barcode-detail-item .barcode-image {
-    text-align: center;
-    padding: 15px;
-    background: var(--white);
-    border-radius: 5px;
-}
-
-.barcode-detail-item .barcode-image img {
-    max-width: 100%;
-    height: auto;
-    max-height: 60px;
-}
-
-.barcode-detail-item .barcode-value {
-    font-family: monospace;
-    text-align: center;
-    margin-top: 10px;
-    color: var(--accent);
-}
-
-/* Alert Styles */
-.alert {
-    padding: 15px 20px;
-    border-radius: 8px;
-    margin-bottom: 20px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    border-left: 4px solid transparent;
-}
-
-.alert i {
-    font-size: 18px;
-}
-
-.alert-success {
-    background-color: var(--success-light);
-    color: var(--success);
-    border-left-color: var(--success);
-}
-
-.alert-danger {
-    background-color: #ffebee;
-    color: var(--danger);
-    border-left-color: var(--danger);
-}
-
-/* Loading Indicator */
-.loading,
-.loading-spinner {
-    text-align: center;
-    padding: 30px;
-    color: var(--text-muted);
-}
-
-.loading i,
-.loading-spinner i {
-    font-size: 32px;
-    margin-bottom: 15px;
-    color: var(--primary);
+    font-weight: 500;
 }
 
 /* Text Utilities */
-.text-muted {
-    color: var(--text-muted) !important;
-}
-
-.text-danger {
-    color: var(--danger) !important;
-}
-
-.text-info {
-    color: var(--info) !important;
-}
-
 .text-center {
     text-align: center;
 }
 
+.text-muted {
+    color: var(--text-muted) !important;
+}
+
 .mt-3 {
-    margin-top: 15px;
+    margin-top: 16px;
 }
 
-/* Form Check */
-.form-check {
-    margin-bottom: 10px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
+.mb-2 {
+    margin-bottom: 8px;
 }
 
-.form-check-input {
-    width: 18px;
-    height: 18px;
-    cursor: pointer;
-    accent-color: var(--accent);
-}
-
-.form-check-label {
-    font-size: 14px;
-    cursor: pointer;
-}
-
-/* Pagination Styles */
-.pagination {
-    display: flex;
-    justify-content: center;
-    gap: 5px;
-    margin-top: 30px;
-}
-
-.pagination a,
-.pagination span {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 35px;
-    height: 35px;
-    padding: 0 8px;
-    border-radius: 6px;
-    background: var(--white);
-    color: var(--text-secondary);
-    text-decoration: none;
-    border: 1px solid var(--border-light);
-    transition: all 0.2s;
-}
-
-.pagination a:hover {
-    background: var(--primary);
-    color: var(--text-light);
-    border-color: var(--primary);
-}
-
-.pagination .active {
-    background: var(--primary);
-    color: var(--text-light);
-    border-color: var(--primary);
-}
-
-/* Responsive Design */
+/* Responsive */
 @media (max-width: 768px) {
     .dashboard-cards {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+    }
+    
+    .stats-grid {
         grid-template-columns: 1fr;
     }
     
-    .search-box {
-        flex-direction: column;
+    .stat-chart table,
+    .stat-chart thead,
+    .stat-chart tbody,
+    .stat-chart th,
+    .stat-chart td,
+    .stat-chart tr {
+        display: block;
     }
     
-    .form-row {
-        flex-direction: column;
-        gap: 0;
+    .stat-chart thead tr {
+        display: none;
     }
     
-    .action-buttons {
-        justify-content: flex-start;
+    .stat-chart tr {
+        margin-bottom: 15px;
+        border: 1px solid var(--border-light);
+        border-radius: 8px;
+        padding: 10px;
     }
     
-    .modal-content {
-        margin: 20px;
-        width: auto;
+    .stat-chart td {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px;
+        border-bottom: 1px solid var(--border-light);
     }
     
-    .barcode-preview-grid,
-    .all-barcodes-grid {
-        grid-template-columns: 1fr;
+    .stat-chart td:before {
+        content: attr(data-label);
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-right: 10px;
     }
 }
 </style>
 
+<!-- Display Success/Error Messages -->
+<?php if (isset($_SESSION['success'])): ?>
+    <div class="alert alert-success"><?php echo $_SESSION['success']; unset($_SESSION['success']); ?></div>
+<?php endif; ?>
+
+<?php if (isset($_SESSION['error'])): ?>
+    <div class="alert alert-danger"><?php echo $_SESSION['error']; unset($_SESSION['error']); ?></div>
+<?php endif; ?>
+
 <!-- Statistics Cards -->
 <div class="dashboard-cards">
     <div class="card">
-        <div class="card-icon">
-            <i class="fas fa-boxes"></i>
-        </div>
+        <div class="card-icon"><i class="fas fa-boxes"></i></div>
         <h3>Total Items</h3>
         <div class="card-value"><?php echo number_format($stats['inventory']['total_items'] ?? 0); ?></div>
-        
+        <div class="card-label">Different inventory items</div>
+        <a href="<?php echo SITE_URL; ?>/admin/all_inventory.php" class="card-link">View All →</a>
     </div>
     
     <div class="card">
-        <div class="card-icon">
-            <i class="fas fa-hand-holding"></i>
-        </div>
+        <div class="card-icon"><i class="fas fa-hand-holding"></i></div>
         <h3>Issued Items</h3>
-        <div class="card-value"><?php echo $stats['pending_issues']; ?></div>
-       
+        <div class="card-value"><?php echo number_format($stats['issued_items']); ?></div>
+        <div class="card-label">Currently issued</div>
+        <a href="<?php echo SITE_URL; ?>/admin/issued_items.php" class="card-link">View Issued →</a>
     </div>
     
     <div class="card">
-        <div class="card-icon">
-            <i class="fas fa-exclamation-triangle"></i>
+        <div class="card-icon"><i class="fas fa-exclamation-triangle"></i></div>
+        <h3>Low Stock Items</h3>
+        <div class="card-value <?php echo $stats['low_stock'] > 0 ? 'text-warning' : 'text-success'; ?>">
+            <?php echo number_format($stats['low_stock']); ?>
         </div>
-        <h3>Low Stock</h3>
-        <div class="card-value text-warning"><?php echo $stats['low_stock']; ?></div>
-       
+        <div class="card-label">Below <?php echo $threshold; ?> units</div>
+        <a href="<?php echo SITE_URL; ?>/admin/all_inventory.php?low_stock=1" class="card-link">View Alerts →</a>
     </div>
     
     <div class="card">
-        <div class="card-icon">
-            <i class="fas fa-peso-sign"></i>
-        </div>
+        <div class="card-icon"><i class="fas fa-dollar-sign"></i></div>
         <h3>Total Value</h3>
-        <div class="card-value"><?php echo formatCurrency($stats['inventory']['total_value'] ?? 0); ?></div>
-        
+        <div class="card-value">₱<?php echo number_format($stats['total_value'], 2); ?></div>
+        <div class="card-label">Inventory value</div>
     </div>
 </div>
 
-
-
 <div class="stats-grid">
-    <!-- Recent Issuances -->
-    <div class="stat-chart">
-        <h3><i class="fas fa-hand-holding"></i> Recent Issuances</h3>
-        <table style="width: 100%;">
-            <thead>
-                <tr>
-                    <th>Item</th>
-                    <th>Issued To</th>
-                    <th>Date</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php if ($recent_issues && $recent_issues->num_rows > 0): ?>
-                    <?php while($issue = $recent_issues->fetch_assoc()): ?>
-                    <tr>
-                        <td><?php echo htmlspecialchars($issue['article_name']); ?></td>
-                        <td><?php echo htmlspecialchars($issue['issued_to_name']); ?></td>
-                        <td><?php echo date('M d, Y', strtotime($issue['issued_date'])); ?></td>
-                        <td><?php echo getStatusBadge($issue['status']); ?></td>
-                    </tr>
-                    <?php endwhile; ?>
-                <?php else: ?>
-                    <tr>
-                        <td colspan="4" class="text-center">No recent issuances</td>
-                    </tr>
-                <?php endif; ?>
-            </tbody>
-        </table>
-    </div>
-    
     <!-- Low Stock Alerts -->
     <div class="stat-chart">
-        <h3><i class="fas fa-exclamation-triangle text-warning"></i> Low Stock Alerts</h3>
+        <h3><i class="fas fa-exclamation-triangle text-warning"></i> Low Stock Alerts (Threshold: <?php echo $threshold; ?> units)</h3>
         <?php if ($low_stock_items && $low_stock_items->num_rows > 0): ?>
-            <table style="width: 100%;">
+            <table>
                 <thead>
                     <tr>
-                        <th>Item</th>
-                        <th>Qty</th>
+                        <th>Item Name</th>
+                        <th>Property No.</th>
+                        <th>Current Qty</th>
                         <th>Location</th>
+                        <th>Action</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php while($item = $low_stock_items->fetch_assoc()): ?>
-                    <tr class="<?php echo $item['qty_physical_count'] <= 2 ? 'stock-alert-row' : ''; ?>">
-                        <td>
+                    <tr>
+                        <td data-label="Item Name">
                             <strong><?php echo htmlspecialchars($item['article_name']); ?></strong>
-                            <br><small><?php echo htmlspecialchars($item['property_no'] ?? ''); ?></small>
+                            <br><small class="text-muted"><?php echo htmlspecialchars($item['category'] ?? 'Uncategorized'); ?></small>
                         </td>
-                        <td>
-                            <span class="badge badge-danger"><?php echo $item['qty_physical_count']; ?></span>
+                        <td data-label="Property No" class="property-no"><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></td>
+                        <td data-label="Current Qty">
+                            <span class="badge <?php echo $item['qty_physical_count'] <= 2 ? 'badge-danger' : 'badge-warning'; ?>">
+                                <?php echo $item['qty_physical_count']; ?> <?php echo htmlspecialchars($item['uom']); ?>
+                            </span>
                         </td>
-                        <td><?php echo htmlspecialchars($item['section_name'] ?? 'N/A'); ?></td>
-                    </tr>
+                        <td data-label="Location"><?php echo htmlspecialchars($item['section_name'] ?? 'N/A'); ?></td>
+                        <td data-label="Action">
+                            <div class="action-buttons">
+                                <a href="<?php echo SITE_URL; ?>/admin/all_inventory.php?edit=<?php echo $item['id']; ?>" class="action-btn edit" title="Edit">
+                                    <i class="fas fa-edit"></i>
+                                </a>
+                            </div>
+                        </td>
+                    </td>
                     <?php endwhile; ?>
                 </tbody>
             </table>
+            <div class="text-center mt-3">
+                <a href="<?php echo SITE_URL; ?>/admin/all_inventory.php?low_stock=1" class="btn btn-secondary btn-sm">
+                    View All Low Stock Items (<?php echo $stats['low_stock']; ?>) →
+                </a>
+            </div>
         <?php else: ?>
             <p class="text-center text-success">
-                <i class="fas fa-check-circle"></i> All items have sufficient stock
+                <i class="fas fa-check-circle"></i> All items have sufficient stock (above <?php echo $threshold; ?> units)
             </p>
+        <?php endif; ?>
+    </div>
+    
+    <!-- Recent Inventory Additions - GROUPED BY BATCH -->
+    <div class="stat-chart">
+        <h3><i class="fas fa-plus-circle"></i> Recent Inventory Additions (By Batch)</h3>
+        <?php if (!empty($batch_items)): ?>
+            <?php foreach ($batch_items as $index => $batch): ?>
+            <div class="batch-card">
+                <div class="batch-header" onclick="toggleBatch(<?php echo $index; ?>)">
+                    <div>
+                        <i class="fas fa-clock batch-toggle-icon" id="batch-icon-<?php echo $index; ?>"></i>
+                        <strong><?php echo htmlspecialchars($batch['batch_display']); ?></strong>
+                    </div>
+                    <span class="badge badge-primary"><?php echo $batch['item_count']; ?> item(s)</span>
+                </div>
+                <div class="batch-content" id="batch-content-<?php echo $index; ?>">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Item Name</th>
+                                <th>Property No.</th>
+                                <th>Qty</th>
+                                <th>Location</th>
+                                <th>Condition</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($batch['items'] as $item): ?>
+                            <tr>
+                                <td data-label="Item Name">
+                                    <strong><?php echo htmlspecialchars($item['article_name']); ?></strong>
+                                    <br><small class="text-muted"><?php echo htmlspecialchars($item['category'] ?? 'Uncategorized'); ?></small>
+                                </td>
+                                <td data-label="Property No" class="property-no"><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></td>
+                                <td data-label="Qty"><?php echo $item['qty_physical_count']; ?> <?php echo htmlspecialchars($item['uom']); ?></td>
+                                <td data-label="Location"><?php echo htmlspecialchars($item['section_name'] ?? 'N/A'); ?></td>
+                                <td data-label="Condition">
+                                    <?php
+                                    $condition = strtolower($item['condition_text'] ?? 'good');
+                                    $condition_class = 'condition-good';
+                                    if ($condition == 'new') $condition_class = 'condition-new';
+                                    elseif ($condition == 'good') $condition_class = 'condition-good';
+                                    elseif ($condition == 'fair') $condition_class = 'condition-fair';
+                                    elseif ($condition == 'poor') $condition_class = 'condition-poor';
+                                    ?>
+                                    <span class="condition-badge <?php echo $condition_class; ?>">
+                                        <?php echo htmlspecialchars($item['condition_text'] ?? 'Good'); ?>
+                                    </span>
+                                </td>
+                                <td data-label="Action">
+                                    <div class="action-buttons">
+                                        <a href="<?php echo SITE_URL; ?>/admin/all_inventory.php?view=<?php echo $item['id']; ?>" class="action-btn view" title="View">
+                                            <i class="fas fa-eye"></i>
+                                        </a>
+                                        <a href="<?php echo SITE_URL; ?>/admin/all_inventory.php?edit=<?php echo $item['id']; ?>" class="action-btn edit" title="Edit">
+                                            <i class="fas fa-edit"></i>
+                                        </a>
+                                    </div>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <?php endforeach; ?>
+            <div class="text-center mt-3">
+                <a href="<?php echo SITE_URL; ?>/admin/all_inventory.php" class="btn btn-secondary btn-sm">
+                    View All Inventory (<?php echo number_format($stats['inventory']['total_items'] ?? 0); ?> items) →
+                </a>
+            </div>
+        <?php else: ?>
+            <p class="text-center text-muted">
+                <i class="fas fa-inbox"></i> No inventory items found
+            </p>
+            <div class="text-center mt-3">
+                <a href="<?php echo SITE_URL; ?>/admin/add_inventory.php" class="btn btn-primary btn-sm">
+                    <i class="fas fa-plus"></i> Add Your First Item
+                </a>
+            </div>
         <?php endif; ?>
     </div>
 </div>
 
-<!-- Recent Orders -->
-<div class="table-container">
-    <div class="table-header">
-        <h2>Recent Orders</h2>
-        <a href="<?php echo SITE_URL; ?>/admin/issue_items.php" class="btn btn-sm btn-primary">View All</a>
-    </div>
-    
-    <table>
-        <thead>
-            <tr>
-                <th>SI No</th>
-                <th>Product Name</th>
-                <th>P. Price</th>
-                <th>Quantity</th>
-                <th>Total</th>
-                <th>Payment</th>
-                <th>Status</th>
-                <th>Action</th>
-            </tr>
-        </thead>
-        <tbody>
-            <?php
-            $sample_orders = $conn->query("
-                SELECT ei.*, i.article_name, i.unit_value,
-                       CONCAT(u.firstname, ' ', u.lastname) as customer
-                FROM equipment_issuance ei
-                JOIN inventory i ON ei.inventory_id = i.id
-                JOIN users u ON ei.issued_to = u.id
-                ORDER BY ei.issued_date DESC
-                LIMIT 5
-            ");
-            
-            if ($sample_orders && $sample_orders->num_rows > 0):
-                $count = 1;
-                while($order = $sample_orders->fetch_assoc()):
-            ?>
-            <tr>
-                <td><?php echo str_pad($count++, 2, '0', STR_PAD_LEFT); ?></td>
-                <td>
-                    <strong><?php echo htmlspecialchars($order['article_name']); ?></strong>
-                    <br><small><?php echo htmlspecialchars($order['customer']); ?></small>
-                </td>
-                <td><?php echo formatCurrency($order['unit_value']); ?></td>
-                <td><?php echo $order['quantity_issued']; ?></td>
-                <td><?php echo formatCurrency($order['unit_value'] * $order['quantity_issued']); ?></td>
-                <td>COO</td>
-                <td><?php echo getStatusBadge($order['status']); ?></td>
-                <td>
-                    <button class="btn btn-sm btn-primary" onclick="viewOrder(<?php echo $order['id']; ?>)">
-                        <i class="fas fa-eye"></i>
-                    </button>
-                </td>
-            </tr>
-            <?php 
-                endwhile;
-            else:
-            ?>
-            <tr>
-                <td colspan="8" class="text-center">No orders found</td>
-            </tr>
-            <?php endif; ?>
-        </tbody>
-    </table>
-</div>
-
-
 <script>
-function viewOrder(orderId) {
-    ajaxRequest('<?php echo SITE_URL; ?>/api/get_order_details.php?id=' + orderId, 'GET', null, function(err, response) {
-        if (!err && response) {
-            let content = `
-                <div style="margin-bottom: 20px;">
-                    <h3>Order #${response.id}</h3>
-                    <table style="width: 100%;">
-                        <tr><td><strong>Item:</strong></td><td>${response.article_name}</td></tr>
-                        <tr><td><strong>Customer:</strong></td><td>${response.customer}</td></tr>
-                        <tr><td><strong>Quantity:</strong></td><td>${response.quantity_issued}</td></tr>
-                        <tr><td><strong>Unit Price:</strong></td><td>${formatCurrency(response.unit_value)}</td></tr>
-                        <tr><td><strong>Total:</strong></td><td>${formatCurrency(response.unit_value * response.quantity_issued)}</td></tr>
-                        <tr><td><strong>Issue Date:</strong></td><td>${formatDate(response.issued_date)}</td></tr>
-                        <tr><td><strong>Status:</strong></td><td>${response.status}</td></tr>
-                        <tr><td><strong>Purpose:</strong></td><td>${response.purpose || 'N/A'}</td></tr>
-                    </table>
-                </div>
-            `;
-            showModal('Order Details', content);
-        } else {
-            alert('Error loading order details');
-        }
-    });
-}
-
-// Helper functions (if not already defined)
-function formatCurrency(amount) {
-    return '₱' + parseFloat(amount).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,');
-}
-
-function formatDate(dateString) {
-    if (!dateString) return 'N/A';
-    let date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-}
-
-function showModal(title, content) {
-    // Create modal if it doesn't exist
-    let modal = document.getElementById('dynamic-modal');
-    if (!modal) {
-        modal = document.createElement('div');
-        modal.id = 'dynamic-modal';
-        modal.className = 'modal';
-        modal.innerHTML = `
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h2 id="modal-title"></h2>
-                    <span class="modal-close" onclick="document.getElementById('dynamic-modal').style.display='none'">&times;</span>
-                </div>
-                <div class="modal-body" id="modal-body"></div>
-            </div>
-        `;
-        document.body.appendChild(modal);
+// Toggle batch content
+function toggleBatch(index) {
+    const content = document.getElementById('batch-content-' + index);
+    const icon = document.getElementById('batch-icon-' + index);
+    
+    if (content.classList.contains('expanded')) {
+        content.classList.remove('expanded');
+        icon.classList.remove('rotated');
+    } else {
+        content.classList.add('expanded');
+        icon.classList.add('rotated');
     }
-    
-    document.getElementById('modal-title').textContent = title;
-    document.getElementById('modal-body').innerHTML = content;
-    modal.style.display = 'block';
 }
 
-function ajaxRequest(url, method, data, callback) {
-    let xhr = new XMLHttpRequest();
-    xhr.open(method, url, true);
-    xhr.setRequestHeader('Content-Type', 'application/json');
-    xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-    
-    xhr.onreadystatechange = function() {
-        if (xhr.readyState === 4) {
-            if (xhr.status === 200) {
-                try {
-                    let response = JSON.parse(xhr.responseText);
-                    callback(null, response);
-                } catch (e) {
-                    callback(e, null);
-                }
-            } else {
-                callback(new Error('Request failed with status ' + xhr.status), null);
-            }
-        }
-    };
-    
-    xhr.send(data ? JSON.stringify(data) : null);
-}
+// Auto-expand the first batch by default
+document.addEventListener('DOMContentLoaded', function() {
+    if (document.getElementById('batch-content-0')) {
+        toggleBatch(0);
+    }
+});
 </script>
 
 <?php include INCLUDE_PATH . '/footer.php'; ?>

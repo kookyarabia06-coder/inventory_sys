@@ -20,7 +20,7 @@ require_once $root_path . '/vendor/autoload.php';
 use Picqer\Barcode\BarcodeGeneratorPNG;
 
 /// Require admin role
-requireRole('admin');
+requireRole('admin' || 'superadmin' || 'supply');
 
 // Generate CSRF token if not exists
 if (empty($_SESSION['csrf_token'])) {
@@ -392,7 +392,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     // Supplier Information
     $supplier = sanitize($_POST['supplier'] ?? '');
     $ref_po_number = sanitize($_POST['ref_po_number'] ?? '');
-    $delivery_date = !empty($_POST['delivery_date']) ? sanitize($_POST['delivery_date']) : null;
+     $delivery_date = !empty($_POST['delivery_date']) ? sanitize($_POST['delivery_date']) : null;
     
     // Set year_acquired
     $year_acquired = date('Y');
@@ -616,12 +616,26 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     }
     
     $stmt->bind_param(
-        "sssddi i i i s s s s s s s s s i",
-        $article_name, $description, $uom, $quantity, $unit_value,
-        $equipment_id, $type_equipment_id, $equipment_sub_type_id, $condition_text,
-        $fund_cluster, $certified_correct, $approved_by, $verified_by,
-        $supplier, $ref_po_number, $delivery_date,
-        $remarks, $barcode_data, $id
+        "sssddiiissssssssssi",
+        $article_name,
+        $description,
+        $uom,
+        $quantity,
+        $unit_value,
+        $equipment_id,
+        $type_equipment_id,
+        $equipment_sub_type_id,
+        $condition_text,
+        $fund_cluster,
+        $certified_correct,
+        $approved_by,
+        $verified_by,
+        $supplier,
+        $ref_po_number,
+        $delivery_date,
+        $remarks,
+        $barcode_data,
+        $id
     );
     
     if ($stmt->execute()) {
@@ -899,6 +913,8 @@ body {
     margin-bottom: 20px;
     padding-bottom: 10px;
     border-bottom: 2px solid var(--accent-light);
+    flex-wrap: wrap;
+    gap: 10px;
 }
 
 .table-header h2 {
@@ -959,9 +975,15 @@ body {
     box-shadow: 0 4px 12px rgba(107, 140, 255, 0.3);
 }
 
+.table-wrapper {
+    overflow-x: auto;
+    width: 100%;
+}
+
 table {
     width: 100%;
     border-collapse: collapse;
+    min-width: 1200px;
 }
 
 thead tr {
@@ -983,18 +1005,61 @@ td {
     border-bottom: 1px solid var(--border-light);
     color: var(--text-secondary);
     font-size: 13px;
+    white-space: normal;
+    word-wrap: break-word;
+    max-width: 250px;
 }
 
-tr:hover {
+tr:hover td {
     background-color: var(--light);
 }
 
 tr.stock-alert-row {
-    background-color: white;
+    background-color: #FFF3E0;
+}
+tr.stock-alert-row:hover td {
+    background-color: #ffe0b2;
 }
 
-tr.stock-alert-row:hover {
-    background-color: #f0c0d0;
+/* Article name column styling */
+.article-name-cell strong {
+    color: var(--text-primary);
+}
+.article-name-cell small {
+    font-size: 11px;
+    color: var(--text-muted);
+    display: block;
+    margin-top: 4px;
+}
+
+/* Category column styling */
+.category-cell {
+    line-height: 1.4;
+}
+.category-cell small {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+/* Badge styles */
+.badge-warning {
+    background-color: var(--secondary);
+    color: var(--text-primary);
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    display: inline-block;
+}
+
+.badge-success {
+    background-color: var(--success-light);
+    color: var(--success);
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    display: inline-block;
 }
 
 .action-buttons {
@@ -1032,26 +1097,6 @@ tr.stock-alert-row:hover {
     opacity: 0.6;
     cursor: not-allowed;
     transform: none;
-}
-
-.badge-warning {
-    background-color: var(--secondary);
-    color: var(--text-primary);
-    padding: 4px 10px;
-    border-radius: 20px;
-    font-size: 11px;
-    font-weight: 600;
-    display: inline-block;
-}
-
-.badge-success {
-    background-color: var(--success-light);
-    color: var(--success);
-    padding: 4px 10px;
-    border-radius: 20px;
-    font-size: 11px;
-    font-weight: 600;
-    display: inline-block;
 }
 
 .btn {
@@ -1248,10 +1293,12 @@ tr.stock-alert-row:hover {
     display: flex;
     gap: 15px;
     margin-bottom: 15px;
+    flex-wrap: wrap;
 }
 
 .form-row .form-group {
     flex: 1;
+    min-width: 150px;
 }
 
 .form-text {
@@ -1808,127 +1855,130 @@ tr.stock-alert-row:hover {
         <p>Showing <?php echo $uniqueCount; ?> of <?php echo $total_rows; ?> items</p>
     </div>
     
-    <table>
-        <thead>
-            <tr>
-                <th>Article Name</th>
-                <th>Property No.</th>
-                <th>Category/Type</th>
-                <th>Quantity</th>
-                <th>Unit Value</th>
-                <th>Supplier</th>
-                <th>PO Number</th>
-                <th>Fund Cluster</th>
-                <th>Condition</th>
-                <th>Status</th>
-                <th>Barcode</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            <?php if (count($ppe_items) > 0): ?>
-                <?php
-                $shown = [];
-                foreach ($ppe_items as $item):
-                    $base = preg_replace('/-\d+$/', '', $item['property_no']);
-                    if (isset($shown[$base])) continue;
-                    $shown[$base] = true;
-                ?>
-                <tr class="<?php echo $item['qty_physical_count'] <= 5 ? 'stock-alert-row' : ''; ?>">
-                    <td>
-                        <strong><?php echo htmlspecialchars($item['article_name']); ?></strong>
-                        <?php if ($item['description']): ?>
-                        <br><small><?php echo htmlspecialchars(substr($item['description'], 0, 50) . (strlen($item['description']) > 50 ? '...' : '')); ?></small>
-                        <?php endif; ?>
-                    </div>
-                    </td>
-                    <td><?php echo htmlspecialchars($item['property_no']); ?></div>
-                    <td>
-                        <?php 
-                        if ($item['type_equipment_name']):
-                            echo htmlspecialchars($item['type_equipment_name']);
-                            if ($item['sub_type_name']):
-                                echo '<br><small>' . htmlspecialchars($item['sub_type_name']) . '</small>';
-                            endif;
-                        else:
-                            echo htmlspecialchars($item['category']);
-                        endif;
-                        ?>
-                    </div>
-                    <td><?php echo $item['total_qty'] . ' ' . $item['uom']; ?></div>
-                    <td><?php echo formatCurrency($item['unit_value']); ?></div>
-                    <td><?php echo htmlspecialchars($item['supplier'] ?? 'N/A'); ?></div>
-                    <td><?php echo htmlspecialchars($item['ref_po_number'] ?? 'N/A'); ?></div>
-                    <td><?php echo htmlspecialchars($item['fund_cluster'] ?? 'N/A'); ?></div>
-                    <td><?php echo htmlspecialchars($item['condition_text'] ?? 'Good'); ?></div>
-                    <td>
-                        <?php if ($item['is_issued'] > 0): ?>
-                            <span class="badge-warning">Issued</span>
-                        <?php else: ?>
-                            <span class="badge-success">Available</span>
-                        <?php endif; ?>
-                    </div>
-                    <td>
-                        <?php if (!empty($item['barcode_data'])): ?>
-                            <button class="btn-xs" onclick="showBarcodeModal('<?php echo htmlspecialchars($item['barcode_data']); ?>', '<?php echo htmlspecialchars($item['article_name']); ?>')">
-                                <i class="fas fa-barcode"></i> View
-                            </button>
-                        <?php else: ?>
-                            <span class="text-muted">No barcode</span>
-                        <?php endif; ?>
-                        <?php if ($item['is_multiple']):
-                            $baseProperty = preg_replace('/-\d+$/', '', $item['property_no']);
-                            $multipleCount = isset($counts[$baseProperty]) ? $counts[$baseProperty] : 1;
-                            $hasMultipleItems = $multipleCount > 1;
-                        ?>
-                            <button class="action-btn"
-                                    style="background-color: pink; <?php echo $hasMultipleItems ? '' : 'opacity:0.6;cursor:not-allowed;'; ?>"
-                                    <?php echo $hasMultipleItems ? "onclick=\"viewAllBarcodes('{$item['property_no']}', '" . htmlspecialchars($item['article_name']) . "')\"" : ''; ?>
-                                    title="<?php echo $hasMultipleItems ? 'View All Barcodes' : 'Only 1 item in this set'; ?>"
-                                    <?php echo $hasMultipleItems ? '' : 'disabled'; ?>>
-                                <i class="fas fa-layer-group"></i>
-                            </button>
-                        <?php endif; ?>
-                    </div>
-                    <td>
-                        <div class="action-buttons">
-                            <a href="?edit=<?php echo $item['id']; ?>&csrf_token=<?php echo $_SESSION['csrf_token']; ?>" class="action-btn edit" title="Edit">
-                                <i class="fas fa-edit"></i>
-                            </a>
-                            <button class="action-btn view" onclick="viewItem(<?php echo $item['id']; ?>)" title="View">
-                                <i class="fas fa-eye"></i>
-                            </button>
-                            <?php if ($item['is_issued'] == 0): ?>
-                            <a href="?delete=<?php echo $item['id']; ?>&csrf_token=<?php echo $_SESSION['csrf_token']; ?>" 
-                               class="action-btn delete" 
-                               onclick="return confirm('Are you sure you want to delete this PPE item?')"
-                               title="Delete">
-                                <i class="fas fa-trash"></i>
-                            </a>
-                            <?php endif; ?>
-                            <a href="<?php echo SITE_URL; ?>/admin/issue_items.php?item=<?php echo $item['id']; ?>" 
-                               class="action-btn success" title="Issue">
-                                <i class="fas fa-hand-holding"></i>
-                            </a>
-                        </div>
-                    </div>
-                </div>
-                <?php endforeach; ?>
-            <?php else: ?>
+    <div class="table-wrapper">
+        <table>
+            <thead>
                 <tr>
-                    <td colspan="12" class="text-center">
-                        <i class="fas fa-shield-alt" style="font-size: 48px; color: #ccc; margin-bottom: 10px;"></i>
-                        <br>
-                        No PPE items found
-                        <br>
-                        <button class="btn btn-primary mt-3" onclick="openAddModal()">
-                            <i class="fas fa-plus"></i> Add Your First PPE Item
-                        </button>
-                    </div>
-                </div>
-            <?php endif; ?>
-        </tbody>
-    </table>
+                    <th>Article Name</th>
+                    <th>Property No.</th>
+                    <th>Category/Type</th>
+                    <th>Quantity</th>
+                    <th>Unit Value</th>
+                    <th>Supplier</th>
+                    <th>PO Number</th>
+                    <th>Fund Cluster</th>
+                    <th>Condition</th>
+                    <th>Status</th>
+                    <th>Barcode</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if (count($ppe_items) > 0): ?>
+                    <?php
+                    $shown = [];
+                    foreach ($ppe_items as $item):
+                        $base = preg_replace('/-\d+$/', '', $item['property_no']);
+                        if (isset($shown[$base])) continue;
+                        $shown[$base] = true;
+                    ?>
+                    <tr class="<?php echo $item['qty_physical_count'] <= 5 ? 'stock-alert-row' : ''; ?>">
+                        <td class="article-name-cell">
+                            <strong><?php echo htmlspecialchars($item['article_name']); ?></strong>
+                            <?php if ($item['description']): ?>
+                            <br><small><?php echo htmlspecialchars(substr($item['description'], 0, 50) . (strlen($item['description']) > 50 ? '...' : '')); ?></small>
+                            <?php endif; ?>
+                        </td>
+                        <td><?php echo htmlspecialchars($item['property_no']); ?></td>
+                        <td class="category-cell">
+                            <?php 
+                            if ($item['type_equipment_name']):
+                                echo htmlspecialchars($item['type_equipment_name']);
+                                if ($item['sub_type_name']):
+                                    echo '<br><small>' . htmlspecialchars($item['sub_type_name']) . '</small>';
+                                endif;
+                            else:
+                                echo htmlspecialchars($item['category']);
+                            endif;
+                            ?>
+                        </td>
+                        <td><?php echo $item['total_qty'] . ' ' . $item['uom']; ?></td>
+                        <td><?php echo formatCurrency($item['unit_value']); ?></td>
+                        <td><?php echo htmlspecialchars($item['supplier'] ?? 'N/A'); ?></td>
+                        <td><?php echo htmlspecialchars($item['ref_po_number'] ?? 'N/A'); ?></td>
+                        <td><?php echo htmlspecialchars($item['fund_cluster'] ?? 'N/A'); ?></td>
+                        <td><?php echo htmlspecialchars($item['condition_text'] ?? 'Good'); ?></td>
+                        <td>
+                            <?php if ($item['is_issued'] > 0): ?>
+                                <span class="badge-warning">Issued</span>
+                            <?php else: ?>
+                                <span class="badge-success">Available</span>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <div class="action-buttons" style="display: flex; gap: 5px; align-items: center;">
+                                <?php if (!empty($item['barcode_data'])): ?>
+                                    <button class="btn-xs" onclick="showBarcodeModal('<?php echo htmlspecialchars($item['barcode_data']); ?>', '<?php echo htmlspecialchars($item['article_name']); ?>')">
+                                        <i class="fas fa-barcode"></i> View
+                                    </button>
+                                <?php else: ?>
+                                    <span class="text-muted">No barcode</span>
+                                <?php endif; ?>
+                                <?php if ($item['is_multiple']):
+                                    $baseProperty = preg_replace('/-\d+$/', '', $item['property_no']);
+                                    $multipleCount = isset($counts[$baseProperty]) ? $counts[$baseProperty] : 1;
+                                    $hasMultipleItems = $multipleCount > 1;
+                                ?>
+                                    <button class="action-btn"
+                                            style="background-color: pink; <?php echo $hasMultipleItems ? '' : 'opacity:0.6;cursor:not-allowed;'; ?>"
+                                            <?php echo $hasMultipleItems ? "onclick=\"viewAllBarcodes('{$item['property_no']}', '" . htmlspecialchars($item['article_name']) . "')\"" : ''; ?>
+                                            title="<?php echo $hasMultipleItems ? 'View All Barcodes' : 'Only 1 item in this set'; ?>"
+                                            <?php echo $hasMultipleItems ? '' : 'disabled'; ?>>
+                                        <i class="fas fa-layer-group"></i>
+                                    </button>
+                                <?php endif; ?>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="action-buttons">
+                                <a href="?edit=<?php echo $item['id']; ?>&csrf_token=<?php echo $_SESSION['csrf_token']; ?>" class="action-btn edit" title="Edit">
+                                    <i class="fas fa-edit"></i>
+                                </a>
+                                <button class="action-btn view" onclick="viewItem(<?php echo $item['id']; ?>)" title="View">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                                <?php if ($item['is_issued'] == 0): ?>
+                                <a href="?delete=<?php echo $item['id']; ?>&csrf_token=<?php echo $_SESSION['csrf_token']; ?>" 
+                                   class="action-btn delete" 
+                                   onclick="return confirm('Are you sure you want to delete this PPE item?')"
+                                   title="Delete">
+                                    <i class="fas fa-trash"></i>
+                                </a>
+                                <?php endif; ?>
+                                <a href="<?php echo SITE_URL; ?>/admin/issue_items.php?item=<?php echo $item['id']; ?>" 
+                                   class="action-btn success" title="Issue">
+                                    <i class="fas fa-hand-holding"></i>
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <tr>
+                        <td colspan="12" class="text-center">
+                            <i class="fas fa-shield-alt" style="font-size: 48px; color: #ccc; margin-bottom: 10px;"></i>
+                            <br>
+                            No PPE items found
+                            <br>
+                            <button class="btn btn-primary mt-3" onclick="openAddModal()">
+                                <i class="fas fa-plus"></i> Add Your First PPE Item
+                            </button>
+                        </td>
+                    </tr>
+                <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
     
     <!-- Pagination -->
     <?php echo displayPagination($pagination_data, '?page=' . ($search ? '&search=' . urlencode($search) : '')); ?>
