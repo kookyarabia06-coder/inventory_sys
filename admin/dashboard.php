@@ -86,11 +86,12 @@ if ($recent_batches && $recent_batches->num_rows > 0) {
         $ids_string = implode(',', array_map('intval', $item_ids));
         
         $items_query = $conn->query("
-            SELECT i.*, s.name as section_name
+            SELECT i.*, s.name as section_name, toe.name as type_equipment_name
             FROM inventory i
             LEFT JOIN sections s ON i.section_id = s.id
+            LEFT JOIN type_of_equipment toe ON i.type_equipment_id = toe.id
             WHERE i.id IN ($ids_string)
-            ORDER BY i.id DESC
+            ORDER BY i.id ASC
             LIMIT 5
         ");
         
@@ -112,9 +113,10 @@ if ($recent_batches && $recent_batches->num_rows > 0) {
 
 // Low stock items list
 $low_stock_items = $conn->query("
-    SELECT i.*, s.name as section_name
+    SELECT i.*, s.name as section_name, toe.name as type_equipment_name
     FROM inventory i
     LEFT JOIN sections s ON i.section_id = s.id
+    LEFT JOIN type_of_equipment toe ON i.type_equipment_id = toe.id
     WHERE i.qty_physical_count <= $threshold 
     ORDER BY i.qty_physical_count ASC 
     LIMIT 10
@@ -263,22 +265,23 @@ body {
 }
 
 .stat-chart th {
-    padding: 12px 8px;
+    padding: 12px 12px;
     text-align: left;
     color: var(--text-secondary);
     font-weight: 600;
-    font-size: 11px;
+    font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    border-bottom: 1px solid var(--border-light);
+    border-bottom: 2px solid var(--accent-light);
+    background: var(--light);
 }
 
 .stat-chart td {
-    padding: 12px 8px;
+    padding: 12px 12px;
     border-bottom: 1px solid var(--border-light);
     color: var(--text-secondary);
     font-size: 13px;
-    vertical-align: top;
+    vertical-align: middle;
 }
 
 .stat-chart tr:hover {
@@ -339,6 +342,7 @@ body {
 
 .batch-content table td {
     padding: 10px 12px;
+    vertical-align: middle;
 }
 
 .batch-toggle-icon {
@@ -383,29 +387,51 @@ body {
     color: white;
 }
 
+/* Condition Badge */
+.condition-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.condition-good { background: #DBEAFE; color: #2563EB; }
+.condition-new { background: #D1FAE5; color: #059669; }
+.condition-fair { background: #FEF3C7; color: #D97706; }
+.condition-poor { background: #FEE2E2; color: #DC2626; }
+.condition-serviceable { background: #D1FAE5; color: #059669; }
+
+/* Property Number */
+.property-no {
+    font-family: monospace;
+    font-size: 12px;
+    font-weight: 500;
+}
+
 /* Action Buttons */
 .action-buttons {
     display: flex;
     gap: 6px;
+    flex-wrap: wrap;
 }
 
 .action-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 30px;
-    height: 30px;
+    width: 32px;
+    height: 32px;
     border-radius: 8px;
     border: none;
     color: var(--text-light);
     text-decoration: none;
     transition: all 0.2s;
     cursor: pointer;
-    font-size: 12px;
+    font-size: 13px;
 }
 
 .action-btn.view { background-color: var(--primary); }
-.action-btn.edit { background-color: var(--secondary); }
 
 .action-btn:hover {
     transform: translateY(-2px);
@@ -452,25 +478,239 @@ body {
     font-size: 11px;
 }
 
-/* Condition Badge */
-.condition-badge {
+/* Alert */
+.alert {
+    padding: 14px 18px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-left: 4px solid transparent;
+    font-size: 13px;
+}
+
+.alert-success { background-color: #ECFDF5; color: #059669; border-left-color: #10B981; }
+.alert-danger { background-color: #FEF2F2; color: #DC2626; border-left-color: #EF4444; }
+
+/* Modal Styles */
+.modal-overlay {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    backdrop-filter: blur(3px);
+    overflow-y: auto;
+}
+
+.modal-container {
+    background-color: var(--white);
+    margin: 5% auto;
+    padding: 0;
+    border-radius: 12px;
+    width: 800px;
+    max-width: 90%;
+    box-shadow: 0 10px 30px rgba(107, 140, 255, 0.2);
+    animation: modalSlideIn 0.3s;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+@keyframes modalSlideIn {
+    from {
+        transform: translateY(-30px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.modal-header-settings {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 25px;
+    border-bottom: 2px solid var(--accent-light);
+}
+
+.modal-header-settings h3 {
+    color: var(--primary);
+    margin: 0;
+    font-size: 20px;
+}
+
+.modal-header-settings h3 i {
+    color: var(--accent);
+    margin-right: 10px;
+}
+
+.modal-close {
+    cursor: pointer;
+    font-size: 28px;
+    font-weight: bold;
+    color: var(--text-muted);
+    transition: color 0.2s;
+}
+
+.modal-close:hover {
+    color: var(--accent);
+}
+
+.modal-body-scroll {
+    padding: 25px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.modal-footer-buttons {
+    text-align: right;
+    padding: 16px 25px;
+    border-top: 1px solid var(--border-light);
+    background: var(--light);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+/* Detail View Styles */
+.detail-section {
+    margin-bottom: 24px;
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.detail-header {
+    background: var(--light);
+    padding: 12px 16px;
+    font-weight: 600;
+    color: var(--primary);
+    border-bottom: 1px solid var(--border-light);
+}
+
+.detail-header i {
+    margin-right: 8px;
+}
+
+.detail-content {
+    padding: 16px;
+}
+
+.detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+}
+
+.detail-item {
+    padding: 8px 0;
+}
+
+.detail-label {
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.detail-value {
+    color: var(--text-primary);
+    font-size: 14px;
+    word-break: break-word;
+}
+
+/* Quantity Badge */
+.quantity-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.quantity-critical {
+    background: #FEE2E2;
+    color: #DC2626;
+}
+
+.quantity-warning {
+    background: #FEF3C7;
+    color: #D97706;
+}
+
+.quantity-normal {
+    background: #D1FAE5;
+    color: #059669;
+}
+
+/* Status Badge */
+.status-badge {
     display: inline-block;
     padding: 4px 10px;
     border-radius: 20px;
     font-size: 11px;
     font-weight: 600;
+    text-align: center;
+    white-space: nowrap;
 }
 
-.condition-good { background: #DBEAFE; color: #2563EB; }
-.condition-new { background: #D1FAE5; color: #059669; }
-.condition-fair { background: #FEF3C7; color: #D97706; }
-.condition-poor { background: #FEE2E2; color: #DC2626; }
+.status-issued {
+    background: #FEF3C7;
+    color: #D97706;
+}
 
-/* Property Number */
-.property-no {
-    font-family: monospace;
-    font-size: 12px;
+.status-available {
+    background: #D1FAE5;
+    color: #059669;
+}
+
+/* Modal Buttons */
+.btn-modal {
+    padding: 8px 20px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
     font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-modal-secondary {
+    background-color: #6c757d;
+    color: var(--text-light);
+}
+
+.btn-modal-secondary:hover {
+    background-color: #5a6268;
+    transform: translateY(-2px);
+}
+
+/* Scrollbar Styling */
+.modal-body-scroll::-webkit-scrollbar {
+    width: 6px;
+}
+
+.modal-body-scroll::-webkit-scrollbar-track {
+    background: var(--light);
+    border-radius: 3px;
+}
+
+.modal-body-scroll::-webkit-scrollbar-thumb {
+    background: var(--primary);
+    border-radius: 3px;
 }
 
 /* Text Utilities */
@@ -535,6 +775,16 @@ body {
         color: var(--text-primary);
         margin-right: 10px;
     }
+    
+    .modal-container {
+        margin: 10% auto;
+        width: 95%;
+    }
+    
+    .detail-grid {
+        grid-template-columns: 1fr;
+        gap: 8px;
+    }
 }
 </style>
 
@@ -588,41 +838,43 @@ body {
     <div class="stat-chart">
         <h3><i class="fas fa-exclamation-triangle text-warning"></i> Low Stock Alerts (Threshold: <?php echo $threshold; ?> units)</h3>
         <?php if ($low_stock_items && $low_stock_items->num_rows > 0): ?>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Item Name</th>
-                        <th>Property No.</th>
-                        <th>Current Qty</th>
-                        <th>Location</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php while($item = $low_stock_items->fetch_assoc()): ?>
-                    <tr>
-                        <td data-label="Item Name">
-                            <strong><?php echo htmlspecialchars($item['article_name']); ?></strong>
-                            <br><small class="text-muted"><?php echo htmlspecialchars($item['category'] ?? 'Uncategorized'); ?></small>
-                        </td>
-                        <td data-label="Property No" class="property-no"><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></td>
-                        <td data-label="Current Qty">
-                            <span class="badge <?php echo $item['qty_physical_count'] <= 2 ? 'badge-danger' : 'badge-warning'; ?>">
-                                <?php echo $item['qty_physical_count']; ?> <?php echo htmlspecialchars($item['uom']); ?>
-                            </span>
-                        </td>
-                        <td data-label="Location"><?php echo htmlspecialchars($item['section_name'] ?? 'N/A'); ?></td>
-                        <td data-label="Action">
-                            <div class="action-buttons">
-                                <a href="<?php echo SITE_URL; ?>/admin/all_inventory.php?edit=<?php echo $item['id']; ?>" class="action-btn edit" title="Edit">
-                                    <i class="fas fa-edit"></i>
-                                </a>
-                            </div>
-                        </td>
-                    </td>
-                    <?php endwhile; ?>
-                </tbody>
-            </table>
+            <div style="overflow-x: auto;">
+                <table style="min-width: 600px;">
+                    <thead>
+                        <tr>
+                            <th>Item Name</th>
+                            <th>Property No.</th>
+                            <th>Current Qty</th>
+                            <th>Location</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php while($item = $low_stock_items->fetch_assoc()): ?>
+                        <tr>
+                            <td data-label="Item Name">
+                                <strong><?php echo htmlspecialchars($item['article_name']); ?></strong>
+                                <br><small class="text-muted"><?php echo htmlspecialchars($item['category'] ?? 'Uncategorized'); ?></small>
+                            </td>
+                            <td data-label="Property No" class="property-no"><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></td>
+                            <td data-label="Current Qty">
+                                <span class="badge <?php echo $item['qty_physical_count'] <= 2 ? 'badge-danger' : 'badge-warning'; ?>">
+                                    <?php echo $item['qty_physical_count']; ?> <?php echo htmlspecialchars($item['uom']); ?>
+                                </span>
+                            </td>
+                            <td data-label="Location"><?php echo htmlspecialchars($item['section_name'] ?? 'N/A'); ?></td>
+                            <td data-label="Action">
+                                <div class="action-buttons">
+                                    <button onclick="viewItem(<?php echo $item['id']; ?>)" class="action-btn view" title="View">
+                                        <i class="fas fa-eye"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        <?php endwhile; ?>
+                    </tbody>
+                </table>
+            </div>
             <div class="text-center mt-3">
                 <a href="<?php echo SITE_URL; ?>/admin/all_inventory.php?low_stock=1" class="btn btn-secondary btn-sm">
                     View All Low Stock Items (<?php echo $stats['low_stock']; ?>) →
@@ -643,60 +895,59 @@ body {
             <div class="batch-card">
                 <div class="batch-header" onclick="toggleBatch(<?php echo $index; ?>)">
                     <div>
-                        <i class="fas fa-clock batch-toggle-icon" id="batch-icon-<?php echo $index; ?>"></i>
+                        <i class="fas fa-chevron-right batch-toggle-icon" id="batch-icon-<?php echo $index; ?>"></i>
                         <strong><?php echo htmlspecialchars($batch['batch_display']); ?></strong>
                     </div>
                     <span class="badge badge-primary"><?php echo $batch['item_count']; ?> item(s)</span>
                 </div>
                 <div class="batch-content" id="batch-content-<?php echo $index; ?>">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Item Name</th>
-                                <th>Property No.</th>
-                                <th>Qty</th>
-                                <th>Location</th>
-                                <th>Condition</th>
-                                <th>Action</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($batch['items'] as $item): ?>
-                            <tr>
-                                <td data-label="Item Name">
-                                    <strong><?php echo htmlspecialchars($item['article_name']); ?></strong>
-                                    <br><small class="text-muted"><?php echo htmlspecialchars($item['category'] ?? 'Uncategorized'); ?></small>
-                                </td>
-                                <td data-label="Property No" class="property-no"><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></td>
-                                <td data-label="Qty"><?php echo $item['qty_physical_count']; ?> <?php echo htmlspecialchars($item['uom']); ?></td>
-                                <td data-label="Location"><?php echo htmlspecialchars($item['section_name'] ?? 'N/A'); ?></td>
-                                <td data-label="Condition">
-                                    <?php
+                    <div style="overflow-x: auto;">
+                        <table style="min-width: 700px;">
+                            <thead>
+                                <tr>
+                                    <th>Item Name</th>
+                                    <th>Property No.</th>
+                                    <th>Qty</th>
+                                    <th>Location</th>
+                                    <th>Condition</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($batch['items'] as $item): 
                                     $condition = strtolower($item['condition_text'] ?? 'good');
                                     $condition_class = 'condition-good';
                                     if ($condition == 'new') $condition_class = 'condition-new';
                                     elseif ($condition == 'good') $condition_class = 'condition-good';
                                     elseif ($condition == 'fair') $condition_class = 'condition-fair';
                                     elseif ($condition == 'poor') $condition_class = 'condition-poor';
-                                    ?>
-                                    <span class="condition-badge <?php echo $condition_class; ?>">
-                                        <?php echo htmlspecialchars($item['condition_text'] ?? 'Good'); ?>
-                                    </span>
-                                </td>
-                                <td data-label="Action">
-                                    <div class="action-buttons">
-                                        <a href="<?php echo SITE_URL; ?>/admin/all_inventory.php?view=<?php echo $item['id']; ?>" class="action-btn view" title="View">
-                                            <i class="fas fa-eye"></i>
-                                        </a>
-                                        <a href="<?php echo SITE_URL; ?>/admin/all_inventory.php?edit=<?php echo $item['id']; ?>" class="action-btn edit" title="Edit">
-                                            <i class="fas fa-edit"></i>
-                                        </a>
-                                    </div>
-                                </td>
-                            </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
+                                    elseif ($condition == 'serviceable' || $condition == 'servicable') $condition_class = 'condition-serviceable';
+                                ?>
+                                <tr>
+                                    <td data-label="Item Name">
+                                        <strong><?php echo htmlspecialchars($item['article_name']); ?></strong>
+                                        <br><small class="text-muted"><?php echo htmlspecialchars($item['category'] ?? 'Uncategorized'); ?></small>
+                                    </td>
+                                    <td data-label="Property No" class="property-no"><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></td>
+                                    <td data-label="Qty"><?php echo number_format($item['qty_physical_count']); ?> <?php echo htmlspecialchars($item['uom']); ?></td>
+                                    <td data-label="Location"><?php echo htmlspecialchars($item['section_name'] ?? 'N/A'); ?></td>
+                                    <td data-label="Condition">
+                                        <span class="condition-badge <?php echo $condition_class; ?>">
+                                            <?php echo htmlspecialchars($item['condition_text'] ?? 'Good'); ?>
+                                        </span>
+                                    </td>
+                                    <td data-label="Action">
+                                        <div class="action-buttons">
+                                            <button onclick="viewItem(<?php echo $item['id']; ?>)" class="action-btn view" title="View">
+                                                <i class="fas fa-eye"></i>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
             <?php endforeach; ?>
@@ -718,7 +969,108 @@ body {
     </div>
 </div>
 
+<!-- View Item Modal -->
+<div id="viewModal" class="modal-overlay">
+    <div class="modal-container" style="max-width: 800px;">
+        <div class="modal-header-settings">
+            <h3><i class="fas fa-info-circle"></i> Item Details</h3>
+            <span class="modal-close" onclick="closeModal('viewModal')">&times;</span>
+        </div>
+        <div class="modal-body-scroll" id="viewModalContent">
+            <div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading...</div>
+        </div>
+        <div class="modal-footer-buttons">
+            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeModal('viewModal')">Close</button>
+        </div>
+    </div>
+</div>
+
 <script>
+// View Item Function
+function viewItem(id) {
+    let modal = document.getElementById('viewModal');
+    let content = document.getElementById('viewModalContent');
+    modal.style.display = 'block';
+    content.innerHTML = '<div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading...</div>';
+    
+    fetch('<?php echo SITE_URL; ?>/admin/all_inventory.php?ajax=get_item&id=' + id)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                let item = data.data;
+                let statusBadge = item.is_issued > 0 ? '<span class="status-badge status-issued">Issued</span>' : '<span class="status-badge status-available">Available</span>';
+                
+                let conditionText = item.condition_text || 'Good';
+                let conditionLower = conditionText.toLowerCase();
+                let conditionClass = 'condition-good';
+                if (conditionLower == 'new') conditionClass = 'condition-new';
+                else if (conditionLower == 'good') conditionClass = 'condition-good';
+                else if (conditionLower == 'fair') conditionClass = 'condition-fair';
+                else if (conditionLower == 'poor') conditionClass = 'condition-poor';
+                else if (conditionLower == 'serviceable' || conditionLower == 'servicable') conditionClass = 'condition-serviceable';
+                
+                let quantityClass = 'quantity-normal';
+                let qty = item.qty_physical_count;
+                let threshold = <?php echo $threshold; ?>;
+                let critical = <?php echo max(1, floor($threshold / 2)); ?>;
+                if (qty <= critical) quantityClass = 'quantity-critical';
+                else if (qty <= threshold) quantityClass = 'quantity-warning';
+                
+                let html = `
+                    <div class="detail-section"><div class="detail-header"><i class="fas fa-info-circle"></i> Basic Information</div><div class="detail-content"><div class="detail-grid">
+                        <div class="detail-item"><div class="detail-label">Article Name</div><div class="detail-value"><strong>${escapeHtml(item.article_name)}</strong></div></div>
+                        <div class="detail-item"><div class="detail-label">Property Number</div><div class="detail-value">${escapeHtml(item.property_no || 'N/A')}</div></div>
+                        <div class="detail-item"><div class="detail-label">Description</div><div class="detail-value">${escapeHtml(item.description || 'N/A')}</div></div>
+                        <div class="detail-item"><div class="detail-label">Status</div><div class="detail-value">${statusBadge}</div></div>
+                    </div></div></div>
+                    <div class="detail-section"><div class="detail-header"><i class="fas fa-tags"></i> Classification</div><div class="detail-content"><div class="detail-grid">
+                        <div class="detail-item"><div class="detail-label">Category</div><div class="detail-value">${escapeHtml(item.category || 'N/A')}</div></div>
+                        <div class="detail-item"><div class="detail-label">Type of Equipment</div><div class="detail-value">${escapeHtml(item.type_equipment_name || item.type_equipment || 'N/A')}</div></div>
+                        <div class="detail-item"><div class="detail-label">Equipment Type</div><div class="detail-value">${escapeHtml(item.equipment_name || 'N/A')}</div></div>
+                        <div class="detail-item"><div class="detail-label">Location</div><div class="detail-value">${escapeHtml(item.section_name || 'N/A')}</div></div>
+                        <div class="detail-item"><div class="detail-label">Condition</div><div class="detail-value"><span class="condition-badge ${conditionClass}">${escapeHtml(conditionText)}</span></div></div>
+                    </div></div></div>
+                    <div class="detail-section"><div class="detail-header"><i class="fas fa-calculator"></i> Quantity and Value</div><div class="detail-content"><div class="detail-grid">
+                        <div class="detail-item"><div class="detail-label">Quantity</div><div class="detail-value"><span class="quantity-badge ${quantityClass}">${item.qty_physical_count} ${escapeHtml(item.uom)}</span></div></div>
+                        <div class="detail-item"><div class="detail-label">Unit Value</div><div class="detail-value">₱${parseFloat(item.unit_value).toFixed(2)}</div></div>
+                        <div class="detail-item"><div class="detail-label">Total Value</div><div class="detail-value">₱${(item.qty_physical_count * item.unit_value).toFixed(2)}</div></div>
+                        <div class="detail-item"><div class="detail-label">Fund Cluster</div><div class="detail-value">${escapeHtml(item.fund_cluster || 'N/A')}</div></div>
+                    </div></div></div>
+                    <div class="detail-section"><div class="detail-header"><i class="fas fa-calendar"></i> Dates</div><div class="detail-content"><div class="detail-grid">
+                        <div class="detail-item"><div class="detail-label">Date Added</div><div class="detail-value">${new Date(item.date_added).toLocaleString()}</div></div>
+                        <div class="detail-item"><div class="detail-label">Last Updated</div><div class="detail-value">${item.date_updated ? new Date(item.date_updated).toLocaleString() : 'Never'}</div></div>
+                    </div></div></div>
+                    <div class="detail-section"><div class="detail-header"><i class="fas fa-barcode"></i> Barcode</div><div class="detail-content">
+                        ${item.barcode_data ? `
+                        <div class="detail-item"><div class="detail-label">Barcode Value</div><div class="detail-value">${escapeHtml(item.barcode_data)}</div></div>
+                        <div style="text-align: center; margin-top: 15px;">
+                            <img src="<?php echo SITE_URL; ?>/admin/generate_barcode.php?code=${encodeURIComponent(item.barcode_data)}&width=300&height=70" style="max-width: 100%; border: 1px solid #E2E8F0; padding: 10px; border-radius: 8px;">
+                        </div>
+                        ` : '<div class="detail-value">No barcode assigned</div>'}
+                    </div></div>
+                    <div class="detail-section"><div class="detail-header"><i class="fas fa-comment"></i> Remarks</div><div class="detail-content"><div class="detail-value">${escapeHtml(item.remarks || 'No remarks')}</div></div></div>
+                `;
+                content.innerHTML = html;
+            } else {
+                content.innerHTML = '<div class="alert alert-danger">Error loading item: ' + (data.message || 'Unknown error') + '</div>';
+            }
+        })
+        .catch(error => {
+            content.innerHTML = '<div class="alert alert-danger">Error loading item details</div>';
+        });
+}
+
+function closeModal(modalId) {
+    document.getElementById(modalId).style.display = 'none';
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    let div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 // Toggle batch content
 function toggleBatch(index) {
     const content = document.getElementById('batch-content-' + index);
@@ -727,9 +1079,11 @@ function toggleBatch(index) {
     if (content.classList.contains('expanded')) {
         content.classList.remove('expanded');
         icon.classList.remove('rotated');
+        icon.style.transform = 'rotate(0deg)';
     } else {
         content.classList.add('expanded');
         icon.classList.add('rotated');
+        icon.style.transform = 'rotate(90deg)';
     }
 }
 
@@ -737,6 +1091,21 @@ function toggleBatch(index) {
 document.addEventListener('DOMContentLoaded', function() {
     if (document.getElementById('batch-content-0')) {
         toggleBatch(0);
+    }
+});
+
+// Close modal when clicking outside
+window.onclick = function(event) {
+    let viewModal = document.getElementById('viewModal');
+    if (event.target == viewModal) {
+        closeModal('viewModal');
+    }
+}
+
+// Close modal on Escape key
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        closeModal('viewModal');
     }
 });
 </script>

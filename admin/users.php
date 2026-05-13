@@ -26,11 +26,16 @@ if ($user_role !== 'admin' && $user_role !== 'super_admin') {
 $page_title = 'Users';
 $page_description = 'View and manage system users';
 
+// ============================================
+// USE THE EXISTING logAuditEvent FUNCTION FROM auth.php
+// ============================================
+// DO NOT redeclare logAudit() here - it's already in auth.php
+// Use logAuditEvent() function instead
+
 // Handle unlock account action
 if (isset($_POST['unlock_user'])) {
     $user_id = (int)$_POST['user_id'];
     
-    // Get user data before unlocking for audit
     $user_query = $conn->prepare("SELECT username, email, locked_until FROM users WHERE id = ?");
     $user_query->bind_param("i", $user_id);
     $user_query->execute();
@@ -44,9 +49,11 @@ if (isset($_POST['unlock_user'])) {
         if ($stmt->execute()) {
             $_SESSION['success'] = "Account for " . htmlspecialchars($user_data['username']) . " has been unlocked successfully.";
             
-            // Log to audit trail
+            // AUDIT: Manual unlock using existing function
             if (function_exists('logAuditEvent')) {
-                logAuditEvent($conn, $_SESSION['user_id'], 'MANUAL_UNLOCK', 'SECURITY', "Manually unlocked account for user: " . $user_data['username']);
+                logAuditEvent($conn, $_SESSION['user_id'], 'MANUAL_UNLOCK', 'SECURITY', 
+                    "Manually unlocked account for user: " . $user_data['username'],
+                    "Unlocked user: {$user_data['username']}", 'users', $user_id);
             }
             
             if (function_exists('logActivity')) {
@@ -57,9 +64,15 @@ if (isset($_POST['unlock_user'])) {
         }
         $stmt->close();
     } elseif ($user_data && (!empty($user_data['locked_until']) && strtotime($user_data['locked_until']) <= time())) {
-        // Lock has already expired, just clear it
         $conn->query("UPDATE users SET login_attempts = 0, locked_until = NULL WHERE id = $user_id");
         $_SESSION['success'] = "Account for " . htmlspecialchars($user_data['username']) . " was already expired. Lock has been cleared.";
+        
+        // AUDIT: Lock cleared
+        if (function_exists('logAuditEvent')) {
+            logAuditEvent($conn, $_SESSION['user_id'], 'LOCK_CLEARED', 'SECURITY', 
+                "Cleared expired lock for user: " . $user_data['username'],
+                "User: {$user_data['username']}", 'users', $user_id);
+        }
     } else {
         $_SESSION['error'] = "This account is not locked.";
     }
@@ -74,7 +87,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     $user_id = (int)$_POST['user_id'];
     
     if ($action === 'approve') {
-        // FIRST: Get user details before updating
         $user_query = $conn->prepare("SELECT * FROM users WHERE id = ? AND status = 'pending'");
         $user_query->bind_param("i", $user_id);
         $user_query->execute();
@@ -89,12 +101,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         }
         $user_query->close();
         
-        // SECOND: Update user status to active
         $stmt = $conn->prepare("UPDATE users SET status = 'active' WHERE id = ? AND status = 'pending'");
         $stmt->bind_param("i", $user_id);
         
         if ($stmt->execute() && $stmt->affected_rows > 0) {
-            // THIRD: Send approval email
             $email_sent = sendApprovalEmail($user);
             
             if ($email_sent) {
@@ -104,11 +114,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 error_log("Failed to send approval email to: " . $user['email'] . " for user: " . $user['username']);
             }
             
+            // AUDIT: User approved
+            if (function_exists('logAuditEvent')) {
+                logAuditEvent($conn, $_SESSION['user_id'], 'USER_APPROVED', 'USER_MANAGEMENT', 
+                    "User approved: " . $user['username'],
+                    "Approved user: {$user['username']} | Email: {$user['email']} | Role: {$user['role']}", 'users', $user_id);
+            }
+            
             if (function_exists('logActivity')) {
                 logActivity('User Approved', $user_id, "User " . $user['username'] . " was approved by " . ($_SESSION['username'] ?? 'Admin'));
             }
             
-            // Log to audit trail
             if (function_exists('logUserApproval')) {
                 logUserApproval($_SESSION['user_id'], $user_id, 'approved', $user);
             }
@@ -118,7 +134,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $stmt->close();
     } 
     elseif ($action === 'reject') {
-        // FIRST: Get user details before deletion
         $user_query = $conn->prepare("SELECT * FROM users WHERE id = ? AND status = 'pending'");
         $user_query->bind_param("i", $user_id);
         $user_query->execute();
@@ -133,10 +148,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         }
         $user_query->close();
         
-        // SECOND: Send rejection email
         $email_sent = sendRejectionEmail($user);
         
-        // THIRD: Delete the user
+        // AUDIT: User rejected (before deletion)
+        if (function_exists('logAuditEvent')) {
+            logAuditEvent($conn, $_SESSION['user_id'], 'USER_REJECTED', 'USER_MANAGEMENT', 
+                "User registration rejected: " . $user['username'],
+                "Rejected user: {$user['username']} | Email: {$user['email']} | Rejection email sent: " . ($email_sent ? 'Yes' : 'No'), 'users', $user_id);
+        }
+        
         $delete_stmt = $conn->prepare("DELETE FROM users WHERE id = ? AND status = 'pending'");
         $delete_stmt->bind_param("i", $user_id);
         
@@ -178,7 +198,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_user') {
     exit();
 }
 
-// Handle update user
+// Handle update user (edit)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_user'])) {
     $user_id = (int)$_POST['user_id'];
     $firstname = $_POST['firstname'];
@@ -198,7 +218,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_user'])) {
     $stmt->bind_param("sssssi", $firstname, $lastname, $email, $role, $status, $user_id);
     
     if ($stmt->execute()) {
-        // Log to audit trail
+        // AUDIT: User updated
+        $changes = [];
+        if ($old_data['firstname'] != $firstname) $changes[] = "First name: {$old_data['firstname']} → $firstname";
+        if ($old_data['lastname'] != $lastname) $changes[] = "Last name: {$old_data['lastname']} → $lastname";
+        if ($old_data['email'] != $email) $changes[] = "Email: {$old_data['email']} → $email";
+        if ($old_data['role'] != $role) $changes[] = "Role: {$old_data['role']} → $role";
+        if ($old_data['status'] != $status) $changes[] = "Status: {$old_data['status']} → $status";
+        
+        $details = !empty($changes) ? implode(" | ", $changes) : "No changes made";
+        
+        if (function_exists('logAuditEvent')) {
+            logAuditEvent($conn, $_SESSION['user_id'], 'USER_UPDATED', 'USER_MANAGEMENT', 
+                "User updated: " . ($_SESSION['username'] ?? 'Unknown'),
+                $details, 'users', $user_id);
+        }
+        
         if (function_exists('logUserUpdate')) {
             $new_data = array('firstname' => $firstname, 'lastname' => $lastname, 'email' => $email, 'role' => $role, 'status' => $status);
             logUserUpdate($_SESSION['user_id'], $user_id, $old_data, $new_data);
@@ -213,25 +248,84 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_user'])) {
     exit();
 }
 
+// Handle add new user via AJAX
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_user'])) {
+    $firstname = $_POST['firstname'];
+    $lastname = $_POST['lastname'];
+    $username = $_POST['username'];
+    $email = $_POST['email'];
+    $role = $_POST['role'];
+    $status = $_POST['status'];
+    $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
+    
+    // Check if username exists
+    $check = $conn->prepare("SELECT id FROM users WHERE username = ?");
+    $check->bind_param("s", $username);
+    $check->execute();
+    if ($check->get_result()->num_rows > 0) {
+        $_SESSION['error'] = "Username already exists.";
+        header("Location: " . $_SERVER['PHP_SELF']);
+        exit();
+    }
+    $check->close();
+    
+    // Check if email exists
+    $check = $conn->prepare("SELECT id FROM users WHERE email = ?");
+    $check->bind_param("s", $email);
+    $check->execute();
+    if ($check->get_result()->num_rows > 0) {
+        $_SESSION['error'] = "Email already exists.";
+        header("Location: " . $_SERVER['PHP_SELF']);
+        exit();
+    }
+    $check->close();
+    
+    $stmt = $conn->prepare("INSERT INTO users (firstname, lastname, username, email, role, status, password, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())");
+    $stmt->bind_param("sssssss", $firstname, $lastname, $username, $email, $role, $status, $password);
+    
+    if ($stmt->execute()) {
+        $new_user_id = $stmt->insert_id;
+        
+        // AUDIT: New user added
+        if (function_exists('logAuditEvent')) {
+            logAuditEvent($conn, $_SESSION['user_id'], 'USER_ADDED', 'USER_MANAGEMENT', 
+                "New user added: $username",
+                "Added user: $username | Name: $firstname $lastname | Email: $email | Role: $role | Status: $status", 'users', $new_user_id);
+        }
+        
+        $_SESSION['success'] = "User added successfully.";
+    } else {
+        $_SESSION['error'] = "Failed to add user.";
+    }
+    $stmt->close();
+    
+    header("Location: " . $_SERVER['PHP_SELF']);
+    exit();
+}
+
 // Handle delete user
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_user'])) {
     $user_id = (int)$_POST['user_id'];
     
-    // Get user data before deletion for audit
     $user_query = $conn->prepare("SELECT * FROM users WHERE id = ?");
     $user_query->bind_param("i", $user_id);
     $user_query->execute();
     $user_data = $user_query->get_result()->fetch_assoc();
     $user_query->close();
     
-    // Check if user is trying to delete themselves
     if ($user_id == $_SESSION['user_id']) {
         $_SESSION['error'] = "You cannot delete your own account.";
     } else {
+        // AUDIT: User deletion (before deletion)
+        if (function_exists('logAuditEvent')) {
+            logAuditEvent($conn, $_SESSION['user_id'], 'USER_DELETED', 'USER_MANAGEMENT', 
+                "User deleted: " . $user_data['username'],
+                "Deleted user: {$user_data['username']} | Name: {$user_data['firstname']} {$user_data['lastname']} | Email: {$user_data['email']} | Role: {$user_data['role']}", 'users', $user_id);
+        }
+        
         $stmt = $conn->prepare("DELETE FROM users WHERE id = ?");
         $stmt->bind_param("i", $user_id);
         if ($stmt->execute()) {
-            // Log to audit trail
             if (function_exists('logUserDeletion')) {
                 logUserDeletion($_SESSION['user_id'], $user_id, $user_data);
             }
@@ -250,7 +344,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_user'])) {
 $show_inactive = isset($_GET['show_inactive']) && $_GET['show_inactive'] == '1';
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
 
-// Build query for active users
 $active_query = "SELECT * FROM users WHERE status != 'pending'";
 if (!$show_inactive) {
     $active_query .= " AND status = 'active'";
@@ -270,14 +363,17 @@ if (!empty($search)) {
     $users = $conn->query($active_query);
 }
 
-// Get pending users
 $pending_query = "SELECT * FROM users WHERE status = 'pending' ORDER BY created_at DESC";
 $pending_users = $conn->query($pending_query);
 
 include INCLUDE_PATH . '/header.php';
 ?>
 
+<!-- REST OF THE HTML AND JAVASCRIPT REMAINS THE SAME AS THE PREVIOUS VERSION -->
+<!-- The CSS, modals, and JavaScript sections stay identical -->
+
 <style>
+/* Keep all existing styles - they remain the same as before */
 :root {
     --primary: #6B8CFF;
     --secondary: #8FB5FF;
@@ -302,108 +398,238 @@ body {
     color: var(--text-primary);
 }
 
-/* Modal Styles */
-.modal {
+/* Modal Styles - Matching Settings.php */
+.modal-overlay {
     display: none;
     position: fixed;
-    z-index: 9999;
+    z-index: 1000;
     left: 0;
     top: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(8px);
-    animation: modalOverlayFade 0.3s ease;
+    background-color: rgba(0,0,0,0.5);
+    backdrop-filter: blur(3px);
 }
 
-@keyframes modalOverlayFade {
-    from { opacity: 0; backdrop-filter: blur(0px); }
-    to { opacity: 1; backdrop-filter: blur(8px); }
-}
-
-.modal-content {
-    background: var(--white);
-    margin: 3% auto;
-    width: 600px;
+.modal-container {
+    background-color: var(--white);
+    margin: 5% auto;
+    padding: 25px;
+    border-radius: 12px;
+    width: 550px;
     max-width: 90%;
-    border-radius: 24px;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-    animation: modalSlideUp 0.4s cubic-bezier(0.34, 1.2, 0.64, 1);
+    box-shadow: 0 10px 30px rgba(107, 140, 255, 0.2);
+    animation: modalSlideIn 0.3s;
+}
+
+/* Custom Delete Confirmation Modal */
+.delete-modal-overlay {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    backdrop-filter: blur(3px);
+    align-items: center;
+    justify-content: center;
+}
+
+.delete-modal-container {
+    background-color: var(--white);
+    border-radius: 16px;
+    width: 450px;
+    max-width: 90%;
+    box-shadow: 0 20px 35px rgba(0,0,0,0.2);
+    animation: modalSlideIn 0.2s;
     overflow: hidden;
 }
 
-@keyframes modalSlideUp {
-    from { transform: translateY(60px); opacity: 0; }
-    to { transform: translateY(0); opacity: 1; }
+.delete-modal-header {
+    padding: 24px 24px 16px 24px;
+    border-bottom: 1px solid var(--border-light);
 }
 
-.modal-header {
-    background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
-    padding: 30px 28px 20px 28px;
-    position: relative;
-    text-align: center;
-}
-
-.modal-header h3 {
-    color: var(--white);
+.delete-modal-header h3 {
     margin: 0;
     font-size: 20px;
     font-weight: 600;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
+    color: var(--danger);
 }
 
-.modal-header h3 i {
+.delete-modal-header h3 i {
+    margin-right: 10px;
+}
+
+.success-modal-header {
+    padding: 24px 24px 16px 24px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.success-modal-header h3 {
+    margin: 0;
     font-size: 20px;
-    background: rgba(255, 255, 255, 0.2);
-    padding: 8px;
-    border-radius: 50%;
+    font-weight: 600;
+    color: var(--success);
+}
+
+.success-modal-header h3 i {
+    margin-right: 10px;
+}
+
+.warning-modal-header {
+    padding: 24px 24px 16px 24px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.warning-modal-header h3 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--warning);
+}
+
+.warning-modal-header h3 i {
+    margin-right: 10px;
+}
+
+.delete-modal-body {
+    padding: 24px;
+}
+
+.delete-warning {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.delete-warning i {
+    font-size: 48px;
+    margin-bottom: 12px;
+}
+
+.delete-warning .fa-exclamation-triangle,
+.delete-warning .fa-times-circle,
+.delete-warning .fa-trash-alt {
+    color: var(--danger);
+}
+
+.delete-warning .fa-user-check {
+    color: var(--success);
+}
+
+.delete-warning .fa-lock {
+    color: var(--warning);
+}
+
+.delete-warning p {
+    margin: 8px 0;
+    font-size: 16px;
+}
+
+.delete-warning .warning-text {
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.delete-item-details {
+    background-color: var(--light);
+    border-radius: 12px;
+    padding: 16px;
+    margin-top: 16px;
+}
+
+.delete-item-details .detail-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+.delete-item-details .detail-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.delete-item-details .detail-extra {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.delete-modal-footer {
+    padding: 16px 24px 24px 24px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    border-top: 1px solid var(--border-light);
+}
+
+@keyframes modalSlideIn {
+    from {
+        transform: translateY(-30px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.modal-header-settings {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--accent-light);
+}
+
+.modal-header-settings h3 {
+    color: var(--primary);
+    margin: 0;
+    font-size: 20px;
+}
+
+.modal-header-settings h3 i {
+    color: var(--accent);
+    margin-right: 10px;
 }
 
 .modal-close {
-    position: absolute;
-    right: 20px;
-    top: 20px;
-    color: var(--white);
-    font-size: 24px;
-    font-weight: normal;
     cursor: pointer;
-    transition: all 0.2s ease;
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.1);
+    font-size: 28px;
+    font-weight: bold;
+    color: var(--text-muted);
+    transition: color 0.2s;
 }
 
 .modal-close:hover {
-    background: rgba(255, 255, 255, 0.2);
-    transform: rotate(90deg);
+    color: var(--accent);
 }
 
-.modal-avatar-wrapper {
-    display: flex;
-    justify-content: center;
-    margin-top: 10px;
-    margin-bottom: 5px;
+.modal-footer {
+    text-align: right;
+    margin-top: 20px;
+    padding-top: 15px;
+    border-top: 1px solid var(--border-light);
 }
 
+/* View User Avatar Styles */
 .avatar-large {
-    width: 120px;
-    height: 120px;
-    background: linear-gradient(135deg, var(--white) 0%, var(--accent-light) 100%);
+    width: 100px;
+    height: 100px;
+    margin: 0 auto 15px auto;
     border-radius: 50%;
+    overflow: hidden;
+    background: linear-gradient(135deg, var(--primary), var(--secondary));
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
-    border: 4px solid var(--white);
     position: relative;
-    overflow: hidden;
 }
 
 .avatar-large img {
@@ -412,95 +638,76 @@ body {
     object-fit: cover;
 }
 
-.avatar-large .avatar-placeholder {
+.avatar-placeholder {
     width: 100%;
     height: 100%;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
 }
 
 .avatar-placeholder i {
-    font-size: 55px;
-    color: var(--white);
+    font-size: 50px;
+    color: white;
 }
 
-.avatar-placeholder .avatar-text {
-    font-size: 48px;
-    font-weight: 700;
-    color: var(--white);
+.avatar-text {
+    font-size: 42px;
+    font-weight: 600;
+    color: white;
     text-transform: uppercase;
 }
 
 .avatar-status {
     position: absolute;
-    bottom: 8px;
-    right: 8px;
-    width: 28px;
-    height: 28px;
+    bottom: 4px;
+    right: 4px;
+    width: 22px;
+    height: 22px;
     background: white;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
     border: 2px solid white;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
 .avatar-status i {
-    font-size: 14px !important;
+    font-size: 11px !important;
 }
-
-.status-active { color: var(--success); }
-.status-inactive { color: var(--danger); }
-.status-pending { color: var(--warning); }
-.status-locked { color: #f44336; }
 
 .modal-user-name {
     text-align: center;
-    margin-top: 15px;
-    margin-bottom: 5px;
+    margin-bottom: 20px;
 }
 
 .modal-user-name h2 {
-    color: var(--white);
-    font-size: 22px;
+    margin: 0 0 5px 0;
+    font-size: 20px;
     font-weight: 600;
-    margin: 0;
+    color: var(--text-primary);
 }
 
 .modal-user-name p {
-    color: rgba(255, 255, 255, 0.9);
+    margin: 0;
     font-size: 13px;
-    margin: 5px 0 0;
-}
-
-.modal-body {
-    padding: 28px;
-    max-height: 60vh;
-    overflow-y: auto;
+    color: var(--text-muted);
 }
 
 .info-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 16px;
-    margin-bottom: 0;
+    gap: 15px;
 }
 
 .info-card {
     background: var(--light);
-    border-radius: 14px;
-    padding: 14px 16px;
-    transition: all 0.2s ease;
-    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 12px 15px;
 }
 
-.info-card:hover {
-    border-color: var(--primary);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(107, 140, 255, 0.1);
+.info-card-full {
+    grid-column: span 2;
 }
 
 .info-label {
@@ -509,39 +716,20 @@ body {
     text-transform: uppercase;
     letter-spacing: 0.5px;
     color: var(--text-muted);
-    margin-bottom: 8px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
+    margin-bottom: 5px;
 }
 
 .info-label i {
-    font-size: 12px;
-    color: var(--primary);
+    margin-right: 5px;
 }
 
 .info-value {
     font-size: 14px;
     font-weight: 500;
     color: var(--text-primary);
-    word-break: break-word;
 }
 
-.info-value .badge {
-    display: inline-block;
-    padding: 4px 12px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: 600;
-}
-
-.info-card-full {
-    grid-column: span 2;
-    background: var(--light);
-    border-radius: 14px;
-    padding: 14px 16px;
-}
-
+/* Form Styles */
 .form-group {
     margin-bottom: 20px;
 }
@@ -549,31 +737,33 @@ body {
 .form-group label {
     display: block;
     margin-bottom: 8px;
-    color: var(--text-secondary);
     font-weight: 500;
-    font-size: 13px;
+    color: var(--text-primary);
+    font-size: 14px;
 }
 
 .form-group label i {
-    color: var(--primary);
-    margin-right: 6px;
+    color: var(--accent);
+    margin-right: 8px;
     width: 16px;
 }
 
 .form-control {
     width: 100%;
-    padding: 12px 16px;
-    border: 2px solid var(--border-light);
-    border-radius: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
     font-size: 14px;
-    transition: all 0.2s ease;
-    background: var(--white);
+    color: var(--text-primary);
+    transition: all 0.3s;
+    background-color: var(--white);
+    box-sizing: border-box;
 }
 
 .form-control:focus {
     outline: none;
     border-color: var(--primary);
-    box-shadow: 0 0 0 4px rgba(107, 140, 255, 0.1);
+    box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.1);
 }
 
 select.form-control {
@@ -582,118 +772,109 @@ select.form-control {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236B6B6B'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 12px center;
-    background-size: 20px;
+    background-size: 18px;
 }
 
-.modal-footer {
-    padding: 20px 28px;
-    border-top: 1px solid var(--border-light);
-    background: var(--light);
-    display: flex;
-    gap: 12px;
-    justify-content: flex-end;
-}
-
+/* Buttons */
 .btn-modal {
-    padding: 10px 24px;
+    padding: 8px 20px;
     border: none;
-    border-radius: 12px;
+    border-radius: 8px;
     font-size: 14px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.3s;
     display: inline-flex;
     align-items: center;
     gap: 8px;
 }
 
 .btn-modal-primary {
-    background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
-    color: var(--white);
+    background-color: var(--accent);
+    color: var(--text-primary);
 }
 
 .btn-modal-primary:hover {
+    background-color: #e69eb0;
     transform: translateY(-2px);
-    box-shadow: 0 6px 14px rgba(107, 140, 255, 0.4);
+    box-shadow: 0 4px 12px rgba(248, 176, 192, 0.3);
 }
 
 .btn-modal-secondary {
-    background: var(--white);
-    color: var(--text-primary);
-    border: 1px solid var(--border-light);
+    background-color: #6c757d;
+    color: var(--text-light);
 }
 
 .btn-modal-secondary:hover {
-    background: var(--light);
-    border-color: var(--primary);
+    background-color: #5a6268;
+    transform: translateY(-2px);
 }
 
 .btn-modal-danger {
-    background: linear-gradient(135deg, var(--danger) 0%, #d32f2f 100%);
-    color: var(--white);
+    background-color: var(--danger);
+    color: var(--text-light);
 }
 
 .btn-modal-danger:hover {
+    opacity: 0.9;
     transform: translateY(-2px);
-    box-shadow: 0 6px 14px rgba(244, 67, 54, 0.4);
+}
+
+.btn-modal-success {
+    background-color: var(--success);
+    color: var(--text-light);
+}
+
+.btn-modal-success:hover {
+    opacity: 0.9;
+    transform: translateY(-2px);
 }
 
 .btn-modal-warning {
-    background: linear-gradient(135deg, var(--warning) 0%, #f57c00 100%);
-    color: var(--white);
+    background-color: var(--warning);
+    color: var(--text-light);
 }
 
 .btn-modal-warning:hover {
+    opacity: 0.9;
     transform: translateY(-2px);
-    box-shadow: 0 6px 14px rgba(255, 152, 0, 0.4);
 }
 
-.delete-warning {
-    text-align: center;
-    margin-bottom: 20px;
-}
-
-.delete-icon {
-    width: 64px;
-    height: 64px;
-    background: rgba(244, 67, 54, 0.1);
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin: 0 auto 16px;
-}
-
-.delete-icon i {
-    font-size: 32px;
-    color: var(--danger);
+/* Badge Styles */
+.badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
 }
 
 .badge-success {
-    background: #E8F5E9;
-    color: #2E7D32;
+    background-color: var(--success-light);
+    color: var(--success);
 }
 
 .badge-danger {
-    background: #FFEBEE;
-    color: #C62828;
+    background-color: #FFEBEE;
+    color: var(--danger);
 }
 
 .badge-warning {
-    background: #FFF3E0;
-    color: #E65100;
+    background-color: #FFF3E0;
+    color: var(--warning);
 }
 
 .badge-info {
-    background: #E3F2FD;
+    background-color: #E3F2FD;
     color: #1976D2;
 }
 
 .badge-locked {
-    background: #FFEBEE;
-    color: #f44336;
+    background-color: #FFEBEE;
+    color: var(--danger);
 }
 
+/* Pending Container */
 .pending-container {
     background: linear-gradient(135deg, #FFF9E6 0%, var(--white) 100%);
     border-left: 4px solid var(--warning);
@@ -716,17 +897,18 @@ select.form-control {
 
 .locked-row {
     background-color: #FFEBEE;
-    border-left: 3px solid #f44336;
+    border-left: 3px solid var(--danger);
 }
 
 .locked-row:hover {
     background-color: #FFCDD2 !important;
 }
 
+/* Table Container */
 .table-container {
     background: var(--white);
     border-radius: 12px;
-    padding: 20px;
+    padding: 25px;
     margin-bottom: 30px;
     box-shadow: 0 4px 12px rgba(107, 140, 255, 0.1);
 }
@@ -744,7 +926,7 @@ select.form-control {
 
 .table-header h2 {
     color: var(--primary);
-    font-size: 18px;
+    font-size: 20px;
     margin: 0;
 }
 
@@ -753,18 +935,19 @@ select.form-control {
     margin-right: 10px;
 }
 
+/* Search Box */
 .search-box {
     display: flex;
     gap: 10px;
 }
 
 .search-box input[type="text"] {
-    padding: 12px 15px;
+    padding: 10px 12px;
     border: 1px solid var(--border-light);
     border-radius: 8px;
     font-size: 14px;
     width: 250px;
-    transition: border-color 0.2s, box-shadow 0.2s;
+    transition: all 0.3s;
 }
 
 .search-box input[type="text"]:focus {
@@ -774,23 +957,24 @@ select.form-control {
 }
 
 .search-box button {
-    padding: 12px 24px;
-    background: var(--primary);
-    color: var(--text-light);
+    padding: 10px 24px;
+    background: var(--accent);
+    color: var(--text-primary);
     border: none;
     border-radius: 8px;
     font-size: 14px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.3s;
 }
 
 .search-box button:hover {
-    background: var(--secondary);
+    background-color: #e69eb0;
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(107, 140, 255, 0.3);
+    box-shadow: 0 4px 12px rgba(248, 176, 192, 0.3);
 }
 
+/* Table */
 table {
     width: 100%;
     border-collapse: collapse;
@@ -802,7 +986,7 @@ thead tr {
 }
 
 th {
-    padding: 15px 10px;
+    padding: 12px 10px;
     text-align: left;
     color: var(--primary);
     font-weight: 600;
@@ -811,7 +995,7 @@ th {
 }
 
 td {
-    padding: 15px 10px;
+    padding: 12px 10px;
     border-bottom: 1px solid var(--border-light);
     color: var(--text-secondary);
     font-size: 13px;
@@ -821,6 +1005,7 @@ tr:hover {
     background-color: var(--light);
 }
 
+/* Action Buttons */
 .action-buttons {
     display: flex;
     gap: 8px;
@@ -833,12 +1018,12 @@ tr:hover {
     align-items: center;
     justify-content: center;
     gap: 6px;
-    padding: 6px 12px;
+    padding: 5px 12px;
     border-radius: 8px;
     border: none;
     color: var(--white);
     text-decoration: none;
-    transition: all 0.3s;
+    transition: all 0.2s;
     cursor: pointer;
     font-size: 12px;
     font-weight: 500;
@@ -860,26 +1045,19 @@ tr:hover {
     box-shadow: 0 4px 12px rgba(0,0,0,0.2);
 }
 
-.badge {
-    padding: 4px 10px;
-    border-radius: 20px;
-    font-size: 11px;
-    font-weight: 600;
-    display: inline-block;
-}
-
+/* General Button */
 .btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
-    padding: 8px 16px;
+    padding: 8px 20px;
     border: none;
-    border-radius: 6px;
-    font-size: 13px;
+    border-radius: 8px;
+    font-size: 14px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.3s;
     text-decoration: none;
 }
 
@@ -894,6 +1072,7 @@ tr:hover {
     box-shadow: 0 4px 12px rgba(248, 176, 192, 0.3);
 }
 
+/* Alerts */
 .alert {
     padding: 15px 20px;
     border-radius: 8px;
@@ -934,43 +1113,97 @@ tr:hover {
 .text-muted { color: var(--text-muted); }
 .text-center { text-align: center; }
 
+/* Responsive */
 @media (max-width: 768px) {
-    .table-container { padding: 15px; overflow-x: auto; }
-    .action-buttons { flex-direction: column; width: 100%; }
-    .action-btn { width: 100%; justify-content: center; }
-    .table-header { flex-direction: column; align-items: flex-start; }
-    .search-box { flex-direction: column; width: 100%; }
-    .search-box input[type="text"] { width: 100%; }
-    .search-box button { width: 100%; }
-    .modal-content { width: 95%; margin: 5% auto; }
-    .info-grid { grid-template-columns: 1fr; gap: 12px; }
-    .info-card-full { grid-column: span 1; }
+    .table-container { 
+        padding: 20px; 
+        overflow-x: auto; 
+    }
+    
+    .action-buttons { 
+        flex-direction: column; 
+        width: 100%; 
+    }
+    
+    .action-btn { 
+        width: 100%; 
+        justify-content: center; 
+    }
+    
+    .table-header { 
+        flex-direction: column; 
+        align-items: flex-start; 
+    }
+    
+    .search-box { 
+        flex-direction: column; 
+        width: 100%; 
+    }
+    
+    .search-box input[type="text"] { 
+        width: 100%; 
+    }
+    
+    .search-box button { 
+        width: 100%; 
+    }
+    
+    .modal-container {
+        margin: 20% auto;
+        padding: 20px;
+        width: 95%;
+    }
+    
+    .delete-modal-container {
+        width: 95%;
+    }
+    
+    .info-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+    
+    .info-card-full {
+        grid-column: span 1;
+    }
+    
+    .modal-footer {
+        flex-direction: column-reverse;
+    }
+    
+    .btn-modal {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .delete-modal-footer {
+        flex-direction: column-reverse;
+    }
 }
 </style>
 
 <!-- View User Modal -->
-<div id="viewModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
+<div id="viewModal" class="modal-overlay">
+    <div class="modal-container">
+        <div class="modal-header-settings">
+            <h3><i class="fas fa-user-circle"></i> User Details</h3>
             <span class="modal-close" onclick="closeModal('viewModal')">&times;</span>
-            <div class="modal-avatar-wrapper">
-                <div class="avatar-large" id="view_avatar_container">
-                    <img id="view_avatar_img" src="" alt="Avatar" style="display: none;">
-                    <div id="view_avatar_placeholder" class="avatar-placeholder">
-                        <i class="fas fa-user-circle"></i>
-                        <span class="avatar-text" style="display: none;"></span>
-                    </div>
-                    <div class="avatar-status">
-                        <i class="fas fa-circle" id="view_status_icon"></i>
-                    </div>
+        </div>
+        <div>
+            <div class="avatar-large" id="view_avatar_container">
+                <img id="view_avatar_img" src="" alt="Avatar" style="display: none;">
+                <div id="view_avatar_placeholder" class="avatar-placeholder">
+                    <i class="fas fa-user-circle"></i>
+                    <span class="avatar-text" style="display: none;"></span>
+                </div>
+                <div class="avatar-status">
+                    <i class="fas fa-circle" id="view_status_icon"></i>
                 </div>
             </div>
             <div class="modal-user-name">
                 <h2 id="view_fullname">-</h2>
                 <p id="view_username_display">@username</p>
             </div>
-        </div>
-        <div class="modal-body">
             <div class="info-grid">
                 <div class="info-card">
                     <div class="info-label"><i class="fas fa-envelope"></i> Email Address</div>
@@ -988,29 +1221,86 @@ tr:hover {
                     <div class="info-label"><i class="fas fa-user"></i> Last Name</div>
                     <div class="info-value" id="view_lastname">-</div>
                 </div>
-                <div class="info-card-full">
+                <div class="info-card info-card-full">
                     <div class="info-label"><i class="fas fa-calendar-alt"></i> Member Since</div>
                     <div class="info-value" id="view_created">-</div>
                 </div>
             </div>
         </div>
         <div class="modal-footer">
-            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeModal('viewModal')">
-                <i class="fas fa-times"></i> Close
-            </button>
+            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeModal('viewModal')">Close</button>
         </div>
     </div>
 </div>
 
+<!-- Add User Modal -->
+<div id="addUserModal" class="modal-overlay">
+    <div class="modal-container">
+        <form method="POST" action="" id="addUserForm">
+            <div class="modal-header-settings">
+                <h3><i class="fas fa-user-plus"></i> Add New User</h3>
+                <span class="modal-close" onclick="closeModal('addUserModal')">&times;</span>
+            </div>
+            <div>
+                <input type="hidden" name="add_user" value="1">
+                <div class="form-group">
+                    <label><i class="fas fa-user"></i> First Name *</label>
+                    <input type="text" name="firstname" id="add_firstname" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label><i class="fas fa-user"></i> Last Name *</label>
+                    <input type="text" name="lastname" id="add_lastname" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label><i class="fas fa-at"></i> Username *</label>
+                    <input type="text" name="username" id="add_username" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label><i class="fas fa-envelope"></i> Email *</label>
+                    <input type="email" name="email" id="add_email" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label><i class="fas fa-tag"></i> Role *</label>
+                    <select name="role" id="add_role" class="form-control">
+                        <option value="user">User</option>
+                        <option value="admin">Admin</option>
+                        <option value="super_admin">Super Admin</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label><i class="fas fa-circle"></i> Status</label>
+                    <select name="status" id="add_status" class="form-control">
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label><i class="fas fa-lock"></i> Password *</label>
+                    <input type="password" name="password" id="add_password" class="form-control" required minlength="6">
+                    <small class="text-muted">Minimum 6 characters</small>
+                </div>
+                <div class="form-group">
+                    <label><i class="fas fa-lock"></i> Confirm Password *</label>
+                    <input type="password" id="add_confirm_password" class="form-control" required>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-modal btn-modal-secondary" onclick="closeModal('addUserModal')">Cancel</button>
+                <button type="submit" class="btn-modal btn-modal-primary" onclick="validateAddUserForm()">Add User</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <!-- Edit User Modal -->
-<div id="editModal" class="modal">
-    <div class="modal-content">
+<div id="editModal" class="modal-overlay">
+    <div class="modal-container">
         <form method="POST" action="" id="editForm">
-            <div class="modal-header">
+            <div class="modal-header-settings">
                 <h3><i class="fas fa-edit"></i> Edit User</h3>
                 <span class="modal-close" onclick="closeModal('editModal')">&times;</span>
             </div>
-            <div class="modal-body">
+            <div>
                 <input type="hidden" name="update_user" value="1">
                 <input type="hidden" name="user_id" id="edit_user_id">
                 <div class="form-group">
@@ -1042,89 +1332,125 @@ tr:hover {
                 </div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn-modal btn-modal-secondary" onclick="closeModal('editModal')">
-                    <i class="fas fa-times"></i> Cancel
-                </button>
-                <button type="submit" class="btn-modal btn-modal-primary">
-                    <i class="fas fa-save"></i> Save Changes
-                </button>
+                <button type="button" class="btn-modal btn-modal-secondary" onclick="closeModal('editModal')">Cancel</button>
+                <button type="submit" class="btn-modal btn-modal-primary">Save Changes</button>
             </div>
         </form>
     </div>
 </div>
 
 <!-- Delete User Modal -->
-<div id="deleteModal" class="modal">
-    <div class="modal-content">
+<div id="deleteModal" class="delete-modal-overlay">
+    <div class="delete-modal-container">
         <form method="POST" action="" id="deleteForm">
-            <div class="modal-header" style="background: linear-gradient(135deg, var(--danger) 0%, #d32f2f 100%);">
+            <div class="delete-modal-header">
                 <h3><i class="fas fa-trash-alt"></i> Delete User</h3>
-                <span class="modal-close" onclick="closeModal('deleteModal')">&times;</span>
             </div>
-            <div class="modal-body">
+            <div class="delete-modal-body">
                 <input type="hidden" name="delete_user" value="1">
                 <input type="hidden" name="user_id" id="delete_user_id">
                 <div class="delete-warning">
-                    <div class="delete-icon">
-                        <i class="fas fa-exclamation-triangle"></i>
-                    </div>
-                    <p style="font-size: 16px; font-weight: 500; margin-bottom: 8px;">Are you absolutely sure?</p>
-                    <p style="color: var(--text-muted); font-size: 13px;">This action cannot be undone.</p>
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <p><strong>Are you absolutely sure?</strong></p>
+                    <p class="warning-text">This action cannot be undone.</p>
                 </div>
-                <div class="info-card" style="margin-top: 16px;">
-                    <div class="info-label"><i class="fas fa-user"></i> User to delete</div>
-                    <div class="info-value">
-                        <strong id="delete_username">-</strong><br>
-                        <small id="delete_email" style="color: var(--text-muted);">-</small>
-                    </div>
+                <div class="delete-item-details">
+                    <div class="detail-label">USER TO DELETE</div>
+                    <div class="detail-name" id="delete_username">-</div>
+                    <div class="detail-extra" id="delete_email">-</div>
                 </div>
             </div>
-            <div class="modal-footer">
-                <button type="button" class="btn-modal btn-modal-secondary" onclick="closeModal('deleteModal')">
-                    <i class="fas fa-times"></i> Cancel
-                </button>
-                <button type="submit" class="btn-modal btn-modal-danger">
-                    <i class="fas fa-trash"></i> Delete User
-                </button>
+            <div class="delete-modal-footer">
+                <button type="button" class="btn-modal btn-modal-secondary" onclick="closeModal('deleteModal')">Cancel</button>
+                <button type="submit" class="btn-modal btn-modal-danger"><i class="fas fa-trash-alt"></i> Delete User</button>
             </div>
         </form>
     </div>
 </div>
 
 <!-- Unlock User Modal -->
-<div id="unlockModal" class="modal">
-    <div class="modal-content">
+<div id="unlockModal" class="delete-modal-overlay">
+    <div class="delete-modal-container">
         <form method="POST" action="" id="unlockForm">
-            <div class="modal-header" style="background: linear-gradient(135deg, var(--warning) 0%, #f57c00 100%);">
+            <div class="warning-modal-header">
                 <h3><i class="fas fa-unlock-alt"></i> Unlock Account</h3>
-                <span class="modal-close" onclick="closeModal('unlockModal')">&times;</span>
             </div>
-            <div class="modal-body">
+            <div class="delete-modal-body">
                 <input type="hidden" name="unlock_user" value="1">
                 <input type="hidden" name="user_id" id="unlock_user_id">
                 <div class="delete-warning">
-                    <div class="delete-icon" style="background: rgba(255, 152, 0, 0.1);">
-                        <i class="fas fa-lock" style="color: var(--warning);"></i>
-                    </div>
-                    <p style="font-size: 16px; font-weight: 500; margin-bottom: 8px;">Unlock User Account</p>
-                    <p style="color: var(--text-muted); font-size: 13px;">This will reset login attempts and remove the lock.</p>
+                    <i class="fas fa-lock"></i>
+                    <p><strong>Unlock User Account?</strong></p>
+                    <p class="warning-text">This will reset login attempts and remove the lock.</p>
                 </div>
-                <div class="info-card" style="margin-top: 16px;">
-                    <div class="info-label"><i class="fas fa-user"></i> User to unlock</div>
-                    <div class="info-value">
-                        <strong id="unlock_username">-</strong><br>
-                        <small id="unlock_email" style="color: var(--text-muted);">-</small>
-                        <div id="unlock_locked_until" style="margin-top: 8px; font-size: 12px; color: var(--warning);"></div>
-                    </div>
+                <div class="delete-item-details">
+                    <div class="detail-label">USER TO UNLOCK</div>
+                    <div class="detail-name" id="unlock_username">-</div>
+                    <div class="detail-extra" id="unlock_email">-</div>
+                    <div class="detail-extra" id="unlock_locked_until" style="margin-top: 8px; color: var(--warning);"></div>
                 </div>
             </div>
-            <div class="modal-footer">
-                <button type="button" class="btn-modal btn-modal-secondary" onclick="closeModal('unlockModal')">
-                    <i class="fas fa-times"></i> Cancel
-                </button>
-                <button type="submit" class="btn-modal btn-modal-warning">
-                    <i class="fas fa-unlock-alt"></i> Unlock Account
-                </button>
+            <div class="delete-modal-footer">
+                <button type="button" class="btn-modal btn-modal-secondary" onclick="closeModal('unlockModal')">Cancel</button>
+                <button type="submit" class="btn-modal btn-modal-warning"><i class="fas fa-unlock-alt"></i> Unlock Account</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Approve User Modal -->
+<div id="approveModal" class="delete-modal-overlay">
+    <div class="delete-modal-container">
+        <form method="POST" action="" id="approveForm">
+            <div class="success-modal-header">
+                <h3><i class="fas fa-check-circle"></i> Approve User</h3>
+            </div>
+            <div class="delete-modal-body">
+                <input type="hidden" name="action" value="approve">
+                <input type="hidden" name="user_id" id="approve_user_id">
+                <div class="delete-warning">
+                    <i class="fas fa-user-check"></i>
+                    <p><strong>Approve Registration?</strong></p>
+                    <p class="warning-text">This user will be able to login immediately.<br>An approval email will be sent.</p>
+                </div>
+                <div class="delete-item-details">
+                    <div class="detail-label">USER TO APPROVE</div>
+                    <div class="detail-name" id="approve_username">-</div>
+                    <div class="detail-extra" id="approve_email">-</div>
+                </div>
+            </div>
+            <div class="delete-modal-footer">
+                <button type="button" class="btn-modal btn-modal-secondary" onclick="closeModal('approveModal')">Cancel</button>
+                <button type="submit" class="btn-modal btn-modal-success"><i class="fas fa-check-circle"></i> Approve User</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Reject User Modal -->
+<div id="rejectModal" class="delete-modal-overlay">
+    <div class="delete-modal-container">
+        <form method="POST" action="" id="rejectForm">
+            <div class="delete-modal-header">
+                <h3><i class="fas fa-times-circle"></i> Reject User</h3>
+            </div>
+            <div class="delete-modal-body">
+                <input type="hidden" name="action" value="reject">
+                <input type="hidden" name="user_id" id="reject_user_id">
+                <div class="delete-warning">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <p><strong>Reject Registration?</strong></p>
+                    <p class="warning-text">This action cannot be undone. The user will be removed.<br>A rejection email will be sent.</p>
+                </div>
+                <div class="delete-item-details">
+                    <div class="detail-label">USER TO REJECT</div>
+                    <div class="detail-name" id="reject_username">-</div>
+                    <div class="detail-extra" id="reject_email">-</div>
+                </div>
+            </div>
+            <div class="delete-modal-footer">
+                <button type="button" class="btn-modal btn-modal-secondary" onclick="closeModal('rejectModal')">Cancel</button>
+                <button type="submit" class="btn-modal btn-modal-danger"><i class="fas fa-times-circle"></i> Reject User</button>
             </div>
         </form>
     </div>
@@ -1174,16 +1500,8 @@ tr:hover {
                         <td><?php echo htmlspecialchars($pending['email']); ?></td>
                         <td><?php echo date('M d, Y h:i A', strtotime($pending['created_at'])); ?><br><small class="text-muted"><?php echo time_elapsed_string($pending['created_at']); ?></small></td>
                         <td class="action-buttons">
-                            <form method="POST" action="" style="display: inline-block;" onsubmit="return confirmApprove('<?php echo addslashes($pending['firstname']); ?>')">
-                                <input type="hidden" name="action" value="approve">
-                                <input type="hidden" name="user_id" value="<?php echo $pending['id']; ?>">
-                                <button type="submit" class="action-btn approve"><i class="fas fa-check-circle"></i> Approve</button>
-                            </form>
-                            <form method="POST" action="" style="display: inline-block;" onsubmit="return confirmReject('<?php echo addslashes($pending['firstname']); ?>')">
-                                <input type="hidden" name="action" value="reject">
-                                <input type="hidden" name="user_id" value="<?php echo $pending['id']; ?>">
-                                <button type="submit" class="action-btn reject"><i class="fas fa-times-circle"></i> Reject</button>
-                            </form>
+                            <button onclick="openApproveModal(<?php echo $pending['id']; ?>, '<?php echo htmlspecialchars(addslashes($pending['firstname'] . ' ' . $pending['lastname'])); ?>', '<?php echo htmlspecialchars($pending['email']); ?>')" class="action-btn approve"><i class="fas fa-check-circle"></i> Approve</button>
+                            <button onclick="openRejectModal(<?php echo $pending['id']; ?>, '<?php echo htmlspecialchars(addslashes($pending['firstname'] . ' ' . $pending['lastname'])); ?>', '<?php echo htmlspecialchars($pending['email']); ?>')" class="action-btn reject"><i class="fas fa-times-circle"></i> Reject</button>
                         </td>
                     </tr>
                     <?php endwhile; ?>
@@ -1227,7 +1545,7 @@ tr:hover {
         </form>
     </div>
     
-    <button class="btn btn-primary" onclick="addUser()" style="margin-bottom: 20px;">
+    <button class="btn btn-primary" onclick="openAddUserModal()" style="margin-bottom: 20px;">
         <i class="fas fa-plus"></i> Add New User
     </button>
     
@@ -1262,7 +1580,7 @@ tr:hover {
                             $badge_class = $role_badges[$user['role']] ?? 'badge-info';
                             ?>
                             <span class="badge <?php echo $badge_class; ?>"><?php echo ucfirst(str_replace('_', ' ', $user['role'])); ?></span>
-                         </td>
+                          </td>
                         <td>
                             <?php if ($user['status'] == 'active'): ?>
                                 <span class="badge badge-success">Active</span>
@@ -1289,7 +1607,7 @@ tr:hover {
                     </tr>
                     <?php endwhile; ?>
                 <?php else: ?>
-                    <tr><td colspan="8" class="text-center">No users found</td></tr>
+                    <tr><td colspan="8" class="text-center">No users found</span></tr>
                 <?php endif; ?>
             </tbody>
         </table>
@@ -1297,8 +1615,26 @@ tr:hover {
 </div>
 
 <script>
-function addUser() {
-    window.location.href = 'add_user.php';
+function openAddUserModal() {
+    document.getElementById('addUserForm').reset();
+    document.getElementById('addUserModal').style.display = 'block';
+}
+
+function validateAddUserForm() {
+    var password = document.getElementById('add_password').value;
+    var confirm = document.getElementById('add_confirm_password').value;
+    
+    if (password !== confirm) {
+        alert('Passwords do not match!');
+        return false;
+    }
+    
+    if (password.length < 6) {
+        alert('Password must be at least 6 characters!');
+        return false;
+    }
+    
+    document.getElementById('addUserForm').submit();
 }
 
 function viewUser(userId) {
@@ -1392,7 +1728,7 @@ function deleteUserModal(userId, username, email) {
     document.getElementById('delete_user_id').value = userId;
     document.getElementById('delete_username').innerText = username;
     document.getElementById('delete_email').innerText = email;
-    document.getElementById('deleteModal').style.display = 'block';
+    document.getElementById('deleteModal').style.display = 'flex';
 }
 
 function unlockUser(userId, username, email, lockedUntil) {
@@ -1401,23 +1737,32 @@ function unlockUser(userId, username, email, lockedUntil) {
     document.getElementById('unlock_email').innerText = email;
     var lockedDate = new Date(lockedUntil);
     document.getElementById('unlock_locked_until').innerHTML = '<i class="fas fa-clock"></i> Locked until: ' + lockedDate.toLocaleString();
-    document.getElementById('unlockModal').style.display = 'block';
+    document.getElementById('unlockModal').style.display = 'flex';
+}
+
+function openApproveModal(userId, fullname, email) {
+    document.getElementById('approve_user_id').value = userId;
+    document.getElementById('approve_username').innerText = fullname;
+    document.getElementById('approve_email').innerText = email;
+    document.getElementById('approveModal').style.display = 'flex';
+}
+
+function openRejectModal(userId, fullname, email) {
+    document.getElementById('reject_user_id').value = userId;
+    document.getElementById('reject_username').innerText = fullname;
+    document.getElementById('reject_email').innerText = email;
+    document.getElementById('rejectModal').style.display = 'flex';
 }
 
 function closeModal(modalId) {
     document.getElementById(modalId).style.display = 'none';
 }
 
-function confirmApprove(firstname) {
-    return confirm('Approve ' + firstname + '\'s registration? They will be able to login immediately. An approval email will be sent to the user.');
-}
-
-function confirmReject(firstname) {
-    return confirm('Reject ' + firstname + '\'s registration? This action cannot be undone. The user will be removed from the system. A rejection email will be sent to the user.');
-}
-
 window.onclick = function(event) {
-    if (event.target.classList.contains('modal')) {
+    if (event.target.classList.contains('modal-overlay')) {
+        event.target.style.display = 'none';
+    }
+    if (event.target.classList.contains('delete-modal-overlay')) {
         event.target.style.display = 'none';
     }
 }

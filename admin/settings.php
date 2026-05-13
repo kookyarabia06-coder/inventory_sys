@@ -8,20 +8,21 @@ require_once INCLUDE_PATH . '/auth.php';
 require_once INCLUDE_PATH . '/functions.php';
 
 // Require admin or superadmin role
-requireRole('admin' || 'superadmin' || 'supply');
+requireRole('admin'|| 'superadmin');
 
 $page_title = 'System Settings';
-$page_description = 'Manage fund clusters and system configurations';
+$page_description = 'Manage fund clusters, signatories, and system configurations';
 
 $message = '';
 $error = '';
 
-// Handle low stock threshold update
+// ============================================
+// LOW STOCK THRESHOLD HANDLER
+// ============================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_threshold') {
     $low_stock_threshold = intval($_POST['low_stock_threshold']);
     
     if ($low_stock_threshold >= 0) {
-        // Check if setting exists
         $check = $conn->query("SELECT id FROM system_settings WHERE setting_key = 'low_stock_threshold'");
         
         if ($check && $check->num_rows > 0) {
@@ -42,6 +43,74 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $error = "Please enter a valid number.";
     }
 }
+
+// ============================================
+// SIGNATORY HANDLERS
+// ============================================
+
+// Add Signatory
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add_signatory') {
+    $employee_id = !empty($_POST['employee_id']) ? intval($_POST['employee_id']) : null;
+    $name = trim($_POST['name']);
+    $position = trim($_POST['position']);
+    $is_active = isset($_POST['is_active']) ? 1 : 0;
+    
+    if (empty($name) || empty($position)) {
+        $error = "Name and position are required.";
+    } else {
+        $stmt = $conn->prepare("INSERT INTO signatories (employee_id, name, position, is_active, created_by) VALUES (?, ?, ?, ?, ?)");
+        $stmt->bind_param("issii", $employee_id, $name, $position, $is_active, $_SESSION['user_id']);
+        
+        if ($stmt->execute()) {
+            $message = "Signatory added successfully!";
+        } else {
+            $error = "Failed to add signatory: " . $stmt->error;
+        }
+        $stmt->close();
+    }
+}
+
+// Edit Signatory
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'edit_signatory') {
+    $id = intval($_POST['id']);
+    $employee_id = !empty($_POST['employee_id']) ? intval($_POST['employee_id']) : null;
+    $name = trim($_POST['name']);
+    $position = trim($_POST['position']);
+    $is_active = isset($_POST['is_active']) ? 1 : 0;
+    
+    if (empty($name) || empty($position)) {
+        $error = "Name and position are required.";
+    } else {
+        $stmt = $conn->prepare("UPDATE signatories SET employee_id = ?, name = ?, position = ?, is_active = ? WHERE id = ?");
+        $stmt->bind_param("issii", $employee_id, $name, $position, $is_active, $id);
+        
+        if ($stmt->execute()) {
+            $message = "Signatory updated successfully!";
+        } else {
+            $error = "Failed to update signatory.";
+        }
+        $stmt->close();
+    }
+}
+
+// Delete Signatory
+if (isset($_GET['delete_signatory']) && is_numeric($_GET['delete_signatory'])) {
+    $id = intval($_GET['delete_signatory']);
+    
+    $stmt = $conn->prepare("DELETE FROM signatories WHERE id = ?");
+    $stmt->bind_param("i", $id);
+    
+    if ($stmt->execute()) {
+        $message = "Signatory deleted successfully!";
+    } else {
+        $error = "Failed to delete signatory.";
+    }
+    $stmt->close();
+}
+
+// ============================================
+// FUND CLUSTER HANDLERS
+// ============================================
 
 // Handle fund cluster add
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add_fund') {
@@ -103,6 +172,10 @@ if (isset($_GET['delete_fund']) && is_numeric($_GET['delete_fund'])) {
     $stmt->close();
 }
 
+// ============================================
+// GET DATA
+// ============================================
+
 // Get current low stock threshold
 $low_stock_threshold = 5; // default
 $result = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key = 'low_stock_threshold'");
@@ -113,6 +186,26 @@ if ($result && $result->num_rows > 0) {
 
 // Get all fund clusters
 $fund_clusters = $conn->query("SELECT * FROM fund_cluster ORDER BY code");
+
+// Get all signatories with employee details
+$signatories = $conn->query("
+    SELECT s.*, 
+           e.firstname, e.lastname, e.middlename, e.department_id, e.position as emp_position,
+           d.name as department_name
+    FROM signatories s
+    LEFT JOIN employees e ON s.employee_id = e.id
+    LEFT JOIN departments d ON e.department_id = d.id
+    ORDER BY s.name
+");
+
+// Get employees for dropdown
+$employees = $conn->query("
+    SELECT e.id, e.firstname, e.lastname, e.middlename, e.position, d.name as department_name
+    FROM employees e
+    LEFT JOIN departments d ON e.department_id = d.id
+    WHERE e.status = 'Active'
+    ORDER BY e.lastname, e.firstname
+");
 
 include INCLUDE_PATH . '/header.php';
 ?>
@@ -214,7 +307,7 @@ include INCLUDE_PATH . '/header.php';
 .form-group-settings textarea,
 .form-group-settings select {
     width: 100%;
-    max-width: 400px;
+    max-width: 100%;
     padding: 10px 12px;
     border: 1px solid var(--border-light);
     border-radius: 8px;
@@ -257,24 +350,6 @@ include INCLUDE_PATH . '/header.php';
     box-shadow: 0 4px 12px rgba(248, 176, 192, 0.3);
 }
 
-.btn-add {
-    padding: 10px 24px;
-    background-color: var(--accent);
-    color: var(--text-primary);
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 500;
-    transition: all 0.3s;
-}
-
-.btn-add:hover {
-    background-color: #e69eb0;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(248, 176, 192, 0.3);
-}
-
 .btn-edit {
     padding: 5px 12px;
     background-color: var(--secondary);
@@ -310,21 +385,34 @@ include INCLUDE_PATH . '/header.php';
     transform: translateY(-1px);
 }
 
-.btn-cancel {
-    padding: 8px 16px;
+.btn-cancel-modal {
+    padding: 10px 20px;
     background-color: #6c757d;
     color: var(--text-light);
     border: none;
-    border-radius: 6px;
+    border-radius: 8px;
     cursor: pointer;
     font-size: 14px;
     transition: all 0.2s;
-    margin-right: 10px;
 }
 
-.btn-cancel:hover {
+.btn-cancel-modal:hover {
     background-color: #5a6268;
-    transform: translateY(-1px);
+}
+
+.btn-confirm-delete {
+    padding: 10px 20px;
+    background-color: var(--danger);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.btn-confirm-delete:hover {
+    background-color: #c82333;
 }
 
 .current-setting {
@@ -409,10 +497,111 @@ include INCLUDE_PATH . '/header.php';
     margin: 5% auto;
     padding: 25px;
     border-radius: 12px;
-    width: 500px;
+    width: 550px;
     max-width: 90%;
     box-shadow: 0 10px 30px rgba(107, 140, 255, 0.2);
     animation: modalSlideIn 0.3s;
+}
+
+/* Custom Delete Confirmation Modal */
+.delete-modal-overlay {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    backdrop-filter: blur(3px);
+    align-items: center;
+    justify-content: center;
+}
+
+.delete-modal-container {
+    background-color: var(--white);
+    border-radius: 16px;
+    width: 450px;
+    max-width: 90%;
+    box-shadow: 0 20px 35px rgba(0,0,0,0.2);
+    animation: modalSlideIn 0.2s;
+    overflow: hidden;
+}
+
+.delete-modal-header {
+    padding: 24px 24px 16px 24px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.delete-modal-header h3 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--danger);
+}
+
+.delete-modal-header h3 i {
+    margin-right: 10px;
+}
+
+.delete-modal-body {
+    padding: 24px;
+}
+
+.delete-warning {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.delete-warning i {
+    font-size: 48px;
+    color: var(--danger);
+    margin-bottom: 12px;
+}
+
+.delete-warning p {
+    margin: 8px 0;
+    font-size: 16px;
+}
+
+.delete-warning .warning-text {
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.delete-item-details {
+    background-color: var(--light);
+    border-radius: 12px;
+    padding: 16px;
+    margin-top: 16px;
+}
+
+.delete-item-details .detail-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+.delete-item-details .detail-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.delete-item-details .detail-extra {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.delete-modal-footer {
+    padding: 16px 24px 24px 24px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    border-top: 1px solid var(--border-light);
 }
 
 @keyframes modalSlideIn {
@@ -477,6 +666,17 @@ include INCLUDE_PATH . '/header.php';
     opacity: 0.5;
 }
 
+.checkbox-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.checkbox-group input {
+    width: auto;
+    max-width: 20px;
+}
+
 @media (max-width: 768px) {
     .settings-card {
         padding: 20px;
@@ -510,6 +710,10 @@ include INCLUDE_PATH . '/header.php';
         gap: 15px;
         align-items: flex-start;
     }
+    
+    .delete-modal-container {
+        width: 95%;
+    }
 }
 </style>
 
@@ -527,6 +731,70 @@ include INCLUDE_PATH . '/header.php';
     </div>
     <?php endif; ?>
 
+    <!-- Signatories Card -->
+    <div class="settings-card">
+        <div class="card-header">
+            <h2><i class="fas fa-signature"></i> Signatories</h2>
+            <button type="button" onclick="openSignatoryModal()" class="btn-open-modal">
+                <i class="fas fa-plus"></i> Add Signatory
+            </button>
+        </div>
+        <p>Manage signatories for printed reports and issuance documents.</p>
+        
+        <?php if ($signatories && $signatories->num_rows > 0): ?>
+        <div class="table-wrapper-settings">
+            <table class="settings-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Name</th>
+                        <th>Position / Department</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php while ($signatory = $signatories->fetch_assoc()): ?>
+                    <tr>
+                        <td><?php echo htmlspecialchars($signatory['id']); ?></td>
+                        <td>
+                            <strong><?php echo htmlspecialchars($signatory['name']); ?></strong>
+                            <?php if ($signatory['employee_id']): ?>
+                            <br><small class="text-muted">ID: <?php echo htmlspecialchars($signatory['employee_id']); ?></small>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <?php echo htmlspecialchars($signatory['position']); ?>
+                            <?php if ($signatory['department_name']): ?>
+                            <br><small class="text-muted"><?php echo htmlspecialchars($signatory['department_name']); ?></small>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <span class="status-badge <?php echo $signatory['is_active'] ? 'status-active' : 'status-inactive'; ?>">
+                                <?php echo $signatory['is_active'] ? 'Active' : 'Inactive'; ?>
+                            </span>
+                        </td>
+                        <td>
+                             <button onclick='editSignatory(<?php echo json_encode($signatory); ?>)' class="btn-edit">
+                                <i class="fas fa-edit"></i> Edit
+                            </button>
+                            <button onclick="openDeleteSignatoryModal(<?php echo $signatory['id']; ?>, '<?php echo htmlspecialchars(addslashes($signatory['name'])); ?>', '<?php echo htmlspecialchars(addslashes($signatory['position'])); ?>')" class="btn-delete">
+                                <i class="fas fa-trash"></i> Delete
+                            </button>
+                        </td>
+                    </tr>
+                    <?php endwhile; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php else: ?>
+        <div class="empty-state">
+            <i class="fas fa-signature"></i>
+            <p>No signatories found. Click the "Add Signatory" button to add one.</p>
+        </div>
+        <?php endif; ?>
+    </div>
+
     <!-- Low Stock Alert Settings Card -->
     <div class="settings-card">
         <h2><i class="fas fa-bell"></i> Low Stock Alert Settings</h2>
@@ -538,7 +806,7 @@ include INCLUDE_PATH . '/header.php';
             <div class="form-group-settings">
                 <label for="low_stock_threshold">Low Stock Threshold:</label>
                 <input type="number" name="low_stock_threshold" id="low_stock_threshold" 
-                       value="<?php echo $low_stock_threshold; ?>" min="0">
+                       value="<?php echo $low_stock_threshold; ?>" min="0" style="max-width: 200px;">
                 <small>Items with quantity &lt;= this number will appear in Low Stock alerts.</small>
             </div>
             
@@ -581,25 +849,31 @@ include INCLUDE_PATH . '/header.php';
                 <tbody>
                     <?php while ($fund = $fund_clusters->fetch_assoc()): ?>
                     <tr>
-                        <td><?php echo $fund['id']; ?></td>
+                        <td><?php echo htmlspecialchars($fund['id']); ?></td>
                         <td><strong><?php echo htmlspecialchars($fund['code']); ?></strong></td>
                         <td><?php echo htmlspecialchars($fund['name']); ?></td>
                         <td><?php echo htmlspecialchars($fund['description']); ?></td>
                         <td>
                             <span class="status-badge <?php echo $fund['status'] == 'active' ? 'status-active' : 'status-inactive'; ?>">
-                                <?php echo ucfirst($fund['status']); ?>
+                                <?php echo ucfirst(htmlspecialchars($fund['status'])); ?>
                             </span>
                         </td>
-                        <td><?php echo date('Y-m-d', strtotime($fund['date_created'])); ?></td>
                         <td>
-                            <button onclick="openEditModal(<?php echo htmlspecialchars(json_encode($fund)); ?>)" class="btn-edit">
+                            <?php 
+                            if (!empty($fund['date_created']) && $fund['date_created'] != '0000-00-00 00:00:00') {
+                                echo date('Y-m-d', strtotime($fund['date_created']));
+                            } else {
+                                echo '—';
+                            }
+                            ?>
+                        </td>
+                        <td>
+                             <button onclick='editFund(<?php echo json_encode($fund); ?>)' class="btn-edit">
                                 <i class="fas fa-edit"></i> Edit
                             </button>
-                            <a href="?delete_fund=<?php echo $fund['id']; ?>" 
-                               onclick="return confirm('Are you sure you want to delete fund cluster: <?php echo htmlspecialchars($fund['code']); ?> - <?php echo htmlspecialchars($fund['name']); ?>?')"
-                               class="btn-delete">
+                            <button onclick="openDeleteFundModal(<?php echo $fund['id']; ?>, '<?php echo htmlspecialchars(addslashes($fund['code'])); ?>', '<?php echo htmlspecialchars(addslashes($fund['name'])); ?>')" class="btn-delete">
                                 <i class="fas fa-trash"></i> Delete
-                            </a>
+                            </button>
                         </td>
                     </tr>
                     <?php endwhile; ?>
@@ -612,6 +886,109 @@ include INCLUDE_PATH . '/header.php';
             <p>No fund clusters found. Click the "Add Fund Cluster" button to create one.</p>
         </div>
         <?php endif; ?>
+    </div>
+</div>
+
+<!-- Delete Signatory Confirmation Modal -->
+<div id="deleteSignatoryModal" class="delete-modal-overlay">
+    <div class="delete-modal-container">
+        <div class="delete-modal-header">
+            <h3><i class="fas fa-exclamation-triangle"></i> Delete Signatory</h3>
+        </div>
+        <div class="delete-modal-body">
+            <div class="delete-warning">
+                <i class="fas fa-trash-alt"></i>
+                <p><strong>Are you absolutely sure?</strong></p>
+                <p class="warning-text">This action cannot be undone.</p>
+            </div>
+            <div class="delete-item-details">
+                <div class="detail-label">SIGNATORY TO DELETE</div>
+                <div class="detail-name" id="deleteSignatoryName"></div>
+                <div class="detail-extra" id="deleteSignatoryPosition"></div>
+            </div>
+        </div>
+        <div class="delete-modal-footer">
+            <button type="button" class="btn-cancel-modal" onclick="closeDeleteSignatoryModal()">Cancel</button>
+            <a href="#" id="confirmDeleteSignatoryBtn" class="btn-confirm-delete">Delete Signatory</a>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Fund Cluster Confirmation Modal -->
+<div id="deleteFundModal" class="delete-modal-overlay">
+    <div class="delete-modal-container">
+        <div class="delete-modal-header">
+            <h3><i class="fas fa-exclamation-triangle"></i> Delete Fund Cluster</h3>
+        </div>
+        <div class="delete-modal-body">
+            <div class="delete-warning">
+                <i class="fas fa-trash-alt"></i>
+                <p><strong>Are you absolutely sure?</strong></p>
+                <p class="warning-text">This action cannot be undone.</p>
+            </div>
+            <div class="delete-item-details">
+                <div class="detail-label">FUND CLUSTER TO DELETE</div>
+                <div class="detail-name" id="deleteFundName"></div>
+                <div class="detail-extra" id="deleteFundCode"></div>
+            </div>
+        </div>
+        <div class="delete-modal-footer">
+            <button type="button" class="btn-cancel-modal" onclick="closeDeleteFundModal()">Cancel</button>
+            <a href="#" id="confirmDeleteFundBtn" class="btn-confirm-delete">Delete Fund Cluster</a>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Signatory Modal -->
+<div id="signatoryModal" class="modal-overlay">
+    <div class="modal-container">
+        <div class="modal-header-settings">
+            <h3 id="signatoryModalTitle"><i class="fas fa-signature"></i> Add Signatory</h3>
+            <span class="modal-close" onclick="closeSignatoryModal()">&times;</span>
+        </div>
+        
+        <form method="POST" action="" id="signatoryForm">
+            <input type="hidden" name="action" id="signatory_action" value="add_signatory">
+            <input type="hidden" name="id" id="signatory_id">
+            
+            <div class="form-group-settings">
+                <label for="employee_id">Select Employee (Optional)</label>
+                <select name="employee_id" id="employee_id" onchange="fillEmployeeDetails()">
+                    <option value="">-- Select Employee --</option>
+                    <?php if ($employees && $employees->num_rows > 0): 
+                        while($emp = $employees->fetch_assoc()): ?>
+                    <option value="<?php echo $emp['id']; ?>">
+                        <?php echo htmlspecialchars($emp['lastname'] . ', ' . $emp['firstname'] . ' - ' . $emp['position'] . ($emp['department_name'] ? ' (' . $emp['department_name'] . ')' : '')); ?>
+                    </option>
+                    <?php endwhile; endif; ?>
+                </select>
+                <small>Select an employee to auto-fill name and position, or enter manually below.</small>
+            </div>
+            
+            <div class="form-group-settings">
+                <label for="signatory_name">Full Name: <span style="color: var(--danger);">*</span></label>
+                <input type="text" name="name" id="signatory_name" required>
+            </div>
+            
+            <div class="form-group-settings">
+                <label for="signatory_position">Position: <span style="color: var(--danger);">*</span></label>
+                <input type="text" name="position" id="signatory_position" required>
+            </div>
+            
+            <div class="form-group-settings checkbox-group">
+                <input type="checkbox" name="is_active" id="is_active" value="1" checked>
+                <label for="is_active" style="margin-bottom: 0;">Active</label>
+            </div>
+            
+            <div class="modal-footer">
+                <button type="button" onclick="closeSignatoryModal()" class="btn-cancel">
+                    <i class="fas fa-times"></i> Cancel
+                </button>
+                <button type="submit" class="btn-save">
+                    <i class="fas fa-save"></i> Save Signatory
+                </button>
+            </div>
+        </form>
     </div>
 </div>
 
@@ -664,7 +1041,7 @@ include INCLUDE_PATH . '/header.php';
     </div>
 </div>
 
-<!-- Edit Modal -->
+<!-- Edit Fund Modal -->
 <div id="editModal" class="modal-overlay">
     <div class="modal-container">
         <div class="modal-header-settings">
@@ -712,9 +1089,86 @@ include INCLUDE_PATH . '/header.php';
 </div>
 
 <script>
+// Delete Signatory Modal Functions
+let deleteSignatoryId = null;
+
+function openDeleteSignatoryModal(id, name, position) {
+    deleteSignatoryId = id;
+    document.getElementById('deleteSignatoryName').innerText = name;
+    document.getElementById('deleteSignatoryPosition').innerText = position;
+    document.getElementById('deleteSignatoryModal').style.display = 'flex';
+    document.getElementById('confirmDeleteSignatoryBtn').href = '?delete_signatory=' + id;
+}
+
+function closeDeleteSignatoryModal() {
+    document.getElementById('deleteSignatoryModal').style.display = 'none';
+    deleteSignatoryId = null;
+}
+
+// Delete Fund Modal Functions
+let deleteFundId = null;
+
+function openDeleteFundModal(id, code, name) {
+    deleteFundId = id;
+    document.getElementById('deleteFundName').innerText = name;
+    document.getElementById('deleteFundCode').innerText = 'Code: ' + code;
+    document.getElementById('deleteFundModal').style.display = 'flex';
+    document.getElementById('confirmDeleteFundBtn').href = '?delete_fund=' + id;
+}
+
+function closeDeleteFundModal() {
+    document.getElementById('deleteFundModal').style.display = 'none';
+    deleteFundId = null;
+}
+
+// Signatory Functions
+function openSignatoryModal() {
+    document.getElementById('signatoryModalTitle').innerHTML = '<i class="fas fa-signature"></i> Add Signatory';
+    document.getElementById('signatory_action').value = 'add_signatory';
+    document.getElementById('signatory_id').value = '';
+    document.getElementById('signatoryForm').reset();
+    document.getElementById('is_active').checked = true;
+    document.getElementById('signatoryModal').style.display = 'block';
+}
+
+function editSignatory(signatory) {
+    document.getElementById('signatoryModalTitle').innerHTML = '<i class="fas fa-edit"></i> Edit Signatory';
+    document.getElementById('signatory_action').value = 'edit_signatory';
+    document.getElementById('signatory_id').value = signatory.id;
+    document.getElementById('employee_id').value = signatory.employee_id || '';
+    document.getElementById('signatory_name').value = signatory.name;
+    document.getElementById('signatory_position').value = signatory.position;
+    document.getElementById('is_active').checked = signatory.is_active == 1;
+    document.getElementById('signatoryModal').style.display = 'block';
+}
+
+function closeSignatoryModal() {
+    document.getElementById('signatoryModal').style.display = 'none';
+}
+
+function fillEmployeeDetails() {
+    var employeeSelect = document.getElementById('employee_id');
+    var selectedOption = employeeSelect.options[employeeSelect.selectedIndex];
+    
+    if (employeeSelect.value) {
+        var optionText = selectedOption.text;
+        var nameMatch = optionText.match(/^[^,]+,\s[^-]+/);
+        var positionMatch = optionText.match(/- ([^-]+)/);
+        
+        if (nameMatch) {
+            var fullName = nameMatch[0].trim();
+            document.getElementById('signatory_name').value = fullName;
+        }
+        
+        if (positionMatch) {
+            document.getElementById('signatory_position').value = positionMatch[1].trim();
+        }
+    }
+}
+
+// Fund Cluster Functions
 function openAddModal() {
     document.getElementById('addModal').style.display = 'block';
-    // Clear form fields
     document.getElementById('add_code').value = '';
     document.getElementById('add_name').value = '';
     document.getElementById('add_description').value = '';
@@ -725,7 +1179,7 @@ function closeAddModal() {
     document.getElementById('addModal').style.display = 'none';
 }
 
-function openEditModal(fund) {
+function editFund(fund) {
     document.getElementById('edit_id').value = fund.id;
     document.getElementById('edit_code').value = fund.code;
     document.getElementById('edit_name').value = fund.name;
@@ -740,14 +1194,26 @@ function closeEditModal() {
 
 // Close modals when clicking outside
 window.onclick = function(event) {
+    var signatoryModal = document.getElementById('signatoryModal');
     var addModal = document.getElementById('addModal');
     var editModal = document.getElementById('editModal');
+    var deleteSignatoryModal = document.getElementById('deleteSignatoryModal');
+    var deleteFundModal = document.getElementById('deleteFundModal');
     
+    if (event.target == signatoryModal) {
+        signatoryModal.style.display = 'none';
+    }
     if (event.target == addModal) {
         addModal.style.display = 'none';
     }
     if (event.target == editModal) {
         editModal.style.display = 'none';
+    }
+    if (event.target == deleteSignatoryModal) {
+        deleteSignatoryModal.style.display = 'none';
+    }
+    if (event.target == deleteFundModal) {
+        deleteFundModal.style.display = 'none';
     }
 }
 </script>

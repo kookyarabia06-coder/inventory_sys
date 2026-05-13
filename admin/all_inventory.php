@@ -69,7 +69,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_item' && isset($_GET['id'])) {
 if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_edit_item' && isset($_GET['id'])) {
     header('Content-Type: application/json');
     $id = (int)$_GET['id'];
-    $stmt = $conn->prepare("SELECT * FROM inventory WHERE id = ?");
+    $stmt = $conn->prepare("SELECT i.*, e.name as equipment_name, s.name as section_name, toe.name as type_equipment_name FROM inventory i LEFT JOIN equipment e ON i.equipment_id = e.id LEFT JOIN sections s ON i.section_id = s.id LEFT JOIN type_of_equipment toe ON i.type_equipment_id = toe.id WHERE i.id = ?");
     $stmt->bind_param("i", $id);
     $stmt->execute();
     $result = $stmt->get_result();
@@ -79,6 +79,41 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_edit_item' && isset($_GET['id'
     exit;
 }
 
+// Handle Edit Inventory Item
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['edit_inventory'])) {
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
+        die('Invalid CSRF token');
+    }
+    
+    $id = (int)$_POST['id'];
+    $article_name = sanitize($_POST['article_name']);
+    $description = sanitize($_POST['description']);
+    $category = sanitize($_POST['category']);
+    $type_equipment_id = !empty($_POST['type_equipment_id']) ? (int)$_POST['type_equipment_id'] : null;
+    $type_equipment_name = sanitize($_POST['type_equipment_name'] ?? '');
+    $equipment_id = !empty($_POST['equipment_id']) ? (int)$_POST['equipment_id'] : null;
+    $section_id = !empty($_POST['section_id']) ? (int)$_POST['section_id'] : null;
+    $qty_physical_count = (int)$_POST['qty_physical_count'];
+    $uom = sanitize($_POST['uom']);
+    $unit_value = (float)$_POST['unit_value'];
+    $condition_text = sanitize($_POST['condition_text']);
+    $remarks = sanitize($_POST['remarks']);
+    $fund_cluster = sanitize($_POST['fund_cluster'] ?? '');
+    
+    $stmt = $conn->prepare("UPDATE inventory SET article_name = ?, description = ?, category = ?, type_equipment_id = ?, type_equipment = ?, equipment_id = ?, section_id = ?, qty_physical_count = ?, uom = ?, unit_value = ?, condition_text = ?, remarks = ?, fund_cluster = ? WHERE id = ?");
+    $stmt->bind_param("sssisiiissdsssi", $article_name, $description, $category, $type_equipment_id, $type_equipment_name, $equipment_id, $section_id, $qty_physical_count, $uom, $unit_value, $condition_text, $remarks, $fund_cluster, $id);
+    
+    if ($stmt->execute()) {
+        $_SESSION['success'] = "Inventory item updated successfully";
+    } else {
+        $_SESSION['error'] = "Error updating item: " . $stmt->error;
+    }
+    $stmt->close();
+    
+    header('Location: ' . SITE_URL . '/admin/all_inventory.php');
+    exit();
+}
+
 if (isset($_GET['get_multiple_items'])) {
     header('Content-Type: application/json');
     $property_no = $_GET['property_no'] ?? '';
@@ -86,7 +121,16 @@ if (isset($_GET['get_multiple_items'])) {
         echo json_encode(['error' => 'No property number provided']);
         exit;
     }
+    
+    // Fix: Remove the last dash and number suffix correctly
+    // Example: PROP-001-01 becomes PROP-001
     $base_property = preg_replace('/-\d+$/', '', $property_no);
+    
+    // If no dash pattern found, use the original property number
+    if ($base_property == $property_no) {
+        $base_property = $property_no;
+    }
+    
     $stmt = $conn->prepare("SELECT i.*, e.name as equipment_name FROM inventory i LEFT JOIN equipment e ON i.equipment_id = e.id WHERE i.property_no LIKE ? ORDER BY i.property_no");
     $like_pattern = $base_property . '%';
     $stmt->bind_param("s", $like_pattern);
@@ -94,7 +138,15 @@ if (isset($_GET['get_multiple_items'])) {
     $result = $stmt->get_result();
     $items = [];
     while ($row = $result->fetch_assoc()) {
-        $items[] = ['id' => $row['id'], 'property_no' => $row['property_no'], 'article_name' => $row['article_name'], 'barcode_data' => $row['barcode_data'], 'quantity' => $row['qty_physical_count'], 'uom' => $row['uom'], 'unit_value' => $row['unit_value']];
+        $items[] = [
+            'id' => $row['id'], 
+            'property_no' => $row['property_no'], 
+            'article_name' => $row['article_name'], 
+            'barcode_data' => $row['barcode_data'], 
+            'quantity' => $row['qty_physical_count'], 
+            'uom' => $row['uom'], 
+            'unit_value' => $row['unit_value']
+        ];
     }
     $stmt->close();
     echo json_encode(['success' => true, 'items' => $items, 'count' => count($items), 'base_property' => $base_property]);
@@ -120,41 +172,12 @@ if (isset($_GET['generate_barcode'])) {
 }
 
 // ============================================
-// FORM HANDLERS
-// ============================================
-
-if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
-    if (!isset($_GET['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_GET['csrf_token'])) {
-        die('Invalid CSRF token');
-    }
-    $id = (int)$_GET['delete'];
-    $stmt = $conn->prepare("SELECT id FROM equipment_issuance WHERE inventory_id = ? AND status = 'issued' LIMIT 1");
-    $stmt->bind_param("i", $id);
-    $stmt->execute();
-    $check = $stmt->get_result();
-    if ($check && $check->num_rows > 0) {
-        $_SESSION['error'] = "Cannot delete item that is currently issued";
-    } else {
-        $stmt2 = $conn->prepare("DELETE FROM inventory WHERE id = ?");
-        $stmt2->bind_param("i", $id);
-        if ($stmt2->execute() && $stmt2->affected_rows > 0) {
-            $_SESSION['success'] = "Inventory item deleted successfully";
-        } else {
-            $_SESSION['error'] = "Error deleting item or item not found";
-        }
-        $stmt2->close();
-    }
-    $stmt->close();
-    header('Location: ' . SITE_URL . '/admin/all_inventory.php');
-    exit();
-}
-
-// ============================================
 // DISPLAY DATA
 // ============================================
 
 $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
 $per_page = 20;
+$edit_id = isset($_GET['edit']) ? (int)$_GET['edit'] : 0;
 $search = isset($_GET['search']) ? sanitize($_GET['search']) : '';
 $low_stock_filter = isset($_GET['low_stock']) && $_GET['low_stock'] == 1;
 $filter_category = isset($_GET['filter_category']) ? sanitize($_GET['filter_category']) : '';
@@ -830,8 +853,11 @@ body {
     filter: brightness(0.95);
 }
 
-/* Modal */
-.modal {
+/* ============================================
+   MODAL STYLES - MATCHING SETTINGS.PHP
+   ============================================ */
+
+.modal-overlay {
     display: none;
     position: fixed;
     z-index: 1000;
@@ -840,112 +866,184 @@ body {
     width: 100%;
     height: 100%;
     background-color: rgba(0,0,0,0.5);
-    backdrop-filter: blur(4px);
+    backdrop-filter: blur(3px);
+    overflow-y: auto;
 }
 
-.modal-content {
-    background: var(--white);
+.modal-container {
+    background-color: var(--white);
     margin: 5% auto;
-    border-radius: 20px;
-    box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
-    animation: modalSlideIn 0.3s ease;
-    max-width: 800px;
-    width: 90%;
-    max-height: 85vh;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
+    padding: 25px;
+    border-radius: 12px;
+    width: 800px;
+    max-width: 90%;
+    box-shadow: 0 10px 30px rgba(107, 140, 255, 0.2);
+    animation: modalSlideIn 0.3s;
 }
 
-@keyframes modalSlideIn {
-    from { transform: translateY(-30px); opacity: 0; }
-    to { transform: translateY(0); opacity: 1; }
-}
-
-.modal-header {
-    display: flex;
-    justify-content: space-between;
+/* Custom Delete Confirmation Modal */
+.delete-modal-overlay {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    backdrop-filter: blur(3px);
     align-items: center;
-    padding: 20px 24px;
+    justify-content: center;
+    overflow-y: auto;
+}
+
+.delete-modal-container {
+    background-color: var(--white);
+    border-radius: 16px;
+    width: 450px;
+    max-width: 90%;
+    box-shadow: 0 20px 35px rgba(0,0,0,0.2);
+    animation: modalSlideIn 0.2s;
+    overflow: hidden;
+    margin: 20px auto;
+}
+
+.delete-modal-header {
+    padding: 24px 24px 16px 24px;
     border-bottom: 1px solid var(--border-light);
 }
 
-.modal-header h2 {
-    color: var(--primary);
-    font-size: 18px;
+.delete-modal-header h3 {
     margin: 0;
+    font-size: 20px;
     font-weight: 600;
-}
-
-.modal-close {
-    font-size: 28px;
-    cursor: pointer;
-    color: var(--text-muted);
-    transition: color 0.2s;
-    line-height: 1;
-}
-
-.modal-close:hover {
     color: var(--danger);
 }
 
-.modal-body {
+.delete-modal-header h3 i {
+    margin-right: 10px;
+}
+
+.delete-modal-body {
     padding: 24px;
+    max-height: 60vh;
     overflow-y: auto;
-    flex: 1;
 }
 
-.modal-footer {
-    padding: 16px 24px;
-    border-top: 1px solid var(--border-light);
-    text-align: right;
-    background: var(--light);
-    display: flex;
-    gap: 12px;
-    justify-content: flex-end;
+.delete-warning {
+    text-align: center;
+    margin-bottom: 20px;
 }
 
-/* Buttons */
-.btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 10px 20px;
-    border: none;
-    border-radius: 10px;
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-    text-decoration: none;
+.delete-warning i {
+    font-size: 48px;
+    margin-bottom: 12px;
 }
 
-.btn-primary {
-    background: linear-gradient(135deg, var(--accent) 0%, #e69eb0 100%);
+.delete-warning .fa-exclamation-triangle {
+    color: var(--danger);
+}
+
+.delete-warning p {
+    margin: 8px 0;
+    font-size: 16px;
+}
+
+.delete-warning .warning-text {
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.delete-item-details {
+    background-color: var(--light);
+    border-radius: 12px;
+    padding: 16px;
+    margin-top: 16px;
+}
+
+.delete-item-details .detail-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+.delete-item-details .detail-name {
+    font-size: 16px;
+    font-weight: 600;
     color: var(--text-primary);
+    margin-bottom: 4px;
 }
 
-.btn-primary:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(248, 176, 192, 0.4);
+.delete-item-details .detail-extra {
+    font-size: 13px;
+    color: var(--text-secondary);
 }
 
-.btn-secondary {
-    background-color: var(--secondary);
-    color: var(--text-light);
+.delete-modal-footer {
+    padding: 16px 24px 24px 24px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    border-top: 1px solid var(--border-light);
+    background: var(--white);
 }
 
-.btn-secondary:hover {
-    background-color: #7a9fe6;
+@keyframes modalSlideIn {
+    from {
+        transform: translateY(-30px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
 }
 
-.btn-sm {
-    padding: 6px 12px;
-    font-size: 11px;
+.modal-header-settings {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--accent-light);
 }
 
-/* Detail View */
+.modal-header-settings h3 {
+    color: var(--primary);
+    margin: 0;
+    font-size: 20px;
+}
+
+.modal-header-settings h3 i {
+    color: var(--accent);
+    margin-right: 10px;
+}
+
+.modal-close {
+    cursor: pointer;
+    font-size: 28px;
+    font-weight: bold;
+    color: var(--text-muted);
+    transition: color 0.2s;
+}
+
+.modal-close:hover {
+    color: var(--accent);
+}
+
+.modal-footer-buttons {
+    text-align: right;
+    margin-top: 20px;
+    padding-top: 15px;
+    border-top: 1px solid var(--border-light);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+/* Detail View Styles */
 .detail-section {
     margin-bottom: 24px;
     border: 1px solid var(--border-light);
@@ -992,6 +1090,141 @@ body {
     color: var(--text-primary);
     font-size: 14px;
     word-break: break-word;
+}
+
+/* Form Styles */
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+    color: var(--text-primary);
+    font-size: 14px;
+}
+
+.form-control {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    font-size: 14px;
+    color: var(--text-primary);
+    transition: all 0.3s;
+    background-color: var(--white);
+    box-sizing: border-box;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.1);
+}
+
+select.form-control {
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236B7280'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 18px;
+}
+
+.form-row {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.form-row .form-group {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+/* Buttons */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, var(--accent) 0%, #e69eb0 100%);
+    color: var(--text-primary);
+}
+
+.btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(248, 176, 192, 0.4);
+}
+
+.btn-secondary {
+    background-color: var(--secondary);
+    color: var(--text-light);
+}
+
+.btn-secondary:hover {
+    background-color: #7a9fe6;
+}
+
+.btn-sm {
+    padding: 6px 12px;
+    font-size: 11px;
+}
+
+.btn-modal {
+    padding: 8px 20px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-modal-secondary {
+    background-color: #6c757d;
+    color: var(--text-light);
+}
+
+.btn-modal-secondary:hover {
+    background-color: #5a6268;
+    transform: translateY(-2px);
+}
+
+.btn-modal-danger {
+    background-color: var(--danger);
+    color: var(--text-light);
+}
+
+.btn-modal-danger:hover {
+    opacity: 0.9;
+    transform: translateY(-2px);
+}
+
+.btn-modal-primary {
+    background-color: var(--accent);
+    color: var(--text-primary);
+}
+
+.btn-modal-primary:hover {
+    background-color: #e69eb0;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(248, 176, 192, 0.3);
 }
 
 /* Pagination */
@@ -1086,6 +1319,24 @@ body {
 .text-center { text-align: center; }
 .mt-3 { margin-top: 16px; }
 
+/* Scrollbar Styling */
+.delete-modal-body::-webkit-scrollbar,
+.modal-body-scroll::-webkit-scrollbar {
+    width: 6px;
+}
+
+.delete-modal-body::-webkit-scrollbar-track,
+.modal-body-scroll::-webkit-scrollbar-track {
+    background: var(--light);
+    border-radius: 3px;
+}
+
+.delete-modal-body::-webkit-scrollbar-thumb,
+.modal-body-scroll::-webkit-scrollbar-thumb {
+    background: var(--primary);
+    border-radius: 3px;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .dashboard-cards {
@@ -1113,15 +1364,45 @@ body {
         flex-direction: column;
     }
     
-    .modal-content {
-        margin: 10px;
-        width: auto;
-        max-height: 90vh;
+    .modal-container {
+        margin: 10% auto;
+        width: 95%;
+    }
+    
+    .delete-modal-container {
+        width: 95%;
     }
     
     .detail-grid {
         grid-template-columns: 1fr;
         gap: 8px;
+    }
+    
+    .delete-modal-footer {
+        flex-direction: column-reverse;
+    }
+    
+    .delete-modal-footer .btn-modal {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .modal-footer-buttons {
+        flex-direction: column-reverse;
+    }
+    
+    .modal-footer-buttons .btn-modal {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .form-row {
+        flex-direction: column;
+        gap: 0;
+    }
+    
+    .form-row .form-group {
+        margin-bottom: 15px;
     }
 }
 </style>
@@ -1450,9 +1731,9 @@ body {
                                 <button class="action-btn view" onclick="viewItem(<?php echo $item['id']; ?>)" title="View">
                                     <i class="fas fa-eye"></i>
                                 </button>
-                                <a href="<?php echo SITE_URL; ?>/admin/all_inventory.php?edit=<?php echo $item['id']; ?>" class="action-btn edit" title="Edit">
+                                <button class="action-btn edit" onclick="editItem(<?php echo $item['id']; ?>)" title="Edit">
                                     <i class="fas fa-edit"></i>
-                                </a>
+                                </button>
                                 <?php if ($item['is_multiple'] && !empty($item['barcode_data'])): ?>
                                 <button class="action-btn barcode" onclick="viewAllBarcodes('<?php echo $item['property_no']; ?>', '<?php echo htmlspecialchars(addslashes($item['article_name'])); ?>')" title="View All Barcodes">
                                     <i class="fas fa-layer-group"></i>
@@ -1462,12 +1743,9 @@ body {
                                     <i class="fas fa-hand-holding"></i>
                                 </a>
                                 <?php if ($item['is_issued'] == 0): ?>
-                                <a href="?delete=<?php echo $item['id']; ?>&csrf_token=<?php echo $_SESSION['csrf_token']; ?>" 
-                                   class="action-btn delete" 
-                                   onclick="return confirm('Are you sure you want to delete this item?')"
-                                   title="Delete">
+                                <button class="action-btn delete" onclick="openDeleteItemModal(<?php echo $item['id']; ?>, '<?php echo htmlspecialchars(addslashes($item['article_name'])); ?>', '<?php echo htmlspecialchars($item['property_no']); ?>')" title="Delete">
                                     <i class="fas fa-trash"></i>
-                                </a>
+                                </button>
                                 <?php endif; ?>
                             </div>
                         </td>
@@ -1508,65 +1786,315 @@ body {
     </div>
     <?php endif; ?>
 </div>
-<!-- Sticky Scan Barcode Button -->
-<div class="sticky-scan-button-container">
-    <a href="<?php echo SITE_URL; ?>/admin/barcode_scanner.php" class="sticky-scan-button">
-        <i class="fas fa-camera"></i> SCAN BARCODE
-    </a>
+
+<!-- Delete Item Confirmation Modal -->
+<div id="deleteItemModal" class="delete-modal-overlay">
+    <div class="delete-modal-container">
+        <div class="delete-modal-header">
+            <h3><i class="fas fa-trash-alt"></i> Delete Inventory Item</h3>
+        </div>
+        <div class="delete-modal-body">
+            <input type="hidden" id="delete_item_id">
+            <div class="delete-warning">
+                <i class="fas fa-exclamation-triangle"></i>
+                <p><strong>Are you absolutely sure?</strong></p>
+                <p class="warning-text">This action cannot be undone.</p>
+            </div>
+            <div class="delete-item-details">
+                <div class="detail-label">ITEM TO DELETE</div>
+                <div class="detail-name" id="delete_item_name">-</div>
+                <div class="detail-extra" id="delete_item_property">-</div>
+            </div>
+        </div>
+        <div class="delete-modal-footer">
+            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeDeleteItemModal()">Cancel</button>
+            <a href="#" id="confirmDeleteItemBtn" class="btn-modal btn-modal-danger"><i class="fas fa-trash-alt"></i> Delete Item</a>
+        </div>
+    </div>
 </div>
 
-<!-- Rest of modals and scripts remain the same -->
-<!-- View Item Modal -->
-<div id="viewModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h2><i class="fas fa-info-circle"></i> Item Details</h2>
-            <span class="modal-close" onclick="closeModal('viewModal')">&times;</span>
+<!-- Edit Item Modal -->
+<div id="editModal" class="modal-overlay">
+    <div class="modal-container" style="max-width: 800px;">
+        <div class="modal-header-settings">
+            <h3><i class="fas fa-edit"></i> Edit Inventory Item</h3>
+            <span class="modal-close" onclick="closeModal('editModal')">&times;</span>
         </div>
-        <div class="modal-body" id="viewModalContent">
+        <div class="modal-body-scroll" id="editModalContent" style="padding: 25px;">
             <div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading...</div>
         </div>
-        <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" onclick="closeModal('viewModal')">Close</button>
+    </div>
+</div>
+
+<!-- View Item Modal -->
+<div id="viewModal" class="modal-overlay">
+    <div class="modal-container" style="max-width: 800px;">
+        <div class="modal-header-settings">
+            <h3><i class="fas fa-info-circle"></i> Item Details</h3>
+            <span class="modal-close" onclick="closeModal('viewModal')">&times;</span>
+        </div>
+        <div class="modal-body-scroll" id="viewModalContent" style="padding: 25px;">
+            <div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading...</div>
+        </div>
+        <div class="modal-footer-buttons">
+            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeModal('viewModal')">Close</button>
         </div>
     </div>
 </div>
 
 <!-- View All Barcodes Modal -->
-<div id="viewAllBarcodesModal" class="modal">
-    <div class="modal-content" style="max-width: 900px;">
-        <div class="modal-header">
+<div id="viewAllBarcodesModal" class="modal-overlay">
+    <div class="modal-container" style="max-width: 900px;">
+        <div class="modal-header-settings">
             <h2 id="allBarcodesModalTitle">All Barcodes</h2>
             <span class="modal-close" onclick="closeModal('viewAllBarcodesModal')">&times;</span>
         </div>
-        <div class="modal-body" id="allBarcodesContent">
+        <div class="modal-body-scroll" id="allBarcodesContent" style="padding: 25px;">
             <div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading...</div>
         </div>
-        <div class="modal-footer">
-            <button type="button" class="btn btn-primary" onclick="printAllBarcodes()">Print All</button>
-            <button type="button" class="btn btn-secondary" onclick="closeModal('viewAllBarcodesModal')">Close</button>
+        <div class="modal-footer-buttons">
+            <button type="button" class="btn-modal btn-modal-primary" onclick="printAllBarcodes()">Print All</button>
+            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeModal('viewAllBarcodesModal')">Close</button>
         </div>
     </div>
 </div>
 
 <!-- Barcode Modal -->
-<div id="barcodeModal" class="modal">
-    <div class="modal-content" style="max-width: 450px;">
-        <div class="modal-header">
+<div id="barcodeModal" class="modal-overlay">
+    <div class="modal-container" style="max-width: 450px;">
+        <div class="modal-header-settings">
             <h2 id="barcodeModalTitle">Barcode</h2>
             <span class="modal-close" onclick="closeModal('barcodeModal')">&times;</span>
         </div>
-        <div class="modal-body" style="text-align: center;">
+        <div class="modal-body-scroll" style="text-align: center; padding: 25px;">
             <div id="barcodeModalImage"></div>
             <div id="barcodeModalNumber" style="font-family: monospace; margin-top: 15px;"></div>
             <div style="margin-top: 20px;">
-                <button class="btn btn-primary" onclick="printCurrentBarcode()">Print Barcode</button>
+                <button class="btn-modal btn-modal-primary" onclick="printCurrentBarcode()">Print Barcode</button>
             </div>
         </div>
     </div>
 </div>
 
 <script>
+// Delete Item Modal Functions
+function openDeleteItemModal(id, name, propertyNo) {
+    document.getElementById('delete_item_id').value = id;
+    document.getElementById('delete_item_name').innerText = name;
+    document.getElementById('delete_item_property').innerHTML = 'Property No: ' + propertyNo;
+    document.getElementById('confirmDeleteItemBtn').href = '?delete=' + id + '&csrf_token=<?php echo $_SESSION['csrf_token']; ?>';
+    document.getElementById('deleteItemModal').style.display = 'flex';
+}
+
+function closeDeleteItemModal() {
+    document.getElementById('deleteItemModal').style.display = 'none';
+}
+
+// Edit Item Function
+function editItem(id) {
+    let modal = document.getElementById('editModal');
+    let content = document.getElementById('editModalContent');
+    modal.style.display = 'block';
+    content.innerHTML = '<div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading...</div>';
+    
+    fetch('?ajax=get_edit_item&id=' + id)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                let item = data.data;
+                
+                // Get current values for dropdowns
+                let typeOptions = '';
+                <?php 
+                $type_options = '';
+                $type_of_equipment->data_seek(0);
+                while($toe = $type_of_equipment->fetch_assoc()): 
+                    $type_options .= '<option value="'.$toe['id'].'">'.htmlspecialchars($toe['code'] . ' - ' . $toe['name']).'</option>';
+                endwhile;
+                ?>
+                typeOptions = '<?php echo $type_options; ?>';
+                
+                let equipmentOptions = '';
+                <?php 
+                $equipment_options = '';
+                $equipment->data_seek(0);
+                while($eq = $equipment->fetch_assoc()): 
+                    $equipment_options .= '<option value="'.$eq['id'].'">'.htmlspecialchars($eq['name']).'</option>';
+                endwhile;
+                ?>
+                equipmentOptions = '<?php echo $equipment_options; ?>';
+                
+                let sectionOptions = '';
+                <?php 
+                $section_options = '';
+                $sections->data_seek(0);
+                while($sec = $sections->fetch_assoc()): 
+                    $section_options .= '<option value="'.$sec['id'].'">'.htmlspecialchars($sec['department_name'] ? $sec['department_name'] . ' - ' : '' . $sec['name']).'</option>';
+                endwhile;
+                ?>
+                sectionOptions = '<?php echo $section_options; ?>';
+                
+                let conditionOptions = `
+                    <option value="Serviceable" ${item.condition_text == 'Serviceable' ? 'selected' : ''}>Serviceable</option>
+                    <option value="Good" ${item.condition_text == 'Good' ? 'selected' : ''}>Good</option>
+                    <option value="Fair" ${item.condition_text == 'Fair' ? 'selected' : ''}>Fair</option>
+                    <option value="Poor" ${item.condition_text == 'Poor' ? 'selected' : ''}>Poor</option>
+                    <option value="New" ${item.condition_text == 'New' ? 'selected' : ''}>New</option>
+                `;
+                
+                let fundClusterOptions = `
+                    <option value="">-- Select Fund Cluster --</option>
+                    <?php 
+                    $fund_clusters = $conn->query("SELECT code, name FROM fund_cluster ORDER BY code");
+                    while($fc = $fund_clusters->fetch_assoc()): ?>
+                    <option value="<?php echo htmlspecialchars($fc['code']); ?>"><?php echo htmlspecialchars($fc['code'] . ' - ' . $fc['name']); ?></option>
+                    <?php endwhile; ?>
+                `;
+                
+                let html = `
+                    <form method="POST" action="" id="editInventoryForm">
+                        <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
+                        <input type="hidden" name="edit_inventory" value="1">
+                        <input type="hidden" name="id" value="${item.id}">
+                        
+                        <div class="form-section">
+                            <h3 style="color: var(--primary); margin-bottom: 20px; font-size: 16px; padding-bottom: 10px; border-bottom: 2px solid var(--accent-light);">
+                                <i class="fas fa-info-circle"></i> Basic Information
+                            </h3>
+                            <div class="form-group">
+                                <label>Article Name <span class="text-danger">*</span></label>
+                                <input type="text" name="article_name" class="form-control" value="${escapeHtml(item.article_name)}" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Description</label>
+                                <textarea name="description" class="form-control" rows="3">${escapeHtml(item.description || '')}</textarea>
+                            </div>
+                        </div>
+                        
+                        <div class="form-section">
+                            <h3 style="color: var(--primary); margin-bottom: 20px; font-size: 16px; padding-bottom: 10px; border-bottom: 2px solid var(--accent-light);">
+                                <i class="fas fa-tags"></i> Classification
+                            </h3>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Category</label>
+                                    <input type="text" name="category" class="form-control" value="${escapeHtml(item.category || '')}" placeholder="e.g., Office Equipment, IT Hardware">
+                                </div>
+                                <div class="form-group">
+                                    <label>Type of Equipment</label>
+                                    <select name="type_equipment_id" class="form-control" id="edit_type_equipment_id">
+                                        <option value="">-- Select Type --</option>
+                                        ${typeOptions}
+                                    </select>
+                                    <small class="text-muted">Select from predefined types or enter manually below</small>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Type of Equipment (Manual)</label>
+                                <input type="text" name="type_equipment_name" class="form-control" value="${escapeHtml(item.type_equipment || '')}" placeholder="e.g., Computer, Printer, Furniture">
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Equipment Type</label>
+                                    <select name="equipment_id" class="form-control">
+                                        <option value="">-- Select Equipment --</option>
+                                        ${equipmentOptions}
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Location (Section)</label>
+                                    <select name="section_id" class="form-control">
+                                        <option value="">-- Select Location --</option>
+                                        ${sectionOptions}
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="form-section">
+                            <h3 style="color: var(--primary); margin-bottom: 20px; font-size: 16px; padding-bottom: 10px; border-bottom: 2px solid var(--accent-light);">
+                                <i class="fas fa-calculator"></i> Quantity and Value
+                            </h3>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Quantity <span class="text-danger">*</span></label>
+                                    <input type="number" name="qty_physical_count" class="form-control" value="${item.qty_physical_count}" min="0" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Unit of Measure</label>
+                                    <input type="text" name="uom" class="form-control" value="${escapeHtml(item.uom || 'unit')}" placeholder="e.g., unit, set, box">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Unit Value (₱)</label>
+                                    <input type="number" name="unit_value" class="form-control" value="${item.unit_value}" step="0.01" min="0">
+                                </div>
+                                <div class="form-group">
+                                    <label>Fund Cluster</label>
+                                    <select name="fund_cluster" class="form-control">
+                                        <option value="">-- Select Fund Cluster --</option>
+                                        <?php 
+                                        $fund_clusters = $conn->query("SELECT code, name FROM fund_cluster ORDER BY code");
+                                        if ($fund_clusters && $fund_clusters->num_rows > 0):
+                                            while($fc = $fund_clusters->fetch_assoc()): ?>
+                                            <option value="<?php echo htmlspecialchars($fc['code']); ?>" ${item.fund_cluster == '<?php echo $fc['code']; ?>' ? 'selected' : ''}>
+                                                <?php echo htmlspecialchars($fc['code'] . ' - ' . $fc['name']); ?>
+                                            </option>
+                                        <?php 
+                                            endwhile;
+                                        endif; 
+                                        ?>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="form-section">
+                            <h3 style="color: var(--primary); margin-bottom: 20px; font-size: 16px; padding-bottom: 10px; border-bottom: 2px solid var(--accent-light);">
+                                <i class="fas fa-clipboard-list"></i> Additional Information
+                            </h3>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Condition</label>
+                                    <select name="condition_text" class="form-control">
+                                        ${conditionOptions}
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Remarks</label>
+                                <textarea name="remarks" class="form-control" rows="2">${escapeHtml(item.remarks || '')}</textarea>
+                            </div>
+                        </div>
+                        
+                        <div class="modal-footer-buttons" style="margin-top: 20px;">
+                            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeModal('editModal')">Cancel</button>
+                            <button type="submit" class="btn-modal btn-modal-primary"><i class="fas fa-save"></i> Save Changes</button>
+                        </div>
+                    </form>
+                `;
+                content.innerHTML = html;
+                
+                // Set selected values for dropdowns
+                if (item.type_equipment_id) {
+                    document.getElementById('edit_type_equipment_id').value = item.type_equipment_id;
+                }
+                if (item.equipment_id) {
+                    document.querySelector('#editModal select[name="equipment_id"]').value = item.equipment_id;
+                }
+                if (item.section_id) {
+                    document.querySelector('#editModal select[name="section_id"]').value = item.section_id;
+                }
+            } else {
+                content.innerHTML = '<div class="alert alert-danger">Error loading item: ' + (data.message || 'Unknown error') + '</div>';
+            }
+        })
+        .catch(error => {
+            content.innerHTML = '<div class="alert alert-danger">Error loading item details</div>';
+        });
+}
+
 function removeFilter(filterName) {
     let url = new URL(window.location.href);
     url.searchParams.delete(filterName);
@@ -1631,7 +2159,7 @@ function viewItem(id) {
                         <div class="detail-item"><div class="detail-label">Barcode Value</div><div class="detail-value">${escapeHtml(item.barcode_data)}</div></div>
                         <div style="text-align: center; margin-top: 15px;">
                             <img src="generate_barcode.php?code=${encodeURIComponent(item.barcode_data)}&width=300&height=70" style="max-width: 100%; border: 1px solid #E2E8F0; padding: 10px; border-radius: 8px;">
-                            <br><button class="btn btn-primary btn-sm mt-2" onclick="printBarcode('${item.barcode_data}', '${escapeHtml(item.article_name)}')"><i class="fas fa-print"></i> Print Barcode</button>
+                            <br><button class="btn-modal btn-modal-primary btn-sm mt-2" onclick="printBarcode('${item.barcode_data}', '${escapeHtml(item.article_name)}')"><i class="fas fa-print"></i> Print Barcode</button>
                         </div>
                         ` : '<div class="detail-value">No barcode assigned</div>'}
                     </div></div>
@@ -1665,8 +2193,8 @@ function viewAllBarcodes(propertyNo, itemName) {
                         <div style="margin: 10px 0;"><img src="generate_barcode.php?code=${encodeURIComponent(item.barcode_data)}&width=200&height=50" style="max-width: 100%;"></div>
                         <div style="font-family: monospace; font-size: 11px; margin-bottom: 10px;">${escapeHtml(item.barcode_data)}</div>
                         <div style="display: flex; gap: 8px; justify-content: center;">
-                            <button class="btn btn-secondary btn-sm" onclick="showBarcodeModal('${item.barcode_data}', '${escapeHtml(item.article_name)} - ${escapeHtml(item.property_no)}')">View</button>
-                            <button class="btn btn-primary btn-sm" onclick="printBarcode('${item.barcode_data}', '${escapeHtml(item.article_name)} - ${escapeHtml(item.property_no)}')">Print</button>
+                            <button class="btn-modal btn-modal-secondary" onclick="showBarcodeModal('${item.barcode_data}', '${escapeHtml(item.article_name)} - ${escapeHtml(item.property_no)}')">View</button>
+                            <button class="btn-modal btn-modal-primary" onclick="printBarcode('${item.barcode_data}', '${escapeHtml(item.article_name)} - ${escapeHtml(item.property_no)}')">Print</button>
                         </div>
                     </div>`;
                 });
@@ -1723,16 +2251,38 @@ function escapeHtml(text) {
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
         closeModal('viewModal');
+        closeModal('editModal');
         closeModal('viewAllBarcodesModal');
         closeModal('barcodeModal');
+        closeDeleteItemModal();
     }
 });
 
 window.onclick = function(event) {
-    if (event.target.classList.contains('modal')) {
+    if (event.target.classList.contains('modal-overlay')) {
+        event.target.style.display = 'none';
+    }
+    if (event.target.classList.contains('delete-modal-overlay')) {
         event.target.style.display = 'none';
     }
 }
+
+// Function to update type equipment name when dropdown changes
+document.addEventListener('change', function(e) {
+    if (e.target && e.target.id === 'edit_type_equipment_id') {
+        let select = e.target;
+        let selectedOption = select.options[select.selectedIndex];
+        if (selectedOption && selectedOption.value) {
+            let typeName = selectedOption.text;
+            // Remove the code prefix (e.g., "01 - " from "01 - Computers")
+            typeName = typeName.replace(/^\d+\s*-\s*/, '');
+            let manualInput = document.querySelector('#editModal input[name="type_equipment_name"]');
+            if (manualInput) {
+                manualInput.value = typeName;
+            }
+        }
+    }
+});
 </script>
 
 <?php

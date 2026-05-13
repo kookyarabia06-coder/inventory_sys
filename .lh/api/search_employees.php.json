@@ -1,0 +1,18 @@
+{
+    "sourceFile": "api/search_employees.php",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 0,
+            "patches": [
+                {
+                    "date": 1778576799620,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                }
+            ],
+            "date": 1778576799620,
+            "name": "Commit-0",
+            "content": "<?php\r\n// api/search_employees.php\r\nheader('Content-Type: application/json');\r\n\r\nrequire_once '../config.php';\r\nrequire_once '../config/database.php';\r\n\r\n$name = isset($_GET['name']) ? trim($_GET['name']) : '';\r\n$department = isset($_GET['department']) ? trim($_GET['department']) : '';\r\n$section = isset($_GET['section']) ? trim($_GET['section']) : '';\r\n$position = isset($_GET['position']) ? trim($_GET['position']) : '';\r\n\r\n$query = \"SELECT e.id, e.firstname, e.lastname, e.position, d.name as department_name, s.name as section_name\r\n          FROM employees e\r\n          LEFT JOIN departments d ON e.department_id = d.id\r\n          LEFT JOIN sections s ON e.section_id = s.id\r\n          WHERE e.status = 'Active'\";\r\n\r\n$params = [];\r\n$types = \"\";\r\n\r\nif (!empty($name)) {\r\n    $query .= \" AND (e.firstname LIKE ? OR e.lastname LIKE ? OR CONCAT(e.firstname, ' ', e.lastname) LIKE ?)\";\r\n    $searchTerm = \"%$name%\";\r\n    $params[] = $searchTerm;\r\n    $params[] = $searchTerm;\r\n    $params[] = $searchTerm;\r\n    $types .= \"sss\";\r\n}\r\n\r\nif (!empty($department)) {\r\n    $query .= \" AND d.name = ?\";\r\n    $params[] = $department;\r\n    $types .= \"s\";\r\n}\r\n\r\nif (!empty($section)) {\r\n    $query .= \" AND s.name = ?\";\r\n    $params[] = $section;\r\n    $types .= \"s\";\r\n}\r\n\r\nif (!empty($position)) {\r\n    $query .= \" AND e.position = ?\";\r\n    $params[] = $position;\r\n    $types .= \"s\";\r\n}\r\n\r\n$query .= \" ORDER BY e.lastname, e.firstname LIMIT 50\";\r\n\r\n$stmt = $conn->prepare($query);\r\nif (!empty($params)) {\r\n    $stmt->bind_param($types, ...$params);\r\n}\r\n$stmt->execute();\r\n$result = $stmt->get_result();\r\n\r\n$employees = [];\r\nwhile ($row = $result->fetch_assoc()) {\r\n    $employees[] = $row;\r\n}\r\n$stmt->close();\r\n\r\necho json_encode($employees);\r\n?>"
+        }
+    ]
+}

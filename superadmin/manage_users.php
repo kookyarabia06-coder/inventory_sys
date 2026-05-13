@@ -67,7 +67,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     $user_id = (int)$_POST['user_id'];
     
     if ($action === 'approve') {
-        // FIRST: Get user details before updating
         $user_query = $conn->prepare("SELECT * FROM users WHERE id = ? AND status = 'pending'");
         $user_query->bind_param("i", $user_id);
         $user_query->execute();
@@ -82,15 +81,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         }
         $user_query->close();
         
-        // SECOND: Update user status to active
         $stmt = $conn->prepare("UPDATE users SET status = 'active' WHERE id = ? AND status = 'pending'");
         $stmt->bind_param("i", $user_id);
         
         if ($stmt->execute() && $stmt->affected_rows > 0) {
-            // THIRD: Send approval email
             if (function_exists('sendApprovalEmail')) {
                 $email_sent = sendApprovalEmail($user);
-                
                 if ($email_sent) {
                     $_SESSION['success'] = "User approved successfully. Approval email sent to {$user['email']}.";
                 } else {
@@ -104,7 +100,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 logActivity('User Approved', $user_id, "User {$user['username']} was approved by " . ($_SESSION['username'] ?? 'Admin'));
             }
             
-            // Log to audit trail
             if (function_exists('logUserApproval')) {
                 logUserApproval($_SESSION['user_id'], $user_id, 'approved', $user);
             }
@@ -114,7 +109,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $stmt->close();
     } 
     elseif ($action === 'reject') {
-        // FIRST: Get user details before deletion
         $user_query = $conn->prepare("SELECT * FROM users WHERE id = ? AND status = 'pending'");
         $user_query->bind_param("i", $user_id);
         $user_query->execute();
@@ -129,14 +123,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         }
         $user_query->close();
         
-        // SECOND: Send rejection email
         if (function_exists('sendRejectionEmail')) {
             $email_sent = sendRejectionEmail($user);
         } else {
             $email_sent = false;
         }
         
-        // THIRD: Delete the user
         $delete_stmt = $conn->prepare("DELETE FROM users WHERE id = ? AND status = 'pending'");
         $delete_stmt->bind_param("i", $user_id);
         
@@ -276,7 +268,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['ajax']) && $_GET['ajax
     }
     
     if ($stmt->execute()) {
-        // Log to audit trail
         if (function_exists('logUserUpdate') && $user_id > 0) {
             logUserUpdate($_SESSION['user_id'], $user_id, null, ['firstname' => $firstname, 'lastname' => $lastname, 'email' => $email, 'role' => $role, 'status' => $status]);
         } elseif (function_exists('logUserRegistration') && $user_id == 0) {
@@ -299,7 +290,6 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'delete_user' && isset($_GET['id']
         exit;
     }
     
-    // Get user data for audit
     $user_query = $conn->prepare("SELECT * FROM users WHERE id = ?");
     $user_query->bind_param("i", $user_id);
     $user_query->execute();
@@ -452,20 +442,20 @@ body {
     background: var(--white);
     border-radius: 16px;
     padding: 20px;
-    box-shadow: 0 2px 8px rgba(107, 140, 255, 0.08);
+    box-shadow: 0 4px 12px rgba(107, 140, 255, 0.1);
     border-left: 4px solid var(--primary);
     transition: all 0.3s ease;
 }
 
 .card:hover {
     transform: translateY(-3px);
-    box-shadow: 0 8px 20px rgba(107, 140, 255, 0.12);
+    box-shadow: 0 8px 20px rgba(107, 140, 255, 0.15);
 }
 
 .card-icon {
     width: 45px;
     height: 45px;
-    background: linear-gradient(135deg, var(--accent-light) 0%, var(--white) 100%);
+    background: var(--accent-light);
     border-radius: 12px;
     display: flex;
     align-items: center;
@@ -523,10 +513,10 @@ body {
 /* Table Container */
 .table-container {
     background: var(--white);
-    border-radius: 16px;
-    padding: 24px;
+    border-radius: 12px;
+    padding: 25px;
     margin-bottom: 30px;
-    box-shadow: 0 2px 8px rgba(107, 140, 255, 0.08);
+    box-shadow: 0 4px 12px rgba(107, 140, 255, 0.1);
     overflow-x: auto;
 }
 
@@ -553,7 +543,6 @@ body {
 
 .table-header h2 i {
     color: var(--accent);
-    font-size: 20px;
 }
 
 .search-box {
@@ -562,12 +551,12 @@ body {
 }
 
 .search-box input {
-    padding: 10px 15px;
+    padding: 10px 12px;
     border: 1px solid var(--border-light);
-    border-radius: 10px;
+    border-radius: 8px;
     font-size: 14px;
     width: 250px;
-    transition: all 0.2s;
+    transition: all 0.3s;
 }
 
 .search-box input:focus {
@@ -577,18 +566,20 @@ body {
 }
 
 .search-box button {
-    padding: 10px 20px;
-    background: var(--primary);
-    color: white;
+    padding: 10px 24px;
+    background: var(--accent);
+    color: var(--text-primary);
     border: none;
-    border-radius: 10px;
+    border-radius: 8px;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.3s;
+    font-weight: 500;
 }
 
 .search-box button:hover {
-    background: var(--secondary);
-    transform: translateY(-1px);
+    background-color: #e69eb0;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(248, 176, 192, 0.3);
 }
 
 /* Table Styles */
@@ -598,7 +589,7 @@ table {
 }
 
 th {
-    padding: 14px 12px;
+    padding: 12px 10px;
     text-align: left;
     color: var(--primary);
     font-weight: 600;
@@ -607,7 +598,7 @@ th {
 }
 
 td {
-    padding: 12px;
+    padding: 12px 10px;
     border-bottom: 1px solid var(--border-light);
     color: var(--text-secondary);
     font-size: 13px;
@@ -656,7 +647,7 @@ tr:hover td {
     width: 35px;
     height: 35px;
     border-radius: 50%;
-    background: linear-gradient(135deg, var(--accent-light) 0%, var(--white) 100%);
+    background: var(--accent-light);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -670,7 +661,7 @@ tr:hover td {
 /* Action Buttons */
 .action-buttons {
     display: flex;
-    gap: 8px;
+    gap: 5px;
     flex-wrap: wrap;
 }
 
@@ -679,18 +670,18 @@ tr:hover td {
     align-items: center;
     justify-content: center;
     gap: 5px;
-    padding: 6px 12px;
-    border-radius: 8px;
+    padding: 5px 10px;
+    border-radius: 6px;
     border: none;
     color: white;
     cursor: pointer;
     transition: all 0.2s;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 500;
 }
 
 .action-btn i {
-    font-size: 12px;
+    font-size: 11px;
 }
 
 .action-btn.view { background-color: var(--info); }
@@ -713,10 +704,11 @@ tr:hover td {
     gap: 8px;
     padding: 10px 20px;
     border: none;
-    border-radius: 10px;
-    cursor: pointer;
+    border-radius: 8px;
+    font-size: 14px;
     font-weight: 500;
-    transition: all 0.2s;
+    cursor: pointer;
+    transition: all 0.3s;
 }
 
 .btn-primary {
@@ -726,7 +718,7 @@ tr:hover td {
 
 .btn-primary:hover {
     background-color: #e69eb0;
-    transform: translateY(-1px);
+    transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(248, 176, 192, 0.3);
 }
 
@@ -737,46 +729,52 @@ tr:hover td {
 
 .btn-secondary:hover {
     background-color: #7a9fe6;
-    transform: translateY(-1px);
+    transform: translateY(-2px);
 }
 
-/* Modal Styles */
-.modal {
+/* ============================================
+   MODAL STYLES - MATCHING SETTINGS.PHP
+   ============================================ */
+
+.modal-overlay {
     display: none;
     position: fixed;
-    z-index: 9999;
+    z-index: 1000;
     left: 0;
     top: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(8px);
-    animation: modalOverlayFade 0.3s ease;
+    background-color: rgba(0,0,0,0.5);
+    backdrop-filter: blur(3px);
+    overflow-y: auto;
 }
 
-@keyframes modalOverlayFade {
-    from { opacity: 0; backdrop-filter: blur(0px); }
-    to { opacity: 1; backdrop-filter: blur(8px); }
-}
-
-.modal-content {
-    background: var(--white);
+.modal-container {
+    background-color: var(--white);
     margin: 5% auto;
+    padding: 0;
+    border-radius: 12px;
     width: 550px;
     max-width: 90%;
-    border-radius: 24px;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-    animation: modalSlideUp 0.4s cubic-bezier(0.34, 1.2, 0.64, 1);
+    box-shadow: 0 10px 30px rgba(107, 140, 255, 0.2);
+    animation: modalSlideIn 0.3s;
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
+    max-height: 85vh;
 }
 
-.modal-content.large {
+.modal-container.large {
     width: 700px;
 }
 
-@keyframes modalSlideUp {
+.modal-container.small {
+    width: 450px;
+}
+
+@keyframes modalSlideIn {
     from {
-        transform: translateY(60px);
+        transform: translateY(-30px);
         opacity: 0;
     }
     to {
@@ -785,65 +783,185 @@ tr:hover td {
     }
 }
 
-.modal-header {
-    background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
-    padding: 24px 28px;
-    position: relative;
+.modal-header-settings {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    padding: 20px 25px;
+    border-bottom: 2px solid var(--accent-light);
+    background: var(--white);
+    flex-shrink: 0;
 }
 
-.modal-header h2 {
-    color: var(--white);
+.modal-header-settings h3 {
+    color: var(--primary);
     margin: 0;
     font-size: 20px;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 10px;
 }
 
-.modal-header h2 i {
-    font-size: 20px;
-    background: rgba(255, 255, 255, 0.2);
-    padding: 8px;
-    border-radius: 50%;
+.modal-header-settings h3 i {
+    color: var(--accent);
+    margin-right: 10px;
 }
 
 .modal-close {
-    color: var(--white);
-    font-size: 28px;
-    font-weight: normal;
     cursor: pointer;
-    transition: all 0.2s ease;
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.1);
+    font-size: 28px;
+    font-weight: bold;
+    color: var(--text-muted);
+    transition: color 0.2s;
 }
 
 .modal-close:hover {
-    background: rgba(255, 255, 255, 0.2);
-    transform: rotate(90deg);
+    color: var(--accent);
 }
 
-.modal-body {
-    padding: 28px;
+.modal-body-scroll {
+    padding: 25px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.modal-footer-buttons {
+    text-align: right;
+    padding: 16px 25px;
+    border-top: 1px solid var(--border-light);
+    background: var(--light);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+/* Delete Modal Specific */
+.delete-modal-overlay {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    backdrop-filter: blur(3px);
+    align-items: center;
+    justify-content: center;
+    overflow-y: auto;
+}
+
+.delete-modal-container {
+    background-color: var(--white);
+    border-radius: 16px;
+    width: 450px;
+    max-width: 90%;
+    box-shadow: 0 20px 35px rgba(0,0,0,0.2);
+    animation: modalSlideIn 0.2s;
+    overflow: hidden;
+    margin: 20px auto;
+}
+
+.delete-modal-header {
+    padding: 24px 24px 16px 24px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.delete-modal-header h3 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--danger);
+}
+
+.delete-modal-header h3 i {
+    margin-right: 10px;
+}
+
+.delete-modal-body {
+    padding: 24px;
     max-height: 60vh;
     overflow-y: auto;
 }
 
-.modal-footer {
-    padding: 20px 28px;
-    border-top: 1px solid var(--border-light);
-    background: var(--light);
+.delete-warning {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.delete-warning i {
+    font-size: 48px;
+    margin-bottom: 12px;
+}
+
+.delete-warning .fa-exclamation-triangle,
+.delete-warning .fa-times-circle {
+    color: var(--danger);
+}
+
+.delete-warning .fa-user-check {
+    color: var(--success);
+}
+
+.delete-warning p {
+    margin: 8px 0;
+    font-size: 16px;
+}
+
+.delete-warning .warning-text {
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.delete-item-details {
+    background-color: var(--light);
+    border-radius: 12px;
+    padding: 16px;
+    margin-top: 16px;
+}
+
+.delete-item-details .detail-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+.delete-item-details .detail-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.delete-item-details .detail-extra {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.delete-modal-footer {
+    padding: 16px 24px 24px 24px;
     display: flex;
-    gap: 12px;
     justify-content: flex-end;
+    gap: 12px;
+    border-top: 1px solid var(--border-light);
+    background: var(--white);
+}
+
+/* Success Modal Header */
+.success-modal-header {
+    padding: 24px 24px 16px 24px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.success-modal-header h3 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--success);
+}
+
+.success-modal-header h3 i {
+    margin-right: 10px;
 }
 
 /* Form Styles */
@@ -854,31 +972,33 @@ tr:hover td {
 .form-group label {
     display: block;
     margin-bottom: 8px;
-    color: var(--text-secondary);
     font-weight: 500;
-    font-size: 13px;
+    color: var(--text-primary);
+    font-size: 14px;
 }
 
 .form-group label i {
-    color: var(--primary);
+    color: var(--accent);
     margin-right: 6px;
     width: 16px;
 }
 
 .form-control {
     width: 100%;
-    padding: 12px 16px;
-    border: 2px solid var(--border-light);
-    border-radius: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
     font-size: 14px;
-    transition: all 0.2s ease;
-    background: var(--white);
+    color: var(--text-primary);
+    transition: all 0.3s;
+    background-color: var(--white);
+    box-sizing: border-box;
 }
 
 .form-control:focus {
     outline: none;
     border-color: var(--primary);
-    box-shadow: 0 0 0 4px rgba(107, 140, 255, 0.1);
+    box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.1);
 }
 
 select.form-control {
@@ -887,26 +1007,83 @@ select.form-control {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236B6B6B'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 12px center;
-    background-size: 20px;
+    background-size: 18px;
 }
 
 .form-row {
     display: flex;
     gap: 15px;
+    margin-bottom: 15px;
 }
 
 .form-row .form-group {
     flex: 1;
+    margin-bottom: 0;
 }
 
 .text-muted {
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     margin-top: 5px;
     display: block;
 }
 
-/* View User Modal Styles */
+/* Modal Buttons */
+.btn-modal {
+    padding: 8px 20px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-modal-secondary {
+    background-color: #6c757d;
+    color: var(--text-light);
+}
+
+.btn-modal-secondary:hover {
+    background-color: #5a6268;
+    transform: translateY(-2px);
+}
+
+.btn-modal-danger {
+    background-color: var(--danger);
+    color: var(--text-light);
+}
+
+.btn-modal-danger:hover {
+    opacity: 0.9;
+    transform: translateY(-2px);
+}
+
+.btn-modal-success {
+    background-color: var(--success);
+    color: var(--text-light);
+}
+
+.btn-modal-success:hover {
+    opacity: 0.9;
+    transform: translateY(-2px);
+}
+
+.btn-modal-primary {
+    background-color: var(--accent);
+    color: var(--text-primary);
+}
+
+.btn-modal-primary:hover {
+    background-color: #e69eb0;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(248, 176, 192, 0.3);
+}
+
+/* View User Styles */
 .view-avatar {
     text-align: center;
     margin-bottom: 20px;
@@ -937,7 +1114,7 @@ select.form-control {
 
 .user-detail {
     background: var(--light);
-    border-radius: 14px;
+    border-radius: 12px;
     padding: 14px 16px;
     transition: all 0.2s ease;
     border: 1px solid transparent;
@@ -974,6 +1151,24 @@ select.form-control {
     word-break: break-word;
 }
 
+/* Scrollbar Styling */
+.modal-body-scroll::-webkit-scrollbar,
+.delete-modal-body::-webkit-scrollbar {
+    width: 6px;
+}
+
+.modal-body-scroll::-webkit-scrollbar-track,
+.delete-modal-body::-webkit-scrollbar-track {
+    background: var(--light);
+    border-radius: 3px;
+}
+
+.modal-body-scroll::-webkit-scrollbar-thumb,
+.delete-modal-body::-webkit-scrollbar-thumb {
+    background: var(--primary);
+    border-radius: 3px;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .dashboard-cards {
@@ -983,6 +1178,7 @@ select.form-control {
     
     .table-header {
         flex-direction: column;
+        align-items: flex-start;
     }
     
     .search-box {
@@ -998,6 +1194,10 @@ select.form-control {
         gap: 0;
     }
     
+    .form-row .form-group {
+        margin-bottom: 15px;
+    }
+    
     .view-grid {
         grid-template-columns: 1fr;
         gap: 12px;
@@ -1007,14 +1207,40 @@ select.form-control {
         flex-wrap: wrap;
     }
     
-    .action-btn {
-        padding: 6px 10px;
-        font-size: 11px;
-    }
-    
-    .modal-content {
+    .modal-container {
         width: 95%;
         margin: 10% auto;
+    }
+    
+    .delete-modal-container {
+        width: 95%;
+    }
+    
+    .modal-header-settings {
+        padding: 15px 20px;
+    }
+    
+    .modal-body-scroll {
+        padding: 20px;
+    }
+    
+    .modal-footer-buttons {
+        padding: 12px 20px;
+        flex-direction: column-reverse;
+    }
+    
+    .btn-modal {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .delete-modal-footer {
+        flex-direction: column-reverse;
+    }
+    
+    .delete-modal-footer .btn-modal {
+        width: 100%;
+        justify-content: center;
     }
 }
 </style>
@@ -1066,13 +1292,13 @@ select.form-control {
 <!-- ============================================ -->
 <div class="table-container pending-container">
     <div class="table-header">
-        <h2><i class="fas fa-clock"></i> Pending Registrations <span class="count-badge" style="background: var(--accent); color: var(--text-primary); border-radius: 20px; padding: 2px 8px; font-size: 12px; margin-left: 8px;"><?php echo $pending_users ? $pending_users->num_rows : 0; ?></span></h2>
-        <p><i class="fas fa-info-circle"></i> Users waiting for admin approval - Approve or Reject to send email notification</p>
+        <h2><i class="fas fa-clock"></i> Pending Registrations</h2>
+        <span style="background: var(--accent); color: var(--text-primary); border-radius: 20px; padding: 2px 10px; font-size: 12px;"><?php echo $pending_users ? $pending_users->num_rows : 0; ?> pending</span>
     </div>
     
     <?php if ($pending_users && $pending_users->num_rows > 0): ?>
         <div style="overflow-x: auto;">
-            <table class="table">
+            <table>
                 <thead>
                     <tr>
                         <th>ID</th>
@@ -1095,20 +1321,12 @@ select.form-control {
                             <br><small class="text-muted"><?php echo time_elapsed_string($pending['created_at']); ?></small>
                         </td>
                         <td class="action-buttons">
-                            <form method="POST" action="" style="display: inline-block;" onsubmit="return confirmApprove('<?php echo addslashes($pending['firstname']); ?>')">
-                                <input type="hidden" name="action" value="approve">
-                                <input type="hidden" name="user_id" value="<?php echo $pending['id']; ?>">
-                                <button type="submit" class="action-btn approve">
-                                    <i class="fas fa-check-circle"></i> Approve & Send Email
-                                </button>
-                            </form>
-                            <form method="POST" action="" style="display: inline-block;" onsubmit="return confirmReject('<?php echo addslashes($pending['firstname']); ?>')">
-                                <input type="hidden" name="action" value="reject">
-                                <input type="hidden" name="user_id" value="<?php echo $pending['id']; ?>">
-                                <button type="submit" class="action-btn reject">
-                                    <i class="fas fa-times-circle"></i> Reject & Send Email
-                                </button>
-                            </form>
+                            <button onclick="openApproveModal(<?php echo $pending['id']; ?>, '<?php echo htmlspecialchars(addslashes($pending['firstname'] . ' ' . $pending['lastname'])); ?>', '<?php echo htmlspecialchars($pending['email']); ?>')" class="action-btn approve">
+                                <i class="fas fa-check-circle"></i> Approve
+                            </button>
+                            <button onclick="openRejectModal(<?php echo $pending['id']; ?>, '<?php echo htmlspecialchars(addslashes($pending['firstname'] . ' ' . $pending['lastname'])); ?>', '<?php echo htmlspecialchars($pending['email']); ?>')" class="action-btn reject">
+                                <i class="fas fa-times-circle"></i> Reject
+                            </button>
                         </td>
                     </tr>
                     <?php endwhile; ?>
@@ -1140,79 +1358,185 @@ select.form-control {
         </div>
     </div>
     
-    <table id="usersTable">
-        <thead>
-            <tr>
-                <th>ID</th>
-                <th></th>
-                <th>Username</th>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Role</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            <?php while ($user = $users->fetch_assoc()): ?>
-            <tr id="user-row-<?php echo $user['id']; ?>">
-                <td><?php echo $user['id']; ?></td>
-                <td>
-                    <div class="avatar-small">
-                        <i class="fas fa-user"></i>
-                    </div>
-                </td>
-                <td><strong><?php echo htmlspecialchars($user['username']); ?></strong></td>
-                <td><?php echo htmlspecialchars($user['firstname'] . ' ' . $user['lastname']); ?></td>
-                <td><?php echo htmlspecialchars($user['email']); ?></td>
-                <td>
-                    <span class="badge <?php echo $user['role'] == 'super_admin' ? 'badge-danger' : ($user['role'] == 'admin' ? 'badge-warning' : 'badge-info'); ?>">
-                        <?php echo ucfirst(str_replace('_', ' ', $user['role'])); ?>
-                    </span>
-                </td>
-                <td>
-                    <span class="badge <?php echo $user['status'] == 'active' ? 'badge-success' : ($user['status'] == 'pending' ? 'badge-pending' : 'badge-danger'); ?>" id="status-<?php echo $user['id']; ?>">
-                        <?php echo ucfirst($user['status']); ?>
-                    </span>
-                </td>
-                <td><?php echo date('M d, Y', strtotime($user['created_at'])); ?></td>
-                <td>
-                    <div class="action-buttons">
-                        <button class="action-btn view" onclick="viewUser(<?php echo $user['id']; ?>)" title="View">
-                            <i class="fas fa-eye"></i> View
-                        </button>
-                        <button class="action-btn edit" onclick="editUser(<?php echo $user['id']; ?>)" title="Edit">
-                            <i class="fas fa-edit"></i> Edit
-                        </button>
-                        <button class="action-btn toggle" onclick="toggleStatus(<?php echo $user['id']; ?>, '<?php echo $user['status']; ?>')" title="Toggle Status">
-                            <i class="fas fa-<?php echo $user['status'] == 'active' ? 'ban' : 'check'; ?>"></i> 
-                            <?php echo $user['status'] == 'active' ? 'Disable' : 'Enable'; ?>
-                        </button>
-                        <button class="action-btn key" onclick="resetPassword(<?php echo $user['id']; ?>, '<?php echo htmlspecialchars($user['username']); ?>')" title="Reset Password">
-                            <i class="fas fa-key"></i> Reset PW
-                        </button>
-                        <?php if ($user['id'] != $_SESSION['user_id']): ?>
-                        <button class="action-btn delete" onclick="deleteUser(<?php echo $user['id']; ?>, '<?php echo htmlspecialchars($user['username']); ?>')" title="Delete">
-                            <i class="fas fa-trash"></i> Delete
-                        </button>
-                        <?php endif; ?>
-                    </div>
-                </td>
-            </tr>
-            <?php endwhile; ?>
-        </tbody>
-    </table>
+    <div style="overflow-x: auto;">
+        <table id="usersTable">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th></th>
+                    <th>Username</th>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php while ($user = $users->fetch_assoc()): ?>
+                <tr id="user-row-<?php echo $user['id']; ?>">
+                    <td><?php echo $user['id']; ?></td>
+                    <td>
+                        <div class="avatar-small">
+                            <i class="fas fa-user"></i>
+                        </div>
+                    </td>
+                    <td><strong><?php echo htmlspecialchars($user['username']); ?></strong></td>
+                    <td><?php echo htmlspecialchars($user['firstname'] . ' ' . $user['lastname']); ?></td>
+                    <td><?php echo htmlspecialchars($user['email']); ?></td>
+                    <td>
+                        <span class="badge <?php echo $user['role'] == 'super_admin' ? 'badge-danger' : ($user['role'] == 'admin' ? 'badge-warning' : 'badge-info'); ?>">
+                            <?php echo ucfirst(str_replace('_', ' ', $user['role'])); ?>
+                        </span>
+                    </td>
+                    <td>
+                        <span class="badge <?php echo $user['status'] == 'active' ? 'badge-success' : ($user['status'] == 'pending' ? 'badge-pending' : 'badge-danger'); ?>" id="status-<?php echo $user['id']; ?>">
+                            <?php echo ucfirst($user['status']); ?>
+                        </span>
+                    </td>
+                    <td><?php echo date('M d, Y', strtotime($user['created_at'])); ?></td>
+                    <td>
+                        <div class="action-buttons">
+                            <button class="action-btn view" onclick="viewUser(<?php echo $user['id']; ?>)" title="View">
+                                <i class="fas fa-eye"></i> View
+                            </button>
+                            <button class="action-btn edit" onclick="editUser(<?php echo $user['id']; ?>)" title="Edit">
+                                <i class="fas fa-edit"></i> Edit
+                            </button>
+                            <button class="action-btn toggle" onclick="toggleStatus(<?php echo $user['id']; ?>, '<?php echo $user['status']; ?>')" title="Toggle Status">
+                                <i class="fas fa-<?php echo $user['status'] == 'active' ? 'ban' : 'check'; ?>"></i> 
+                                <?php echo $user['status'] == 'active' ? 'Disable' : 'Enable'; ?>
+                            </button>
+                            <button class="action-btn key" onclick="openResetModal(<?php echo $user['id']; ?>, '<?php echo htmlspecialchars($user['username']); ?>')" title="Reset Password">
+                                <i class="fas fa-key"></i> Reset PW
+                            </button>
+                            <?php if ($user['id'] != $_SESSION['user_id']): ?>
+                            <button class="action-btn delete" onclick="openDeleteUserModal(<?php echo $user['id']; ?>, '<?php echo htmlspecialchars($user['username']); ?>', '<?php echo htmlspecialchars($user['email']); ?>')" title="Delete">
+                                <i class="fas fa-trash"></i> Delete
+                            </button>
+                            <?php endif; ?>
+                        </div>
+                    </td>
+                </tr>
+                <?php endwhile; ?>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ============================================ -->
+<!-- MODALS -->
+<!-- ============================================ -->
+
+<!-- Delete User Modal -->
+<div id="deleteUserModal" class="delete-modal-overlay">
+    <div class="delete-modal-container">
+        <div class="delete-modal-header">
+            <h3><i class="fas fa-trash-alt"></i> Delete User</h3>
+        </div>
+        <div class="delete-modal-body">
+            <div class="delete-warning">
+                <i class="fas fa-exclamation-triangle"></i>
+                <p><strong>Are you absolutely sure?</strong></p>
+                <p class="warning-text">This action cannot be undone.</p>
+            </div>
+            <div class="delete-item-details">
+                <div class="detail-label">USER TO DELETE</div>
+                <div class="detail-name" id="delete_username">-</div>
+                <div class="detail-extra" id="delete_user_email">-</div>
+            </div>
+        </div>
+        <div class="delete-modal-footer">
+            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeDeleteUserModal()">Cancel</button>
+            <a href="#" id="confirmDeleteUserBtn" class="btn-modal btn-modal-danger"><i class="fas fa-trash-alt"></i> Delete User</a>
+        </div>
+    </div>
+</div>
+
+<!-- Approve User Modal -->
+<div id="approveModal" class="delete-modal-overlay">
+    <div class="delete-modal-container">
+        <div class="success-modal-header">
+            <h3><i class="fas fa-check-circle"></i> Approve User</h3>
+        </div>
+        <div class="delete-modal-body">
+            <div class="delete-warning">
+                <i class="fas fa-user-check"></i>
+                <p><strong>Approve Registration?</strong></p>
+                <p class="warning-text">This user will be able to login immediately.<br>An approval email will be sent.</p>
+            </div>
+            <div class="delete-item-details">
+                <div class="detail-label">USER TO APPROVE</div>
+                <div class="detail-name" id="approve_username">-</div>
+                <div class="detail-extra" id="approve_email">-</div>
+            </div>
+        </div>
+        <div class="delete-modal-footer">
+            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeApproveModal()">Cancel</button>
+            <a href="#" id="confirmApproveBtn" class="btn-modal btn-modal-success"><i class="fas fa-check-circle"></i> Approve User</a>
+        </div>
+    </div>
+</div>
+
+<!-- Reject User Modal -->
+<div id="rejectModal" class="delete-modal-overlay">
+    <div class="delete-modal-container">
+        <div class="delete-modal-header">
+            <h3><i class="fas fa-times-circle"></i> Reject User</h3>
+        </div>
+        <div class="delete-modal-body">
+            <div class="delete-warning">
+                <i class="fas fa-exclamation-triangle"></i>
+                <p><strong>Reject Registration?</strong></p>
+                <p class="warning-text">This action cannot be undone. The user will be removed.<br>A rejection email will be sent.</p>
+            </div>
+            <div class="delete-item-details">
+                <div class="detail-label">USER TO REJECT</div>
+                <div class="detail-name" id="reject_username">-</div>
+                <div class="detail-extra" id="reject_email">-</div>
+            </div>
+        </div>
+        <div class="delete-modal-footer">
+            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeRejectModal()">Cancel</button>
+            <a href="#" id="confirmRejectBtn" class="btn-modal btn-modal-danger"><i class="fas fa-times-circle"></i> Reject User</a>
+        </div>
+    </div>
+</div>
+
+<!-- Reset Password Modal -->
+<div id="resetModal" class="modal-overlay">
+    <div class="modal-container small">
+        <div class="modal-header-settings">
+            <h3><i class="fas fa-key"></i> Reset Password</h3>
+            <span class="modal-close" onclick="closeResetModal()">&times;</span>
+        </div>
+        <div class="modal-body-scroll">
+            <p>Reset password for: <strong id="resetUsername"></strong></p>
+            <div class="form-group">
+                <label><i class="fas fa-lock"></i> New Password</label>
+                <input type="password" id="newPassword" class="form-control" placeholder="Enter new password (min 6 characters)">
+            </div>
+            <div class="form-group">
+                <label><i class="fas fa-lock"></i> Confirm Password</label>
+                <input type="password" id="confirmNewPassword" class="form-control" placeholder="Confirm new password">
+            </div>
+        </div>
+        <div class="modal-footer-buttons">
+            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeResetModal()">Cancel</button>
+            <button type="button" class="btn-modal btn-modal-primary" onclick="submitResetPassword()"><i class="fas fa-key"></i> Reset Password</button>
+        </div>
+    </div>
 </div>
 
 <!-- Add/Edit User Modal -->
-<div id="userModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h2><i class="fas fa-user-plus"></i> <span id="modalTitle">Add New User</span></h2>
-            <span class="modal-close" onclick="closeModal('userModal')">&times;</span>
+<div id="userModal" class="modal-overlay">
+    <div class="modal-container">
+        <div class="modal-header-settings">
+            <h3 id="modalTitle"><i class="fas fa-user-plus"></i> Add New User</h3>
+            <span class="modal-close" onclick="closeUserModal()">&times;</span>
         </div>
-        <div class="modal-body">
+        <div class="modal-body-scroll">
             <form id="userForm">
                 <input type="hidden" id="user_id" name="user_id">
                 
@@ -1242,17 +1566,17 @@ select.form-control {
                     <div class="form-group">
                         <label><i class="fas fa-tag"></i> Role *</label>
                         <select id="role" class="form-control">
-                            <option value="user">👤 Regular User</option>
-                            <option value="supply">🚚 Supply Officer</option>
-                            <option value="admin">🛠️ Administrator</option>
-                            <option value="super_admin">👑 Super Admin</option>
+                            <option value="user">Regular User</option>
+                            <option value="supply">Supply Officer</option>
+                            <option value="admin">Administrator</option>
+                            <option value="super_admin">Super Admin</option>
                         </select>
                     </div>
                     <div class="form-group">
                         <label><i class="fas fa-circle"></i> Status</label>
                         <select id="status" class="form-control">
-                            <option value="active">✅ Active</option>
-                            <option value="inactive">⛔ Inactive</option>
+                            <option value="active">Active</option>
+                            <option value="inactive">Inactive</option>
                         </select>
                     </div>
                 </div>
@@ -1269,50 +1593,25 @@ select.form-control {
                 </div>
             </form>
         </div>
-        <div class="modal-footer">
-            <button class="btn btn-secondary" onclick="closeModal('userModal')">Cancel</button>
-            <button class="btn btn-primary" onclick="saveUser()">Save User</button>
+        <div class="modal-footer-buttons">
+            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeUserModal()">Cancel</button>
+            <button type="button" class="btn-modal btn-modal-primary" onclick="saveUser()"><i class="fas fa-save"></i> Save User</button>
         </div>
     </div>
 </div>
 
 <!-- View User Modal -->
-<div id="viewModal" class="modal">
-    <div class="modal-content large">
-        <div class="modal-header">
-            <h2><i class="fas fa-user-circle"></i> User Details</h2>
-            <span class="modal-close" onclick="closeModal('viewModal')">&times;</span>
+<div id="viewModal" class="modal-overlay">
+    <div class="modal-container large">
+        <div class="modal-header-settings">
+            <h3><i class="fas fa-user-circle"></i> User Details</h3>
+            <span class="modal-close" onclick="closeViewModal()">&times;</span>
         </div>
-        <div class="modal-body" id="viewContent">
+        <div class="modal-body-scroll" id="viewContent">
             <div class="text-center">Loading...</div>
         </div>
-        <div class="modal-footer">
-            <button class="btn btn-secondary" onclick="closeModal('viewModal')">Close</button>
-        </div>
-    </div>
-</div>
-
-<!-- Reset Password Modal -->
-<div id="resetModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h2><i class="fas fa-key"></i> Reset Password</h2>
-            <span class="modal-close" onclick="closeModal('resetModal')">&times;</span>
-        </div>
-        <div class="modal-body">
-            <p>Reset password for: <strong id="resetUsername"></strong></p>
-            <div class="form-group">
-                <label><i class="fas fa-lock"></i> New Password</label>
-                <input type="password" id="newPassword" class="form-control" placeholder="Enter new password (min 6 characters)">
-            </div>
-            <div class="form-group">
-                <label><i class="fas fa-lock"></i> Confirm Password</label>
-                <input type="password" id="confirmNewPassword" class="form-control" placeholder="Confirm new password">
-            </div>
-        </div>
-        <div class="modal-footer">
-            <button class="btn btn-secondary" onclick="closeModal('resetModal')">Cancel</button>
-            <button class="btn btn-primary" onclick="submitResetPassword()">Reset Password</button>
+        <div class="modal-footer-buttons">
+            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeViewModal()">Close</button>
         </div>
     </div>
 </div>
@@ -1321,11 +1620,9 @@ select.form-control {
 
 <script>
 let currentResetUserId = null;
-
-// Helper function for addslashes
-function addslashes(str) {
-    return (str + '').replace(/[\\"']/g, '\\$&').replace(/\u0000/g, '\\0');
-}
+let currentDeleteUserId = null;
+let currentApproveUserId = null;
+let currentRejectUserId = null;
 
 // Search function
 function searchUsers() {
@@ -1350,9 +1647,99 @@ function searchUsers() {
 // Real-time search
 document.getElementById('searchInput').addEventListener('keyup', searchUsers);
 
+// Delete User Modal Functions
+function openDeleteUserModal(id, username, email) {
+    currentDeleteUserId = id;
+    document.getElementById('delete_username').innerText = username;
+    document.getElementById('delete_user_email').innerText = email;
+    document.getElementById('confirmDeleteUserBtn').href = '?ajax=delete_user&id=' + id;
+    document.getElementById('deleteUserModal').style.display = 'flex';
+}
+
+function closeDeleteUserModal() {
+    document.getElementById('deleteUserModal').style.display = 'none';
+    currentDeleteUserId = null;
+}
+
+// Approve Modal Functions
+function openApproveModal(id, fullname, email) {
+    currentApproveUserId = id;
+    document.getElementById('approve_username').innerText = fullname;
+    document.getElementById('approve_email').innerText = email;
+    document.getElementById('confirmApproveBtn').href = window.location.href + '?approve=' + id;
+    document.getElementById('approveModal').style.display = 'flex';
+}
+
+function closeApproveModal() {
+    document.getElementById('approveModal').style.display = 'none';
+    currentApproveUserId = null;
+}
+
+// Reject Modal Functions
+function openRejectModal(id, fullname, email) {
+    currentRejectUserId = id;
+    document.getElementById('reject_username').innerText = fullname;
+    document.getElementById('reject_email').innerText = email;
+    document.getElementById('confirmRejectBtn').href = window.location.href + '?reject=' + id;
+    document.getElementById('rejectModal').style.display = 'flex';
+}
+
+function closeRejectModal() {
+    document.getElementById('rejectModal').style.display = 'none';
+    currentRejectUserId = null;
+}
+
+// Reset Password Modal Functions
+function openResetModal(id, username) {
+    currentResetUserId = id;
+    document.getElementById('resetUsername').innerHTML = username;
+    document.getElementById('newPassword').value = '';
+    document.getElementById('confirmNewPassword').value = '';
+    document.getElementById('resetModal').style.display = 'block';
+}
+
+function closeResetModal() {
+    document.getElementById('resetModal').style.display = 'none';
+    currentResetUserId = null;
+}
+
+function submitResetPassword() {
+    const password = document.getElementById('newPassword').value;
+    const confirm = document.getElementById('confirmNewPassword').value;
+    
+    if (!password) {
+        Swal.fire('Error', 'Please enter a new password', 'error');
+        return;
+    }
+    
+    if (password.length < 6) {
+        Swal.fire('Error', 'Password must be at least 6 characters', 'error');
+        return;
+    }
+    
+    if (password !== confirm) {
+        Swal.fire('Error', 'Passwords do not match', 'error');
+        return;
+    }
+    
+    Swal.fire({ title: 'Resetting...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    
+    fetch(window.location.href + '?ajax=reset_password&id=' + currentResetUserId + '&password=' + encodeURIComponent(password))
+        .then(response => response.json())
+        .then(data => {
+            Swal.close();
+            if (data.success) {
+                Swal.fire('Success!', data.message, 'success');
+                closeResetModal();
+            } else {
+                Swal.fire('Error', data.message, 'error');
+            }
+        });
+}
+
 // Open Add User Modal
 function openAddUserModal() {
-    document.getElementById('modalTitle').innerHTML = 'Add New User';
+    document.getElementById('modalTitle').innerHTML = '<i class="fas fa-user-plus"></i> Add New User';
     document.getElementById('userForm').reset();
     document.getElementById('user_id').value = '';
     document.getElementById('password').required = true;
@@ -1360,6 +1747,10 @@ function openAddUserModal() {
     document.getElementById('passwordHint').style.display = 'block';
     document.getElementById('confirmGroup').style.display = 'block';
     document.getElementById('userModal').style.display = 'block';
+}
+
+function closeUserModal() {
+    document.getElementById('userModal').style.display = 'none';
 }
 
 // Edit User
@@ -1375,7 +1766,7 @@ function editUser(userId) {
                 return;
             }
             
-            document.getElementById('modalTitle').innerHTML = 'Edit User';
+            document.getElementById('modalTitle').innerHTML = '<i class="fas fa-user-edit"></i> Edit User';
             document.getElementById('user_id').value = data.id;
             document.getElementById('firstname').value = data.firstname;
             document.getElementById('lastname').value = data.lastname;
@@ -1454,6 +1845,10 @@ function viewUser(userId) {
             Swal.close();
             Swal.fire('Error', 'Failed to load user details', 'error');
         });
+}
+
+function closeViewModal() {
+    document.getElementById('viewModal').style.display = 'none';
 }
 
 // Save User
@@ -1552,91 +1947,7 @@ function toggleStatus(userId, currentStatus) {
     });
 }
 
-// Reset Password
-function resetPassword(userId, username) {
-    currentResetUserId = userId;
-    document.getElementById('resetUsername').innerHTML = username;
-    document.getElementById('newPassword').value = '';
-    document.getElementById('confirmNewPassword').value = '';
-    document.getElementById('resetModal').style.display = 'block';
-}
-
-function submitResetPassword() {
-    const password = document.getElementById('newPassword').value;
-    const confirm = document.getElementById('confirmNewPassword').value;
-    
-    if (!password) {
-        Swal.fire('Error', 'Please enter a new password', 'error');
-        return;
-    }
-    
-    if (password.length < 6) {
-        Swal.fire('Error', 'Password must be at least 6 characters', 'error');
-        return;
-    }
-    
-    if (password !== confirm) {
-        Swal.fire('Error', 'Passwords do not match', 'error');
-        return;
-    }
-    
-    Swal.fire({ title: 'Resetting...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-    
-    fetch(window.location.href + '?ajax=reset_password&id=' + currentResetUserId + '&password=' + encodeURIComponent(password))
-        .then(response => response.json())
-        .then(data => {
-            Swal.close();
-            if (data.success) {
-                Swal.fire('Success!', data.message, 'success');
-                closeModal('resetModal');
-            } else {
-                Swal.fire('Error', data.message, 'error');
-            }
-        });
-}
-
-// Delete User
-function deleteUser(userId, username) {
-    Swal.fire({
-        title: 'Delete User?',
-        text: `Are you sure you want to delete "${username}"? This cannot be undone.`,
-        icon: 'warning',
-        showCancelButton: true,
-        confirmButtonColor: '#f44336',
-        confirmButtonText: 'Yes, delete!'
-    }).then((result) => {
-        if (result.isConfirmed) {
-            Swal.fire({ title: 'Deleting...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-            
-            fetch(window.location.href + '?ajax=delete_user&id=' + userId)
-                .then(response => response.json())
-                .then(data => {
-                    Swal.close();
-                    if (data.success) {
-                        document.getElementById('user-row-' + userId).remove();
-                        Swal.fire('Deleted!', data.message, 'success');
-                    } else {
-                        Swal.fire('Error', data.message, 'error');
-                    }
-                });
-        }
-    });
-}
-
-// Confirm functions for pending approvals
-function confirmApprove(firstname) {
-    return confirm('Approve ' + firstname + '\'s registration?\n\n✓ They will be able to login immediately.\n✓ An approval email will be sent to the user.');
-}
-
-function confirmReject(firstname) {
-    return confirm('Reject ' + firstname + '\'s registration?\n\n⚠️ This action cannot be undone.\n⚠️ The user will be removed from the system.\n⚠️ A rejection email will be sent to the user.');
-}
-
 // Helper Functions
-function closeModal(modalId) {
-    document.getElementById(modalId).style.display = 'none';
-}
-
 function escapeHtml(str) {
     if (!str) return '';
     return str.replace(/[&<>]/g, function(m) {
@@ -1650,17 +1961,23 @@ function escapeHtml(str) {
 // Close modals on escape
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
-        closeModal('userModal');
-        closeModal('viewModal');
-        closeModal('resetModal');
+        closeUserModal();
+        closeViewModal();
+        closeResetModal();
+        closeDeleteUserModal();
+        closeApproveModal();
+        closeRejectModal();
     }
 });
 
 // Close modal on outside click
 window.onclick = function(e) {
-    if (e.target === document.getElementById('userModal')) closeModal('userModal');
-    if (e.target === document.getElementById('viewModal')) closeModal('viewModal');
-    if (e.target === document.getElementById('resetModal')) closeModal('resetModal');
+    if (e.target === document.getElementById('userModal')) closeUserModal();
+    if (e.target === document.getElementById('viewModal')) closeViewModal();
+    if (e.target === document.getElementById('resetModal')) closeResetModal();
+    if (e.target === document.getElementById('deleteUserModal')) closeDeleteUserModal();
+    if (e.target === document.getElementById('approveModal')) closeApproveModal();
+    if (e.target === document.getElementById('rejectModal')) closeRejectModal();
 }
 </script>
 

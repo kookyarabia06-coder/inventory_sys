@@ -1,0 +1,18 @@
+{
+    "sourceFile": "logout.php",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 0,
+            "patches": [
+                {
+                    "date": 1778568977636,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                }
+            ],
+            "date": 1778568977636,
+            "name": "Commit-0",
+            "content": "<?php\n/**\n * Logout Page\n * Handles user logout with audit trail logging\n */\n\nrequire_once __DIR__ . '/config.php';\nrequire_once __DIR__ . '/config/database.php';\nrequire_once __DIR__ . '/includes/auth.php';\n\n// Start session if not already started\nif (session_status() === PHP_SESSION_NONE) {\n    session_start();\n}\n\n// Log the logout event before destroying session\nif (isset($_SESSION['user_id']) && isset($conn)) {\n    $user_id = $_SESSION['user_id'];\n    $username = $_SESSION['username'] ?? 'Unknown';\n    $ip_address = $_SERVER['REMOTE_ADDR'] ?? 'Unknown';\n    \n    // Direct insert for logout audit\n    $sql = \"INSERT INTO audit_trail (user_id, action, action_category, description, ip_address, user_agent, created_at) \n            VALUES (?, 'LOGOUT', 'AUTHENTICATION', ?, ?, ?, NOW())\";\n    \n    $stmt = $conn->prepare($sql);\n    if ($stmt) {\n        $description = \"User logged out successfully: $username\";\n        $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown';\n        $stmt->bind_param(\"isss\", $user_id, $description, $ip_address, $user_agent);\n        $stmt->execute();\n        $stmt->close();\n        \n        // Debug log\n        error_log(\"LOGOUT logged for user: $username (ID: $user_id) from IP: $ip_address\");\n    } else {\n        error_log(\"Failed to prepare logout audit statement: \" . $conn->error);\n    }\n}\n\n// Clear all session variables\n$_SESSION = array();\n\n// Destroy the session cookie\nif (isset($_COOKIE[session_name()])) {\n    setcookie(session_name(), '', time()-3600, '/');\n}\n\n// Destroy the session\nsession_destroy();\n\n// Clear remember me cookie if exists\nif (isset($_COOKIE['remember_username'])) {\n    setcookie('remember_username', '', time()-3600, '/');\n}\n\n// Redirect to login page\nheader('Location: ' . SITE_URL . '/login.php');\nexit();\n?>"
+        }
+    ]
+}

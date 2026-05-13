@@ -570,14 +570,18 @@ tr:hover td {
     </div>
 </div>
 
+
 <!-- Issued Items Tab -->
 <div id="issued-tab" class="tab-content">
     <div class="table-container">
-        <div class="table-header">
+        <div class="table-header" style="display: flex; justify-content: space-between; align-items: center;">
             <h2>Items Issued to You</h2>
+            <button type="button" class="btn btn-primary" onclick="printIssuedItems()" style="padding: 8px 16px;">
+                <i class="fas fa-print"></i> Print
+            </button>
         </div>
         
-        <div style="overflow-x: auto;">
+        <div id="printable-items" style="overflow-x: auto;">
             <table>
                 <thead>
                     <tr>
@@ -593,7 +597,7 @@ tr:hover td {
                     </tr>
                 </thead>
                 <tbody>
-                                    <?php
+                    <?php
                     // Simple query that only joins tables we know exist
                     $stmt = $conn->prepare("
                         SELECT ei.*, 
@@ -670,6 +674,310 @@ tr:hover td {
 </div>
 
 <script>
+// Print function for issued items - Receipt style (without Fund Cluster)
+function printIssuedItems() {
+    // Get the current user name
+    const userName = '<?php echo htmlspecialchars($user['firstname'] . ' ' . $user['lastname']); ?>';
+    
+    // Get all issued items data from the table
+    const tableRows = document.querySelectorAll('#issued-tab table tbody tr');
+    let itemsHtml = '';
+    let itemCount = 0;
+    
+    // Loop through visible rows (skip the "no items" row)
+    tableRows.forEach((row) => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length >= 8 && !row.querySelector('td[colspan]')) {
+            itemCount++;
+            itemsHtml += `
+                <tr>
+                    <td style="padding: 10px; border-bottom: 1px solid #ddd; text-align: center;">${itemCount}</td>
+                    <td style="padding: 10px; border-bottom: 1px solid #ddd;">${cells[0]?.innerText || ''}</td>
+                    <td style="padding: 10px; border-bottom: 1px solid #ddd;">${cells[1]?.innerText || ''}</td>
+                    <td style="padding: 10px; border-bottom: 1px solid #ddd;">${cells[2]?.innerText || ''}</td>
+                    <td style="padding: 10px; border-bottom: 1px solid #ddd;">${cells[5]?.innerText || ''}</td>
+                    <td style="padding: 10px; border-bottom: 1px solid #ddd; text-align: center;">${cells[7]?.innerText || ''}</td>
+                    <td style="padding: 10px; border-bottom: 1px solid #ddd; text-align: center;">${cells[8]?.innerText || ''}</td>
+                </tr>
+            `;
+        }
+    });
+    
+    // Today's date
+    const today = new Date();
+    const formattedDate = today.toLocaleDateString('en-US', { 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+    });
+    
+    // Generate random receipt number
+    const receiptNo = 'YB-920A ' + Math.floor(Math.random() * 1000000);
+    
+    // Create the receipt HTML (styled like your image - NO FUND CLUSTER)
+    const printHtml = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>PROPERTY RECEIPT - ${userName}</title>
+            <meta charset="UTF-8">
+            <style>
+                * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }
+                
+                body {
+                    font-family: 'Courier New', Courier, monospace;
+                    padding: 40px 20px;
+                    background: white;
+                }
+                
+                .receipt {
+                    max-width: 800px;
+                    margin: 0 auto;
+                    background: white;
+                }
+                
+                /* Header Section */
+                .header {
+                    text-align: center;
+                    margin-bottom: 30px;
+                    border-bottom: 2px solid #000;
+                    padding-bottom: 15px;
+                }
+                
+                .hospital-name {
+                    font-size: 14px;
+                    font-weight: bold;
+                    letter-spacing: 1px;
+                    margin-bottom: 5px;
+                }
+                
+                .hospital-address {
+                    font-size: 11px;
+                    margin-bottom: 3px;
+                }
+                
+                .hospital-sub {
+                    font-size: 10px;
+                }
+                
+                .receipt-title {
+                    font-size: 18px;
+                    font-weight: bold;
+                    margin: 15px 0 5px;
+                    text-transform: uppercase;
+                    text-align: center;
+                }
+                
+                .receipt-number {
+                    font-size: 12px;
+                    margin-bottom: 10px;
+                    text-align: center;
+                }
+                
+                /* Property Card Section (like in the image) */
+                .property-card {
+                    border: 2px solid #000;
+                    margin: 20px 0;
+                    font-size: 12px;
+                }
+                
+                .property-card-header {
+                    background: #000;
+                    color: white;
+                    padding: 8px;
+                    text-align: center;
+                    font-weight: bold;
+                    letter-spacing: 2px;
+                }
+                
+                .property-row {
+                    display: flex;
+                    border-bottom: 1px solid #000;
+                }
+                
+                .property-label {
+                    width: 140px;
+                    padding: 8px;
+                    font-weight: bold;
+                    border-right: 1px solid #000;
+                    background: #f5f5f5;
+                }
+                
+                .property-value {
+                    flex: 1;
+                    padding: 8px;
+                }
+                
+                /* Items Table */
+                .items-table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin: 20px 0;
+                    font-size: 11px;
+                }
+                
+                .items-table th {
+                    border: 1px solid #000;
+                    padding: 8px;
+                    text-align: center;
+                    font-weight: bold;
+                    background: #f5f5f5;
+                }
+                
+                .items-table td {
+                    border: 1px solid #000;
+                    padding: 8px;
+                }
+                
+                /* Issued To Info */
+                .issued-info {
+                    margin: 15px 0;
+                    padding: 10px;
+                    border: 1px dashed #999;
+                    font-size: 12px;
+                }
+                
+                /* Signatures */
+                .signatures {
+                    margin-top: 40px;
+                    display: flex;
+                    justify-content: space-between;
+                }
+                
+                .signature-box {
+                    text-align: center;
+                    width: 45%;
+                }
+                
+                .signature-line {
+                    border-top: 1px solid #000;
+                    margin-top: 40px;
+                    margin-bottom: 8px;
+                    width: 100%;
+                }
+                
+                .signature-label {
+                    font-size: 10px;
+                }
+                
+                .signature-name {
+                    font-weight: bold;
+                    margin-top: 5px;
+                }
+                
+                /* REV MARKS Section */
+                .rev-marks {
+                    margin-top: 30px;
+                    font-size: 10px;
+                    border-top: 1px solid #ccc;
+                    padding-top: 15px;
+                }
+                
+                .rev-marks-line {
+                    margin-top: 10px;
+                    letter-spacing: 2px;
+                }
+                
+                /* Footer */
+                .footer {
+                    margin-top: 30px;
+                    text-align: center;
+                    font-size: 9px;
+                    border-top: 1px solid #ccc;
+                    padding-top: 15px;
+                }
+                
+                hr {
+                    margin: 15px 0;
+                }
+                
+                .text-center {
+                    text-align: center;
+                }
+                
+                .bold {
+                    font-weight: bold;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="receipt">
+                <!-- HEADER -->
+                <div class="header">
+                    <div class="hospital-name">'AMANG' RODRIGUEZ MEMORIAL MEDICAL CENTER</div>
+                    <div class="hospital-address">Sumulong Highway, Sto. Niño, Marikina City</div>
+                    <div class="hospital-sub">(Ministry of Health - Zanzibar)</div>
+                </div>
+                
+                <!-- RECEIPT TITLE -->
+                <div class="receipt-title">PROPERTY RECEIPT</div>
+                <div class="receipt-number">Receipt No.: ${receiptNo}</div>
+                
+                
+                
+                <!-- ISSUED TO INFO (Fund Owner section REMOVED as requested) -->
+                <div class="issued-info">
+                    <div><strong>Issued To:</strong> ${userName}</div>
+                    <div><strong>Date Issued:</strong> ${formattedDate}</div>
+                </div>
+                
+                <!-- ITEMS TABLE -->
+                <table class="items-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Item Description</th>
+                            <th>Property No.</th>
+                            <th>Issued By</th>
+                            <th>Issue Date</th>
+                            <th>Qty</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${itemsHtml || '<tr><td colspan="7" style="text-align: center; padding: 20px;">No items issued to this employee</td></tr>'}
+                    </tbody>
+                </table>
+                
+                <!-- SIGNATURES -->
+                <div class="signatures">
+                    <div class="signature-box">
+                        <div class="signature-line"></div>
+                        <div class="signature-label">Received by:</div>
+                        <div class="signature-name">${userName}</div>
+                        <div style="font-size: 9px;">(Signature over Printed Name)</div>
+                    </div>
+                    <div class="signature-box">
+                        <div class="signature-line"></div>
+                        <div class="signature-label">Issued by:</div>
+                        <div class="signature-name">_________________________________</div>
+                        <div style="font-size: 9px;">(Authorized Property Officer)</div>
+                    </div>
+                </div>
+                
+              
+            
+            <script>
+                // Auto-trigger print
+                window.onload = function() {
+                    window.print();
+                    setTimeout(function() { window.close(); }, 1000);
+                }
+            <\/script>
+        </body>
+        </html>
+    `;
+    
+    // Open print window
+    const printWindow = window.open('', '_blank', 'width=900,height=700,scrollbars=yes');
+    printWindow.document.write(printHtml);
+    printWindow.document.close();
+}
+
 // Tab switching function - single parameter version
 function showTab(tabName) {
     console.log('Switching to tab:', tabName);

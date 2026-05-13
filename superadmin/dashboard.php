@@ -565,12 +565,7 @@ include INCLUDE_PATH . '/header.php';
         <a href="<?php echo SITE_URL; ?>/superadmin/reports.php" class="btn btn-primary">
             <i class="fas fa-file-alt"></i> Generate Reports
         </a>
-        <a href="<?php echo SITE_URL; ?>/superadmin/system_settings.php" class="btn btn-primary">
-            <i class="fas fa-cog"></i> System Settings
-        </a>
-        <button class="btn btn-success" onclick="backupDatabase()">
-            <i class="fas fa-database"></i> Backup Now
-        </button>
+        
     </div>
 </div>
 

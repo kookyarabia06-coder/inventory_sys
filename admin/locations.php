@@ -90,7 +90,6 @@ if (isset($_POST['department_action'])) {
     if ($_POST['department_action'] == 'add') {
         $name = sanitize($_POST['name']);
         $building_id = !empty($_POST['building_id']) ? (int)$_POST['building_id'] : null;
-        // Auto-generate code for new departments
         $code = getNextDepartmentCode($conn);
         
         $stmt = $conn->prepare("INSERT INTO departments (code, name, building_id) VALUES (?, ?, ?)");
@@ -113,14 +112,12 @@ if (isset($_POST['department_action'])) {
         $building_id = !empty($_POST['building_id']) ? (int)$_POST['building_id'] : null;
         $code = sanitize($_POST['code']);
         
-        // Validate code for edit
         if (empty($code)) {
             $_SESSION['error'] = "Department code cannot be empty";
             header('Location: ' . SITE_URL . '/admin/locations.php');
             exit();
         }
         
-        // Check if code already exists (excluding current department)
         if (departmentCodeExists($conn, $code, $id)) {
             $_SESSION['error'] = "Department code '$code' already exists. Please use a different code.";
             header('Location: ' . SITE_URL . '/admin/locations.php');
@@ -188,7 +185,6 @@ if (isset($_GET['delete'])) {
     $id = (int)$_GET['delete'];
     
     if ($type == 'building') {
-        // Check if building has departments
         $check = $conn->query("SELECT id FROM departments WHERE building_id = $id");
         if ($check && $check->num_rows > 0) {
             $_SESSION['error'] = "Cannot delete building with existing departments";
@@ -202,7 +198,6 @@ if (isset($_GET['delete'])) {
     }
     
     elseif ($type == 'department') {
-        // Check if department has sections
         $check = $conn->query("SELECT id FROM sections WHERE department_id = $id");
         if ($check && $check->num_rows > 0) {
             $_SESSION['error'] = "Cannot delete department with existing sections";
@@ -216,7 +211,6 @@ if (isset($_GET['delete'])) {
     }
     
     elseif ($type == 'section') {
-        // Check if section is used in inventory
         $check = $conn->query("SELECT id FROM inventory WHERE section_id = $id LIMIT 1");
         if ($check && $check->num_rows > 0) {
             $_SESSION['error'] = "Cannot delete section that is used in inventory";
@@ -267,6 +261,7 @@ include INCLUDE_PATH . '/header.php';
     --text-light: #FFFFFF;
     --success: #4CAF50;
     --danger: #f44336;
+    --warning: #F59E0B;
 }
 
 body {
@@ -331,13 +326,13 @@ body {
 table {
     width: 100%;
     border-collapse: collapse;
-    min-width: 500px;
+    min-width: 400px;
 }
 
 th {
     text-align: left;
-    padding: 12px 10px;
-    background-color: var(--light);
+    padding: 12px 15px;
+    background: linear-gradient(to right, var(--light), var(--white));
     color: var(--primary);
     font-weight: 600;
     border-bottom: 2px solid var(--accent-light);
@@ -345,14 +340,15 @@ th {
 }
 
 td {
-    padding: 12px 10px;
+    padding: 12px 15px;
     border-bottom: 1px solid var(--border-light);
     color: var(--text-secondary);
     font-size: 13px;
+    vertical-align: middle;
 }
 
-tr:hover {
-    background-color: var(--accent-light);
+tr:hover td {
+    background-color: var(--light);
 }
 
 /* Code Badge */
@@ -370,22 +366,23 @@ tr:hover {
 /* Action Buttons */
 .action-buttons {
     display: flex;
-    gap: 5px;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 
 .action-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    width: 32px;
+    height: 32px;
     border-radius: 6px;
     color: var(--text-light);
     text-decoration: none;
     transition: all 0.2s;
     border: none;
     cursor: pointer;
-    font-size: 13px;
+    font-size: 14px;
 }
 
 .action-btn.edit {
@@ -408,8 +405,11 @@ tr:hover {
     box-shadow: 0 4px 8px rgba(244, 67, 54, 0.3);
 }
 
-/* Modal Styles */
-.modal {
+/* ============================================
+   MODAL STYLES - MATCHING SETTINGS.PHP
+   ============================================ */
+
+.modal-overlay {
     display: none;
     position: fixed;
     z-index: 1000;
@@ -419,18 +419,127 @@ tr:hover {
     height: 100%;
     background-color: rgba(0,0,0,0.5);
     backdrop-filter: blur(3px);
+    overflow-y: auto;
 }
 
-.modal-content {
+.modal-container {
     background-color: var(--white);
     margin: 5% auto;
     padding: 25px;
     border-radius: 12px;
+    width: 500px;
+    max-width: 90%;
     box-shadow: 0 10px 30px rgba(107, 140, 255, 0.2);
-    position: relative;
     animation: modalSlideIn 0.3s;
-    max-width: 500px;
-    width: 90%;
+}
+
+/* Custom Delete Confirmation Modal */
+.delete-modal-overlay {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    backdrop-filter: blur(3px);
+    align-items: center;
+    justify-content: center;
+    overflow-y: auto;
+}
+
+.delete-modal-container {
+    background-color: var(--white);
+    border-radius: 16px;
+    width: 450px;
+    max-width: 90%;
+    box-shadow: 0 20px 35px rgba(0,0,0,0.2);
+    animation: modalSlideIn 0.2s;
+    overflow: hidden;
+    margin: 20px auto;
+}
+
+.delete-modal-header {
+    padding: 24px 24px 16px 24px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.delete-modal-header h3 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--danger);
+}
+
+.delete-modal-header h3 i {
+    margin-right: 10px;
+}
+
+.delete-modal-body {
+    padding: 24px;
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.delete-warning {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.delete-warning i {
+    font-size: 48px;
+    margin-bottom: 12px;
+}
+
+.delete-warning .fa-exclamation-triangle {
+    color: var(--danger);
+}
+
+.delete-warning p {
+    margin: 8px 0;
+    font-size: 16px;
+}
+
+.delete-warning .warning-text {
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.delete-item-details {
+    background-color: var(--light);
+    border-radius: 12px;
+    padding: 16px;
+    margin-top: 16px;
+}
+
+.delete-item-details .detail-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+.delete-item-details .detail-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.delete-item-details .detail-extra {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.delete-modal-footer {
+    padding: 16px 24px 24px 24px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    border-top: 1px solid var(--border-light);
+    background: var(--white);
 }
 
 @keyframes modalSlideIn {
@@ -444,7 +553,7 @@ tr:hover {
     }
 }
 
-.modal-header {
+.modal-header-settings {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -453,22 +562,37 @@ tr:hover {
     border-bottom: 2px solid var(--accent-light);
 }
 
-.modal-header h2 {
+.modal-header-settings h3 {
     color: var(--primary);
     margin: 0;
     font-size: 20px;
 }
 
+.modal-header-settings h3 i {
+    color: var(--accent);
+    margin-right: 10px;
+}
+
 .modal-close {
+    cursor: pointer;
     font-size: 28px;
     font-weight: bold;
-    cursor: pointer;
     color: var(--text-muted);
     transition: color 0.2s;
 }
 
 .modal-close:hover {
     color: var(--accent);
+}
+
+.modal-footer-buttons {
+    text-align: right;
+    margin-top: 20px;
+    padding-top: 15px;
+    border-top: 1px solid var(--border-light);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
 }
 
 /* Form Styles */
@@ -479,8 +603,8 @@ tr:hover {
 .form-group label {
     display: block;
     margin-bottom: 8px;
-    color: var(--text-secondary);
     font-weight: 500;
+    color: var(--text-primary);
     font-size: 14px;
 }
 
@@ -491,7 +615,9 @@ tr:hover {
     border-radius: 8px;
     font-size: 14px;
     color: var(--text-primary);
-    transition: border-color 0.2s, box-shadow 0.2s;
+    transition: all 0.3s;
+    background-color: var(--white);
+    box-sizing: border-box;
 }
 
 .form-control:focus {
@@ -511,11 +637,11 @@ select.form-control {
 }
 
 .text-danger {
-    color: var(--danger);
+    color: var(--danger) !important;
 }
 
 .text-muted {
-    color: var(--text-muted);
+    color: var(--text-muted) !important;
 }
 
 /* Button Styles */
@@ -561,6 +687,40 @@ select.form-control {
     box-shadow: 0 4px 12px rgba(143, 181, 255, 0.3);
 }
 
+/* Modal Buttons */
+.btn-modal {
+    padding: 8px 20px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-modal-secondary {
+    background-color: #6c757d;
+    color: var(--text-light);
+}
+
+.btn-modal-secondary:hover {
+    background-color: #5a6268;
+    transform: translateY(-2px);
+}
+
+.btn-modal-danger {
+    background-color: var(--danger);
+    color: var(--text-light);
+}
+
+.btn-modal-danger:hover {
+    opacity: 0.9;
+    transform: translateY(-2px);
+}
+
 /* Alert Styles */
 .alert {
     padding: 15px 20px;
@@ -570,10 +730,12 @@ select.form-control {
     align-items: center;
     gap: 10px;
     border-left: 4px solid transparent;
+    animation: slideIn 0.3s ease;
 }
 
-.alert i {
-    font-size: 18px;
+@keyframes slideIn {
+    from { transform: translateY(-20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
 }
 
 .alert-success {
@@ -591,13 +753,17 @@ select.form-control {
 .text-center {
     text-align: center;
     color: var(--text-muted);
-    padding: 20px;
+    padding: 40px;
 }
 
 /* Responsive Design */
 @media (max-width: 768px) {
-    .modal-content {
+    .modal-container {
         margin: 20% auto;
+        width: 95%;
+    }
+    
+    .delete-modal-container {
         width: 95%;
     }
     
@@ -606,7 +772,7 @@ select.form-control {
     }
     
     th, td {
-        padding: 8px 6px;
+        padding: 8px 10px;
         font-size: 12px;
     }
     
@@ -618,6 +784,24 @@ select.form-control {
     .code-badge {
         font-size: 10px;
         padding: 2px 6px;
+    }
+    
+    .delete-modal-footer {
+        flex-direction: column-reverse;
+    }
+    
+    .delete-modal-footer .btn-modal {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .modal-footer-buttons {
+        flex-direction: column-reverse;
+    }
+    
+    .modal-footer-buttons .btn-modal {
+        width: 100%;
+        justify-content: center;
     }
 }
 
@@ -634,6 +818,25 @@ select.form-control {
     .table-header h3 {
         font-size: 16px;
     }
+}
+
+/* Scrollbar Styling */
+.delete-modal-body::-webkit-scrollbar {
+    width: 6px;
+}
+
+.delete-modal-body::-webkit-scrollbar-track {
+    background: var(--light);
+    border-radius: 3px;
+}
+
+.delete-modal-body::-webkit-scrollbar-thumb {
+    background: var(--primary);
+    border-radius: 3px;
+}
+
+.delete-modal-body::-webkit-scrollbar-thumb:hover {
+    background: var(--secondary);
 }
 </style>
 
@@ -670,35 +873,37 @@ select.form-control {
             <table>
                 <thead>
                     <tr>
-                        <th>Name</th>
-                        <th>Floors</th>
-                        <th>Actions</th>
+                        <th style="width: 50%">Name</th>
+                        <th style="width: 25%">Floors</th>
+                        <th style="width: 25%">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php if ($buildings && $buildings->num_rows > 0): ?>
                         <?php while($b = $buildings->fetch_assoc()): ?>
                         <tr>
-                            <td><?php echo htmlspecialchars($b['name']); ?></td>
-                            <td><?php echo $b['floor']; ?></td>
+                            <td><strong><?php echo htmlspecialchars($b['name']); ?></strong></span>
+                            <td><?php echo $b['floor']; ?> floor(s)</span>
                             <td>
                                 <div class="action-buttons">
-                                    <button class="action-btn edit" onclick="editBuilding(<?php echo $b['id']; ?>, '<?php echo htmlspecialchars($b['name']); ?>', <?php echo $b['floor']; ?>)" title="Edit">
+                                    <button class="action-btn edit" onclick="editBuilding(<?php echo $b['id']; ?>, '<?php echo htmlspecialchars(addslashes($b['name'])); ?>', <?php echo $b['floor']; ?>)" title="Edit">
                                         <i class="fas fa-edit"></i>
                                     </button>
-                                    <a href="?delete=<?php echo $b['id']; ?>&type=building" 
-                                       class="action-btn delete" 
-                                       onclick="return confirm('Are you sure you want to delete this building?')"
-                                       title="Delete">
+                                    <button class="action-btn delete" onclick="openDeleteBuildingModal(<?php echo $b['id']; ?>, '<?php echo htmlspecialchars(addslashes($b['name'])); ?>')" title="Delete">
                                         <i class="fas fa-trash"></i>
-                                    </a>
+                                    </button>
                                 </div>
-                            </td>
+                            </span>
                         </tr>
                         <?php endwhile; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="3" class="text-center">No buildings found</td>
+                            <td colspan="3" class="text-center">
+                                <i class="fas fa-building" style="font-size: 48px; color: #ccc; margin-bottom: 10px; display: block;"></i>
+                                No buildings found
+                                <br>
+                                <button class="btn btn-primary mt-3" onclick="openBuildingModal()" style="margin-top: 10px;">Add Your First Building</button>
+                            </span>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -718,37 +923,39 @@ select.form-control {
             <table>
                 <thead>
                     <tr>
-                        <th>Code</th>
-                        <th>Name</th>
-                        <th>Building</th>
-                        <th>Actions</th>
+                        <th style="width: 20%">Code</th>
+                        <th style="width: 40%">Name</th>
+                        <th style="width: 25%">Building</th>
+                        <th style="width: 15%">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php if ($departments && $departments->num_rows > 0): ?>
                         <?php while($d = $departments->fetch_assoc()): ?>
                         <tr>
-                            <td><span class="code-badge"><?php echo htmlspecialchars($d['code']); ?></span></td>
-                            <td><?php echo htmlspecialchars($d['name']); ?></td>
-                            <td><?php echo htmlspecialchars($d['building_name'] ?? 'N/A'); ?></td>
+                            <td><span class="code-badge"><?php echo htmlspecialchars($d['code']); ?></span></span>
+                            <td><strong><?php echo htmlspecialchars($d['name']); ?></strong></span>
+                            <td><?php echo htmlspecialchars($d['building_name'] ?? '—'); ?></span>
                             <td>
                                 <div class="action-buttons">
-                                    <button class="action-btn edit" onclick="editDepartment(<?php echo $d['id']; ?>, '<?php echo htmlspecialchars($d['name']); ?>', '<?php echo htmlspecialchars($d['code']); ?>', <?php echo $d['building_id'] ?? 'null'; ?>)" title="Edit">
+                                    <button class="action-btn edit" onclick="editDepartment(<?php echo $d['id']; ?>, '<?php echo htmlspecialchars(addslashes($d['name'])); ?>', '<?php echo htmlspecialchars($d['code']); ?>', <?php echo $d['building_id'] ?? 'null'; ?>)" title="Edit">
                                         <i class="fas fa-edit"></i>
                                     </button>
-                                    <a href="?delete=<?php echo $d['id']; ?>&type=department" 
-                                       class="action-btn delete" 
-                                       onclick="return confirm('Are you sure you want to delete this department?')"
-                                       title="Delete">
+                                    <button class="action-btn delete" onclick="openDeleteDepartmentModal(<?php echo $d['id']; ?>, '<?php echo htmlspecialchars(addslashes($d['name'])); ?>')" title="Delete">
                                         <i class="fas fa-trash"></i>
-                                    </a>
+                                    </button>
                                 </div>
-                            </td>
+                            </span>
                         </tr>
                         <?php endwhile; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="4" class="text-center">No departments found</td>
+                            <td colspan="4" class="text-center">
+                                <i class="fas fa-sitemap" style="font-size: 48px; color: #ccc; margin-bottom: 10px; display: block;"></i>
+                                No departments found
+                                <br>
+                                <button class="btn btn-primary mt-3" onclick="openDepartmentModal()" style="margin-top: 10px;">Add Your First Department</button>
+                            </span>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -768,37 +975,42 @@ select.form-control {
             <table>
                 <thead>
                     <tr>
-                        <th>Name</th>
-                        <th>Department</th>
-                        <th>Dept Code</th>
-                        <th>Actions</th>
+                        <th style="width: 35%">Name</th>
+                        <th style="width: 45%">Department</th>
+                        <th style="width: 20%">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php if ($sections && $sections->num_rows > 0): ?>
                         <?php while($s = $sections->fetch_assoc()): ?>
                         <tr>
-                            <td><?php echo htmlspecialchars($s['name']); ?></td>
-                            <td><?php echo htmlspecialchars($s['department_name'] ?? 'N/A'); ?></td>
-                            <td><?php echo $s['department_code'] ? '<span class="code-badge">' . htmlspecialchars($s['department_code']) . '</span>' : 'N/A'; ?></td>
+                            <td><strong><?php echo htmlspecialchars($s['name']); ?></strong></span>
+                            <td>
+                                <?php echo htmlspecialchars($s['department_name'] ?? '—'); ?>
+                                <?php if ($s['department_code']): ?>
+                                    <span class="code-badge"><?php echo htmlspecialchars($s['department_code']); ?></span>
+                                <?php endif; ?>
+                            </span>
                             <td>
                                 <div class="action-buttons">
-                                    <button class="action-btn edit" onclick="editSection(<?php echo $s['id']; ?>, '<?php echo htmlspecialchars($s['name']); ?>', <?php echo $s['department_id'] ?? 'null'; ?>)" title="Edit">
+                                    <button class="action-btn edit" onclick="editSection(<?php echo $s['id']; ?>, '<?php echo htmlspecialchars(addslashes($s['name'])); ?>', <?php echo $s['department_id'] ?? 'null'; ?>)" title="Edit">
                                         <i class="fas fa-edit"></i>
                                     </button>
-                                    <a href="?delete=<?php echo $s['id']; ?>&type=section" 
-                                       class="action-btn delete" 
-                                       onclick="return confirm('Are you sure you want to delete this section?')"
-                                       title="Delete">
+                                    <button class="action-btn delete" onclick="openDeleteSectionModal(<?php echo $s['id']; ?>, '<?php echo htmlspecialchars(addslashes($s['name'])); ?>')" title="Delete">
                                         <i class="fas fa-trash"></i>
-                                    </a>
+                                    </button>
                                 </div>
-                            </td>
+                            </span>
                         </tr>
                         <?php endwhile; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="4" class="text-center">No sections found</td>
+                            <td colspan="3" class="text-center">
+                                <i class="fas fa-layer-group" style="font-size: 48px; color: #ccc; margin-bottom: 10px; display: block;"></i>
+                                No sections found
+                                <br>
+                                <button class="btn btn-primary mt-3" onclick="openSectionModal()" style="margin-top: 10px;">Add Your First Section</button>
+                            </span>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -807,14 +1019,92 @@ select.form-control {
     </div>
 </div>
 
+<!-- Delete Building Confirmation Modal -->
+<div id="deleteBuildingModal" class="delete-modal-overlay">
+    <div class="delete-modal-container">
+        <div class="delete-modal-header">
+            <h3><i class="fas fa-trash-alt"></i> Delete Building</h3>
+        </div>
+        <div class="delete-modal-body">
+            <input type="hidden" id="delete_building_id">
+            <div class="delete-warning">
+                <i class="fas fa-exclamation-triangle"></i>
+                <p><strong>Are you absolutely sure?</strong></p>
+                <p class="warning-text">This action cannot be undone.</p>
+            </div>
+            <div class="delete-item-details">
+                <div class="detail-label">BUILDING TO DELETE</div>
+                <div class="detail-name" id="delete_building_name">-</div>
+                <div class="detail-extra">This will permanently remove the building record.</div>
+            </div>
+        </div>
+        <div class="delete-modal-footer">
+            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeDeleteBuildingModal()">Cancel</button>
+            <a href="#" id="confirmDeleteBuildingBtn" class="btn-modal btn-modal-danger"><i class="fas fa-trash-alt"></i> Delete Building</a>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Department Confirmation Modal -->
+<div id="deleteDepartmentModal" class="delete-modal-overlay">
+    <div class="delete-modal-container">
+        <div class="delete-modal-header">
+            <h3><i class="fas fa-trash-alt"></i> Delete Department</h3>
+        </div>
+        <div class="delete-modal-body">
+            <input type="hidden" id="delete_department_id">
+            <div class="delete-warning">
+                <i class="fas fa-exclamation-triangle"></i>
+                <p><strong>Are you absolutely sure?</strong></p>
+                <p class="warning-text">This action cannot be undone.</p>
+            </div>
+            <div class="delete-item-details">
+                <div class="detail-label">DEPARTMENT TO DELETE</div>
+                <div class="detail-name" id="delete_department_name">-</div>
+                <div class="detail-extra">This will permanently remove the department record.</div>
+            </div>
+        </div>
+        <div class="delete-modal-footer">
+            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeDeleteDepartmentModal()">Cancel</button>
+            <a href="#" id="confirmDeleteDepartmentBtn" class="btn-modal btn-modal-danger"><i class="fas fa-trash-alt"></i> Delete Department</a>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Section Confirmation Modal -->
+<div id="deleteSectionModal" class="delete-modal-overlay">
+    <div class="delete-modal-container">
+        <div class="delete-modal-header">
+            <h3><i class="fas fa-trash-alt"></i> Delete Section</h3>
+        </div>
+        <div class="delete-modal-body">
+            <input type="hidden" id="delete_section_id">
+            <div class="delete-warning">
+                <i class="fas fa-exclamation-triangle"></i>
+                <p><strong>Are you absolutely sure?</strong></p>
+                <p class="warning-text">This action cannot be undone.</p>
+            </div>
+            <div class="delete-item-details">
+                <div class="detail-label">SECTION TO DELETE</div>
+                <div class="detail-name" id="delete_section_name">-</div>
+                <div class="detail-extra">This will permanently remove the section record.</div>
+            </div>
+        </div>
+        <div class="delete-modal-footer">
+            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeDeleteSectionModal()">Cancel</button>
+            <a href="#" id="confirmDeleteSectionBtn" class="btn-modal btn-modal-danger"><i class="fas fa-trash-alt"></i> Delete Section</a>
+        </div>
+    </div>
+</div>
+
 <!-- Building Modal -->
-<div id="buildingModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h2 id="buildingModalTitle">Add Building</h2>
+<div id="buildingModal" class="modal-overlay">
+    <div class="modal-container">
+        <div class="modal-header-settings">
+            <h3 id="buildingModalTitle"><i class="fas fa-building"></i> Add Building</h3>
             <span class="modal-close" onclick="closeBuildingModal()">&times;</span>
         </div>
-        <div class="modal-body">
+        <div style="padding: 0 25px 25px 25px;">
             <form method="POST" action="" id="buildingForm">
                 <input type="hidden" name="building_action" id="building_action" value="add">
                 <input type="hidden" name="id" id="building_id" value="">
@@ -829,9 +1119,9 @@ select.form-control {
                     <input type="number" class="form-control" id="building_floors" name="floors" value="1" min="1" max="100">
                 </div>
                 
-                <div class="form-group" style="margin-top: 20px;">
-                    <button type="submit" class="btn btn-primary">Save Building</button>
-                    <button type="button" class="btn btn-secondary" onclick="closeBuildingModal()">Cancel</button>
+                <div class="modal-footer-buttons">
+                    <button type="button" class="btn-modal btn-modal-secondary" onclick="closeBuildingModal()">Cancel</button>
+                    <button type="submit" class="btn-modal" style="background-color: var(--accent); color: var(--text-primary);">Save Building</button>
                 </div>
             </form>
         </div>
@@ -839,13 +1129,13 @@ select.form-control {
 </div>
 
 <!-- Department Modal -->
-<div id="departmentModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h2 id="departmentModalTitle">Add Department</h2>
+<div id="departmentModal" class="modal-overlay">
+    <div class="modal-container">
+        <div class="modal-header-settings">
+            <h3 id="departmentModalTitle"><i class="fas fa-sitemap"></i> Add Department</h3>
             <span class="modal-close" onclick="closeDepartmentModal()">&times;</span>
         </div>
-        <div class="modal-body">
+        <div style="padding: 0 25px 25px 25px;">
             <form method="POST" action="" id="departmentForm">
                 <input type="hidden" name="department_action" id="department_action" value="add">
                 <input type="hidden" name="id" id="department_id" value="">
@@ -874,9 +1164,9 @@ select.form-control {
                     </select>
                 </div>
                 
-                <div class="form-group" style="margin-top: 20px;">
-                    <button type="submit" class="btn btn-primary">Save Department</button>
-                    <button type="button" class="btn btn-secondary" onclick="closeDepartmentModal()">Cancel</button>
+                <div class="modal-footer-buttons">
+                    <button type="button" class="btn-modal btn-modal-secondary" onclick="closeDepartmentModal()">Cancel</button>
+                    <button type="submit" class="btn-modal" style="background-color: var(--accent); color: var(--text-primary);">Save Department</button>
                 </div>
             </form>
         </div>
@@ -884,13 +1174,13 @@ select.form-control {
 </div>
 
 <!-- Section Modal -->
-<div id="sectionModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h2 id="sectionModalTitle">Add Section</h2>
+<div id="sectionModal" class="modal-overlay">
+    <div class="modal-container">
+        <div class="modal-header-settings">
+            <h3 id="sectionModalTitle"><i class="fas fa-layer-group"></i> Add Section</h3>
             <span class="modal-close" onclick="closeSectionModal()">&times;</span>
         </div>
-        <div class="modal-body">
+        <div style="padding: 0 25px 25px 25px;">
             <form method="POST" action="" id="sectionForm">
                 <input type="hidden" name="section_action" id="section_action" value="add">
                 <input type="hidden" name="id" id="section_id" value="">
@@ -915,9 +1205,9 @@ select.form-control {
                     </select>
                 </div>
                 
-                <div class="form-group" style="margin-top: 20px;">
-                    <button type="submit" class="btn btn-primary">Save Section</button>
-                    <button type="button" class="btn btn-secondary" onclick="closeSectionModal()">Cancel</button>
+                <div class="modal-footer-buttons">
+                    <button type="button" class="btn-modal btn-modal-secondary" onclick="closeSectionModal()">Cancel</button>
+                    <button type="submit" class="btn-modal" style="background-color: var(--accent); color: var(--text-primary);">Save Section</button>
                 </div>
             </form>
         </div>
@@ -925,9 +1215,45 @@ select.form-control {
 </div>
 
 <script>
+// Delete Building Modal Functions
+function openDeleteBuildingModal(id, name) {
+    document.getElementById('delete_building_id').value = id;
+    document.getElementById('delete_building_name').innerText = name;
+    document.getElementById('confirmDeleteBuildingBtn').href = '?delete=' + id + '&type=building';
+    document.getElementById('deleteBuildingModal').style.display = 'flex';
+}
+
+function closeDeleteBuildingModal() {
+    document.getElementById('deleteBuildingModal').style.display = 'none';
+}
+
+// Delete Department Modal Functions
+function openDeleteDepartmentModal(id, name) {
+    document.getElementById('delete_department_id').value = id;
+    document.getElementById('delete_department_name').innerText = name;
+    document.getElementById('confirmDeleteDepartmentBtn').href = '?delete=' + id + '&type=department';
+    document.getElementById('deleteDepartmentModal').style.display = 'flex';
+}
+
+function closeDeleteDepartmentModal() {
+    document.getElementById('deleteDepartmentModal').style.display = 'none';
+}
+
+// Delete Section Modal Functions
+function openDeleteSectionModal(id, name) {
+    document.getElementById('delete_section_id').value = id;
+    document.getElementById('delete_section_name').innerText = name;
+    document.getElementById('confirmDeleteSectionBtn').href = '?delete=' + id + '&type=section';
+    document.getElementById('deleteSectionModal').style.display = 'flex';
+}
+
+function closeDeleteSectionModal() {
+    document.getElementById('deleteSectionModal').style.display = 'none';
+}
+
 // Building Modal Functions
 function openBuildingModal() {
-    document.getElementById('buildingModalTitle').textContent = 'Add Building';
+    document.getElementById('buildingModalTitle').innerHTML = '<i class="fas fa-building"></i> Add Building';
     document.getElementById('building_action').value = 'add';
     document.getElementById('building_id').value = '';
     document.getElementById('building_name').value = '';
@@ -936,7 +1262,7 @@ function openBuildingModal() {
 }
 
 function editBuilding(id, name, floors) {
-    document.getElementById('buildingModalTitle').textContent = 'Edit Building';
+    document.getElementById('buildingModalTitle').innerHTML = '<i class="fas fa-edit"></i> Edit Building';
     document.getElementById('building_action').value = 'edit';
     document.getElementById('building_id').value = id;
     document.getElementById('building_name').value = name;
@@ -950,15 +1276,13 @@ function closeBuildingModal() {
 
 // Department Modal Functions
 function openDepartmentModal() {
-    document.getElementById('departmentModalTitle').textContent = 'Add Department';
+    document.getElementById('departmentModalTitle').innerHTML = '<i class="fas fa-sitemap"></i> Add Department';
     document.getElementById('department_action').value = 'add';
     document.getElementById('department_id').value = '';
-    document.getElementById('department_code').value = '';
     document.getElementById('department_code').readOnly = true;
     document.getElementById('department_name').value = '';
     document.getElementById('department_building').value = '';
     
-    // Fetch the next available department code
     <?php $next_code = getNextDepartmentCode($conn); ?>
     document.getElementById('department_code').value = '<?php echo $next_code; ?>';
     
@@ -966,7 +1290,7 @@ function openDepartmentModal() {
 }
 
 function editDepartment(id, name, code, buildingId) {
-    document.getElementById('departmentModalTitle').textContent = 'Edit Department';
+    document.getElementById('departmentModalTitle').innerHTML = '<i class="fas fa-edit"></i> Edit Department';
     document.getElementById('department_action').value = 'edit';
     document.getElementById('department_id').value = id;
     document.getElementById('department_code').value = code;
@@ -982,7 +1306,7 @@ function closeDepartmentModal() {
 
 // Section Modal Functions
 function openSectionModal() {
-    document.getElementById('sectionModalTitle').textContent = 'Add Section';
+    document.getElementById('sectionModalTitle').innerHTML = '<i class="fas fa-layer-group"></i> Add Section';
     document.getElementById('section_action').value = 'add';
     document.getElementById('section_id').value = '';
     document.getElementById('section_name').value = '';
@@ -991,7 +1315,7 @@ function openSectionModal() {
 }
 
 function editSection(id, name, departmentId) {
-    document.getElementById('sectionModalTitle').textContent = 'Edit Section';
+    document.getElementById('sectionModalTitle').innerHTML = '<i class="fas fa-edit"></i> Edit Section';
     document.getElementById('section_action').value = 'edit';
     document.getElementById('section_id').value = id;
     document.getElementById('section_name').value = name;
@@ -1008,6 +1332,9 @@ window.onclick = function(event) {
     let buildingModal = document.getElementById('buildingModal');
     let departmentModal = document.getElementById('departmentModal');
     let sectionModal = document.getElementById('sectionModal');
+    let deleteBuildingModal = document.getElementById('deleteBuildingModal');
+    let deleteDepartmentModal = document.getElementById('deleteDepartmentModal');
+    let deleteSectionModal = document.getElementById('deleteSectionModal');
     
     if (event.target == buildingModal) {
         closeBuildingModal();
@@ -1018,7 +1345,31 @@ window.onclick = function(event) {
     if (event.target == sectionModal) {
         closeSectionModal();
     }
+    if (event.target == deleteBuildingModal) {
+        closeDeleteBuildingModal();
+    }
+    if (event.target == deleteDepartmentModal) {
+        closeDeleteDepartmentModal();
+    }
+    if (event.target == deleteSectionModal) {
+        closeDeleteSectionModal();
+    }
 }
+
+// Auto-hide alerts after 5 seconds
+setTimeout(function() {
+    var alerts = document.querySelectorAll('.alert');
+    alerts.forEach(function(alert) {
+        setTimeout(function() {
+            alert.style.opacity = '0';
+            setTimeout(function() {
+                if (alert.style.display !== 'none') {
+                    alert.style.display = 'none';
+                }
+            }, 300);
+        }, 4700);
+    });
+}, 1000);
 </script>
 
 <?php include INCLUDE_PATH . '/footer.php'; ?>

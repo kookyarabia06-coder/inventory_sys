@@ -39,7 +39,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $department_id = !empty($_POST['department_id']) ? (int)$_POST['department_id'] : null;
             $section_id = !empty($_POST['section_id']) ? (int)$_POST['section_id'] : null;
             $position = sanitize($_POST['position'] ?? '');
-            $date_hired = !empty($_POST['date_hired']) ? $_POST['date_hired'] : null;
             $status = sanitize($_POST['status'] ?? 'Active');
             $user_id = !empty($_POST['user_id']) ? (int)$_POST['user_id'] : null;
             
@@ -63,15 +62,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $stmt = $conn->prepare("
                     INSERT INTO employees (
                         firstname, lastname, middlename, email, contact,
-                        department_id, section_id, position, date_hired, status, user_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        department_id, section_id, position, status, user_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 
                 if ($stmt) {
                     $stmt->bind_param(
                         "sssssiisssi",
                         $firstname, $lastname, $middlename, $email, $contact,
-                        $department_id, $section_id, $position, $date_hired, $status, $user_id
+                        $department_id, $section_id, $position, $status, $user_id
                     );
                     
                     if ($stmt->execute()) {
@@ -102,7 +101,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $department_id = !empty($_POST['department_id']) ? (int)$_POST['department_id'] : null;
             $section_id = !empty($_POST['section_id']) ? (int)$_POST['section_id'] : null;
             $position = sanitize($_POST['position'] ?? '');
-            $date_hired = !empty($_POST['date_hired']) ? $_POST['date_hired'] : null;
             $status = sanitize($_POST['status'] ?? 'Active');
             $user_id = !empty($_POST['user_id']) ? (int)$_POST['user_id'] : null;
             
@@ -127,16 +125,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     UPDATE employees SET 
                         firstname = ?, lastname = ?, middlename = ?,
                         email = ?, contact = ?, department_id = ?,
-                        section_id = ?, position = ?, date_hired = ?,
+                        section_id = ?, position = ?,
                         status = ?, user_id = ?
                     WHERE id = ?
                 ");
                 
                 if ($stmt) {
                     $stmt->bind_param(
-                        "sssssiisssii",
+                        "sssssiisssi",
                         $firstname, $lastname, $middlename, $email, $contact,
-                        $department_id, $section_id, $position, $date_hired,
+                        $department_id, $section_id, $position,
                         $status, $user_id, $id
                     );
                     
@@ -250,26 +248,48 @@ if (isset($_GET['get_sections_by_department']) && is_numeric($_GET['get_sections
 }
 
 // ============================================
-// DISPLAY DATA
+// DISPLAY DATA WITH PAGINATION AND SEARCH
 // ============================================
 
-// Get all employees with their departments, sections, and linked users
-$employees_result = $conn->query("
-    SELECT e.*, 
-           d.name as department_name, d.code as department_code,
-           s.name as section_name,
-           u.username, u.role as user_role, u.status as user_status,
-           CONCAT(u.firstname, ' ', u.lastname) as user_fullname,
-           CASE WHEN u.id IS NOT NULL THEN 1 ELSE 0 END as has_user_account
-    FROM employees e
-    LEFT JOIN departments d ON e.department_id = d.id
-    LEFT JOIN sections s ON e.section_id = s.id
-    LEFT JOIN users u ON e.user_id = u.id
-    ORDER BY e.lastname, e.firstname
-");
+// Pagination variables
+$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+$per_page = 15;
+$offset = ($page - 1) * $per_page;
 
-// Get departments for dropdown (with code)
+// Search filters
+$search = isset($_GET['search']) ? sanitize($_GET['search']) : '';
+$date_from = isset($_GET['date_from']) ? sanitize($_GET['date_from']) : '';
+$date_to = isset($_GET['date_to']) ? sanitize($_GET['date_to']) : '';
+$department_filter = isset($_GET['department_filter']) ? (int)$_GET['department_filter'] : '';
+$section_filter = isset($_GET['section_filter']) ? (int)$_GET['section_filter'] : '';
+$status_filter = isset($_GET['status_filter']) ? sanitize($_GET['status_filter']) : '';
+$position_filter = isset($_GET['position_filter']) ? sanitize($_GET['position_filter']) : '';
+
+// Get departments for dropdown
 $departments_result = $conn->query("SELECT id, name, code FROM departments ORDER BY code, name");
+
+// Get sections for dropdown (will be populated dynamically based on department filter)
+$sections_for_filter = [];
+if ($department_filter) {
+    $sections_filter_query = $conn->prepare("SELECT id, name FROM sections WHERE department_id = ? ORDER BY name");
+    $sections_filter_query->bind_param("i", $department_filter);
+    $sections_filter_query->execute();
+    $sections_filter_result = $sections_filter_query->get_result();
+    while($sec = $sections_filter_result->fetch_assoc()) {
+        $sections_for_filter[] = $sec;
+    }
+    $sections_filter_query->close();
+} else {
+    $sections_filter_result = $conn->query("SELECT id, name, department_id FROM sections ORDER BY name");
+    if ($sections_filter_result && $sections_filter_result->num_rows > 0) {
+        while($sec = $sections_filter_result->fetch_assoc()) {
+            $sections_for_filter[] = $sec;
+        }
+    }
+}
+
+// Get unique positions for filter dropdown
+$positions_result = $conn->query("SELECT DISTINCT position FROM employees WHERE position IS NOT NULL AND position != '' ORDER BY position");
 
 // Get users NOT yet linked to any employee for dropdown
 $users_result = $conn->query("
@@ -305,6 +325,122 @@ $dept_count_result = $conn->query("SELECT COUNT(*) as count FROM departments");
 if ($dept_count_result && $dept_count_result->num_rows > 0) {
     $total_departments = $dept_count_result->fetch_assoc()['count'];
 }
+
+// Build query with search filters
+$where_clause = "";
+$search_params = [];
+$types = "";
+
+// Text search condition
+if (!empty($search)) {
+    $where_clause .= " (e.lastname LIKE ? OR e.firstname LIKE ? OR e.email LIKE ? OR e.position LIKE ? OR d.name LIKE ?)";
+    $search_term = "%$search%";
+    $search_params = array_merge($search_params, [$search_term, $search_term, $search_term, $search_term, $search_term]);
+    $types .= "sssss";
+}
+
+// Date range filter (using date_added)
+if (!empty($date_from)) {
+    if (!empty($where_clause)) $where_clause .= " AND";
+    $where_clause .= " DATE(e.date_added) >= ?";
+    $search_params[] = $date_from;
+    $types .= "s";
+}
+
+if (!empty($date_to)) {
+    if (!empty($where_clause)) $where_clause .= " AND";
+    $where_clause .= " DATE(e.date_added) <= ?";
+    $search_params[] = $date_to;
+    $types .= "s";
+}
+
+// Department filter
+if (!empty($department_filter)) {
+    if (!empty($where_clause)) $where_clause .= " AND";
+    $where_clause .= " e.department_id = ?";
+    $search_params[] = $department_filter;
+    $types .= "i";
+}
+
+// Section filter
+if (!empty($section_filter)) {
+    if (!empty($where_clause)) $where_clause .= " AND";
+    $where_clause .= " e.section_id = ?";
+    $search_params[] = $section_filter;
+    $types .= "i";
+}
+
+// Status filter
+if (!empty($status_filter)) {
+    if (!empty($where_clause)) $where_clause .= " AND";
+    $where_clause .= " e.status = ?";
+    $search_params[] = $status_filter;
+    $types .= "s";
+}
+
+// Position filter
+if (!empty($position_filter)) {
+    if (!empty($where_clause)) $where_clause .= " AND";
+    $where_clause .= " e.position = ?";
+    $search_params[] = $position_filter;
+    $types .= "s";
+}
+
+// Add WHERE prefix if conditions exist
+if (!empty($where_clause)) {
+    $where_clause = " WHERE " . $where_clause;
+}
+
+// Count total rows for pagination
+$count_sql = "
+    SELECT COUNT(*) as total 
+    FROM employees e
+    LEFT JOIN departments d ON e.department_id = d.id
+    LEFT JOIN sections s ON e.section_id = s.id
+    LEFT JOIN users u ON e.user_id = u.id
+    $where_clause
+";
+
+$count_stmt = $conn->prepare($count_sql);
+if (!empty($search_params)) {
+    $count_stmt->bind_param($types, ...$search_params);
+}
+$count_stmt->execute();
+$count_result = $count_stmt->get_result();
+$total_rows = $count_result->fetch_assoc()['total'];
+$count_stmt->close();
+
+$total_pages = ceil($total_rows / $per_page);
+
+// Get employees with search and pagination - ORDER BY lastname, firstname alphabetically
+$sql = "
+    SELECT e.*, 
+           d.name as department_name, d.code as department_code,
+           s.name as section_name,
+           u.username, u.role as user_role, u.status as user_status,
+           CONCAT(u.firstname, ' ', u.lastname) as user_fullname,
+           CASE WHEN u.id IS NOT NULL THEN 1 ELSE 0 END as has_user_account
+    FROM employees e
+    LEFT JOIN departments d ON e.department_id = d.id
+    LEFT JOIN sections s ON e.section_id = s.id
+    LEFT JOIN users u ON e.user_id = u.id
+    $where_clause
+    ORDER BY e.lastname ASC, e.firstname ASC
+    LIMIT ? OFFSET ?
+";
+
+$stmt = $conn->prepare($sql);
+$bind_params = array_merge($search_params, [$per_page, $offset]);
+$bind_types = $types . "ii";
+
+if (!empty($search_params)) {
+    $stmt->bind_param($bind_types, ...$bind_params);
+} else {
+    $stmt->bind_param("ii", $per_page, $offset);
+}
+$stmt->execute();
+$employees_result = $stmt->get_result();
+$stmt->close();
 
 include INCLUDE_PATH . '/header.php';
 ?>
@@ -408,6 +544,8 @@ body {
     margin-bottom: 20px;
     padding-bottom: 12px;
     border-bottom: 2px solid var(--accent-light);
+    flex-wrap: wrap;
+    gap: 15px;
 }
 
 .table-header h2 {
@@ -422,6 +560,95 @@ body {
     margin-right: 10px;
 }
 
+.table-header p {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin: 0;
+}
+
+/* Advanced Search Box */
+.advanced-search-box {
+    padding: 0;
+    margin-bottom: 20px;
+}
+
+.search-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    margin-bottom: 15px;
+    align-items: flex-end;
+}
+
+.search-group {
+    flex: 1;
+    min-width: 180px;
+}
+
+.search-group label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.search-group input,
+.search-group select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    font-size: 14px;
+    background: var(--white);
+}
+
+.search-group input:focus,
+.search-group select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.1);
+}
+
+.search-actions {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+}
+
+.btn-search {
+    background: var(--primary);
+    color: white;
+    border: none;
+    padding: 10px 24px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: 500;
+}
+
+.btn-search:hover {
+    background: #5a7ae6;
+}
+
+.btn-clear {
+    background: var(--text-muted);
+    color: white;
+    border: none;
+    padding: 10px 24px;
+    border-radius: 10px;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-clear:hover {
+    background: #7f8c8d;
+}
+
 /* Employee Table */
 .employee-wrapper {
     overflow-x: auto;
@@ -433,7 +660,7 @@ body {
     width: 100%;
     border-collapse: collapse;
     font-size: 13px;
-    min-width: 1200px;
+    min-width: 1000px;
 }
 
 .employee-table thead {
@@ -521,8 +748,52 @@ body {
     filter: brightness(0.95);
 }
 
-/* Modal Styles */
-.modal {
+/* Pagination */
+.pagination {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 25px;
+    flex-wrap: wrap;
+}
+
+.pagination a, .pagination span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px;
+    height: 36px;
+    padding: 0 12px;
+    border-radius: 8px;
+    background: var(--white);
+    color: var(--text-secondary);
+    text-decoration: none;
+    border: 1px solid var(--border-light);
+    font-size: 13px;
+}
+
+.pagination a:hover {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+}
+
+.pagination .active {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+}
+
+.pagination .disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ============================================
+   MODAL STYLES - WITH SCROLL
+   ============================================ */
+
+.modal-overlay {
     display: none;
     position: fixed;
     z-index: 1000;
@@ -531,69 +802,213 @@ body {
     width: 100%;
     height: 100%;
     background-color: rgba(0,0,0,0.5);
-    backdrop-filter: blur(4px);
+    backdrop-filter: blur(3px);
+    overflow-y: auto;
 }
 
-.modal-content {
-    background: var(--white);
+.modal-container {
+    background-color: var(--white);
     margin: 5% auto;
-    border-radius: 20px;
-    max-width: 700px;
-    width: 90%;
+    padding: 0;
+    border-radius: 12px;
+    width: 700px;
+    max-width: 90%;
+    box-shadow: 0 10px 30px rgba(107, 140, 255, 0.2);
+    animation: modalSlideIn 0.3s;
     max-height: 85vh;
     display: flex;
     flex-direction: column;
     overflow: hidden;
 }
 
-.modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px 24px;
-    border-bottom: 1px solid var(--border-light);
-}
-
-.modal-header h2 {
-    color: var(--primary);
-    font-size: 18px;
-    margin: 0;
-    font-weight: 600;
-}
-
-.modal-close {
-    font-size: 28px;
-    cursor: pointer;
-    color: var(--text-muted);
-}
-
-.modal-close:hover {
-    color: var(--danger);
-}
-
-.modal-body {
-    padding: 24px;
+/* Scrollable content area for modals */
+.modal-scroll-content {
+    padding: 0 25px;
     overflow-y: auto;
     flex: 1;
 }
 
-.modal-footer {
-    padding: 16px 24px;
-    border-top: 1px solid var(--border-light);
-    text-align: right;
-    background: var(--light);
-    display: flex;
-    gap: 12px;
-    justify-content: flex-end;
+.modal-body-scroll {
+    padding: 25px;
+    overflow-y: auto;
+    flex: 1;
 }
 
-/* Form Styles */
+/* Custom Delete Confirmation Modal */
+.delete-modal-overlay {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    backdrop-filter: blur(3px);
+    align-items: center;
+    justify-content: center;
+    overflow-y: auto;
+}
+
+.delete-modal-container {
+    background-color: var(--white);
+    border-radius: 16px;
+    width: 450px;
+    max-width: 90%;
+    box-shadow: 0 20px 35px rgba(0,0,0,0.2);
+    animation: modalSlideIn 0.2s;
+    overflow: hidden;
+    margin: 20px auto;
+}
+
+.delete-modal-header {
+    padding: 24px 24px 16px 24px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.delete-modal-header h3 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--danger);
+}
+
+.delete-modal-header h3 i {
+    margin-right: 10px;
+}
+
+.delete-modal-body {
+    padding: 24px;
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.delete-warning {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.delete-warning i {
+    font-size: 48px;
+    margin-bottom: 12px;
+}
+
+.delete-warning .fa-exclamation-triangle {
+    color: var(--danger);
+}
+
+.delete-warning p {
+    margin: 8px 0;
+    font-size: 16px;
+}
+
+.delete-warning .warning-text {
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.delete-item-details {
+    background-color: var(--light);
+    border-radius: 12px;
+    padding: 16px;
+    margin-top: 16px;
+}
+
+.delete-item-details .detail-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+.delete-item-details .detail-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.delete-item-details .detail-extra {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.delete-modal-footer {
+    padding: 16px 24px 24px 24px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    border-top: 1px solid var(--border-light);
+    background: var(--white);
+}
+
+@keyframes modalSlideIn {
+    from {
+        transform: translateY(-30px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.modal-header-settings {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 25px;
+    border-bottom: 2px solid var(--accent-light);
+    background: var(--white);
+    flex-shrink: 0;
+}
+
+.modal-header-settings h3 {
+    color: var(--primary);
+    margin: 0;
+    font-size: 20px;
+}
+
+.modal-header-settings h3 i {
+    color: var(--accent);
+    margin-right: 10px;
+}
+
+.modal-close {
+    cursor: pointer;
+    font-size: 28px;
+    font-weight: bold;
+    color: var(--text-muted);
+    transition: color 0.2s;
+}
+
+.modal-close:hover {
+    color: var(--accent);
+}
+
+.modal-footer-buttons {
+    text-align: right;
+    padding: 16px 25px;
+    border-top: 1px solid var(--border-light);
+    background: var(--light);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+/* Form Sections inside Modal */
 .form-section {
     background: var(--white);
     padding: 20px;
-    margin-bottom: 25px;
+    margin-bottom: 20px;
     border-radius: 12px;
     border: 1px solid var(--border-light);
+}
+
+.form-section:last-child {
+    margin-bottom: 0;
 }
 
 .form-section h3 {
@@ -609,6 +1024,7 @@ body {
     margin-right: 10px;
 }
 
+/* Form Styles */
 .form-group {
     margin-bottom: 20px;
 }
@@ -627,6 +1043,7 @@ body {
     border: 1px solid var(--border-light);
     border-radius: 10px;
     font-size: 14px;
+    box-sizing: border-box;
 }
 
 .form-control:focus {
@@ -643,6 +1060,7 @@ body {
 
 .form-row .form-group {
     flex: 1;
+    margin-bottom: 0;
 }
 
 /* Button Styles */
@@ -670,9 +1088,63 @@ body {
     color: var(--text-light);
 }
 
-.btn-sm {
-    padding: 6px 12px;
-    font-size: 12px;
+/* Modal Buttons */
+.btn-modal {
+    padding: 8px 20px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-modal-secondary {
+    background-color: #6c757d;
+    color: var(--text-light);
+}
+
+.btn-modal-secondary:hover {
+    background-color: #5a6268;
+    transform: translateY(-2px);
+}
+
+.btn-modal-danger {
+    background-color: var(--danger);
+    color: var(--text-light);
+}
+
+.btn-modal-danger:hover {
+    opacity: 0.9;
+    transform: translateY(-2px);
+}
+
+/* Detail Grid for View Modal */
+.detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+}
+
+.detail-item {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.detail-label {
+    font-weight: 600;
+    color: var(--text-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+}
+
+.detail-value {
+    color: var(--text-primary);
+    font-size: 14px;
 }
 
 /* Alert */
@@ -692,7 +1164,35 @@ body {
 
 .text-center { text-align: center; }
 .text-muted { color: var(--text-muted) !important; }
+.text-danger { color: var(--danger) !important; }
 .mt-3 { margin-top: 16px; }
+
+/* Scrollbar Styling */
+.modal-scroll-content::-webkit-scrollbar,
+.modal-body-scroll::-webkit-scrollbar,
+.delete-modal-body::-webkit-scrollbar {
+    width: 6px;
+}
+
+.modal-scroll-content::-webkit-scrollbar-track,
+.modal-body-scroll::-webkit-scrollbar-track,
+.delete-modal-body::-webkit-scrollbar-track {
+    background: var(--light);
+    border-radius: 3px;
+}
+
+.modal-scroll-content::-webkit-scrollbar-thumb,
+.modal-body-scroll::-webkit-scrollbar-thumb,
+.delete-modal-body::-webkit-scrollbar-thumb {
+    background: var(--primary);
+    border-radius: 3px;
+}
+
+.modal-scroll-content::-webkit-scrollbar-thumb:hover,
+.modal-body-scroll::-webkit-scrollbar-thumb:hover,
+.delete-modal-body::-webkit-scrollbar-thumb:hover {
+    background: var(--secondary);
+}
 
 /* Responsive */
 @media (max-width: 768px) {
@@ -701,8 +1201,24 @@ body {
         gap: 12px;
     }
     
-    .search-box {
+    .search-row {
         flex-direction: column;
+    }
+    
+    .search-group {
+        width: 100%;
+    }
+    
+    .search-actions {
+        flex-direction: column;
+        width: 100%;
+    }
+    
+    .search-actions button,
+    .search-actions a {
+        width: 100%;
+        text-align: center;
+        justify-content: center;
     }
     
     .form-row {
@@ -710,31 +1226,41 @@ body {
         gap: 0;
     }
     
-    .modal-content {
-        margin: 10px;
-        width: auto;
+    .form-row .form-group {
+        margin-bottom: 15px;
     }
-}
-
-.detail-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 16px;
-}
-.detail-item {
-    padding: 8px 0;
-    border-bottom: 1px solid var(--border-light);
-}
-.detail-label {
-    font-weight: 600;
-    color: var(--text-muted);
-    font-size: 11px;
-    text-transform: uppercase;
-    margin-bottom: 4px;
-}
-.detail-value {
-    color: var(--text-primary);
-    font-size: 14px;
+    
+    .modal-container {
+        margin: 10% auto;
+        width: 95%;
+    }
+    
+    .delete-modal-container {
+        width: 95%;
+    }
+    
+    .detail-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+    
+    .delete-modal-footer {
+        flex-direction: column-reverse;
+    }
+    
+    .delete-modal-footer .btn-modal {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .modal-footer-buttons {
+        flex-direction: column-reverse;
+    }
+    
+    .modal-footer-buttons .btn-modal {
+        width: 100%;
+        justify-content: center;
+    }
 }
 </style>
 
@@ -791,7 +1317,7 @@ body {
         <button class="btn btn-primary" onclick="openEmployeeModal()">
             <i class="fas fa-plus-circle"></i> Add New Employee
         </button>
-        <a href="<?php echo SITE_URL; ?>/admin/departments.php" class="btn btn-secondary">
+        <a href="<?php echo SITE_URL; ?>/admin/locations.php" class="btn btn-secondary">
             <i class="fas fa-building"></i> Manage Departments
         </a>
         <a href="<?php echo SITE_URL; ?>/admin/users.php" class="btn btn-secondary">
@@ -800,18 +1326,151 @@ body {
     </div>
 </div>
 
+<!-- Advanced Search Bar -->
+<div class="table-container">
+    <div class="table-header">
+        <h2><i class="fas fa-search"></i> Advanced Search</h2>
+    </div>
+    
+    <form method="GET" action="" class="advanced-search-box" id="searchForm">
+        <div class="search-row">
+            <div class="search-group" style="flex: 2;">
+                <label><i class="fas fa-user"></i> Name / Email / Position</label>
+                <input type="text" name="search" placeholder="Search by name, email, position, or department..." 
+                       value="<?php echo htmlspecialchars($search); ?>">
+            </div>
+            <div class="search-group">
+                <label><i class="fas fa-building"></i> Department</label>
+                <select name="department_filter" id="department_filter" onchange="this.form.submit()">
+                    <option value="">-- All Departments --</option>
+                    <?php 
+                    $dept_filter = $conn->query("SELECT id, code, name FROM departments ORDER BY code, name");
+                    if ($dept_filter && $dept_filter->num_rows > 0):
+                        while($dept = $dept_filter->fetch_assoc()): ?>
+                    <option value="<?php echo $dept['id']; ?>" <?php echo $department_filter == $dept['id'] ? 'selected' : ''; ?>>
+                        <?php echo htmlspecialchars($dept['code'] . ' - ' . $dept['name']); ?>
+                    </option>
+                    <?php endwhile; endif; ?>
+                </select>
+            </div>
+        </div>
+        
+        <div class="search-row">
+            <div class="search-group">
+                <label><i class="fas fa-layer-group"></i> Section</label>
+                <select name="section_filter" id="section_filter">
+                    <option value="">-- All Sections --</option>
+                    <?php foreach ($sections_for_filter as $section): ?>
+                    <option value="<?php echo $section['id']; ?>" <?php echo $section_filter == $section['id'] ? 'selected' : ''; ?>>
+                        <?php echo htmlspecialchars($section['name']); ?>
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="search-group">
+                <label><i class="fas fa-briefcase"></i> Position</label>
+                <select name="position_filter">
+                    <option value="">-- All Positions --</option>
+                    <?php 
+                    $pos_filter = $conn->query("SELECT DISTINCT position FROM employees WHERE position IS NOT NULL AND position != '' ORDER BY position");
+                    if ($pos_filter && $pos_filter->num_rows > 0):
+                        while($pos = $pos_filter->fetch_assoc()): ?>
+                    <option value="<?php echo htmlspecialchars($pos['position']); ?>" <?php echo $position_filter == $pos['position'] ? 'selected' : ''; ?>>
+                        <?php echo htmlspecialchars($pos['position']); ?>
+                    </option>
+                    <?php endwhile; endif; ?>
+                </select>
+            </div>
+            <div class="search-group">
+                <label><i class="fas fa-flag-checkered"></i> Status</label>
+                <select name="status_filter">
+                    <option value="">-- All Status --</option>
+                    <option value="Active" <?php echo $status_filter == 'Active' ? 'selected' : ''; ?>>Active</option>
+                    <option value="Inactive" <?php echo $status_filter == 'Inactive' ? 'selected' : ''; ?>>Inactive</option>
+                </select>
+            </div>
+            <div class="search-group">
+                <label><i class="fas fa-calendar-alt"></i> Date Added (From)</label>
+                <input type="date" name="date_from" value="<?php echo htmlspecialchars($date_from); ?>">
+            </div>
+            <div class="search-group">
+                <label><i class="fas fa-calendar-alt"></i> Date Added (To)</label>
+                <input type="date" name="date_to" value="<?php echo htmlspecialchars($date_to); ?>">
+            </div>
+        </div>
+        
+        <div class="search-row">
+            <div class="search-actions" style="margin-left: auto;">
+                <button type="submit" class="btn-search">
+                    <i class="fas fa-search"></i> Search
+                </button>
+                <?php if ($search || $date_from || $date_to || $department_filter || $section_filter || $status_filter || $position_filter): ?>
+                <a href="<?php echo SITE_URL; ?>/admin/employees.php" class="btn-clear">
+                    <i class="fas fa-times"></i> Clear All
+                </a>
+                <?php endif; ?>
+            </div>
+        </div>
+        
+        <!-- Filter Summary -->
+        <?php if ($search || $date_from || $date_to || $department_filter || $section_filter || $status_filter || $position_filter): ?>
+        <div class="filter-summary" style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; padding-top: 15px; border-top: 1px solid var(--border-light);">
+            <span style="font-size: 12px; color: var(--text-muted);"><i class="fas fa-filter"></i> Active Filters:</span>
+            <?php if ($search): ?>
+            <span class="filter-badge" style="background: var(--accent-light); padding: 5px 12px; border-radius: 20px; font-size: 12px;">
+                <i class="fas fa-search"></i> Search: "<?php echo htmlspecialchars($search); ?>"
+            </span>
+            <?php endif; ?>
+            <?php if ($date_from): ?>
+            <span class="filter-badge" style="background: var(--accent-light); padding: 5px 12px; border-radius: 20px; font-size: 12px;">
+                <i class="fas fa-calendar"></i> From: <?php echo htmlspecialchars($date_from); ?>
+            </span>
+            <?php endif; ?>
+            <?php if ($date_to): ?>
+            <span class="filter-badge" style="background: var(--accent-light); padding: 5px 12px; border-radius: 20px; font-size: 12px;">
+                <i class="fas fa-calendar"></i> To: <?php echo htmlspecialchars($date_to); ?>
+            </span>
+            <?php endif; ?>
+            <?php if ($department_filter): 
+                $dept_name = $conn->query("SELECT name FROM departments WHERE id = $department_filter")->fetch_assoc();
+            ?>
+            <span class="filter-badge" style="background: var(--accent-light); padding: 5px 12px; border-radius: 20px; font-size: 12px;">
+                <i class="fas fa-building"></i> Dept: <?php echo htmlspecialchars($dept_name['name'] ?? 'N/A'); ?>
+            </span>
+            <?php endif; ?>
+            <?php if ($section_filter): 
+                $section_name = $conn->query("SELECT name FROM sections WHERE id = $section_filter")->fetch_assoc();
+            ?>
+            <span class="filter-badge" style="background: var(--accent-light); padding: 5px 12px; border-radius: 20px; font-size: 12px;">
+                <i class="fas fa-layer-group"></i> Section: <?php echo htmlspecialchars($section_name['name'] ?? 'N/A'); ?>
+            </span>
+            <?php endif; ?>
+            <?php if ($status_filter): ?>
+            <span class="filter-badge" style="background: var(--accent-light); padding: 5px 12px; border-radius: 20px; font-size: 12px;">
+                <i class="fas fa-flag-checkered"></i> Status: <?php echo htmlspecialchars($status_filter); ?>
+            </span>
+            <?php endif; ?>
+            <?php if ($position_filter): ?>
+            <span class="filter-badge" style="background: var(--accent-light); padding: 5px 12px; border-radius: 20px; font-size: 12px;">
+                <i class="fas fa-briefcase"></i> Position: <?php echo htmlspecialchars($position_filter); ?>
+            </span>
+            <?php endif; ?>
+        </div>
+        <?php endif; ?>
+    </form>
+</div>
+
 <!-- Employees Table -->
 <div class="table-container">
     <div class="table-header">
         <h2><i class="fas fa-user-tie"></i> Employees List</h2>
-        <p>Showing <?php echo number_format($total_employees); ?> employees</p>
+        <p>Showing <?php echo number_format($employees_result->num_rows); ?> of <?php echo number_format($total_rows); ?> employees</p>
     </div>
     
     <div class="employee-wrapper">
         <table class="employee-table">
             <thead>
                 <tr>
-                    <th>ID</th>
                     <th>EMPLOYEE NAME</th>
                     <th>EMAIL</th>
                     <th>CONTACT</th>
@@ -820,6 +1479,7 @@ body {
                     <th>POSITION</th>
                     <th>LINKED USER</th>
                     <th>STATUS</th>
+                    <th>DATE ADDED</th>
                     <th>ACTIONS</th>
                 </tr>
             </thead>
@@ -827,18 +1487,17 @@ body {
                 <?php if ($employees_result && $employees_result->num_rows > 0): ?>
                     <?php while($emp = $employees_result->fetch_assoc()): ?>
                     <tr>
-                        <td><?php echo $emp['id']; ?></td>
                         <td>
                             <strong><?php echo htmlspecialchars($emp['lastname'] . ', ' . $emp['firstname']); ?></strong>
                             <?php if (!empty($emp['middlename'])): ?>
                                 <br><small class="text-muted"><?php echo htmlspecialchars($emp['middlename']); ?></small>
                             <?php endif; ?>
-                        </td>
-                        <td><?php echo htmlspecialchars($emp['email'] ?? 'N/A'); ?></td>
-                        <td><?php echo htmlspecialchars($emp['contact'] ?? 'N/A'); ?></td>
-                        <td><?php echo htmlspecialchars($emp['department_name'] ?? 'N/A'); ?></td>
-                        <td><?php echo htmlspecialchars($emp['section_name'] ?? 'N/A'); ?></td>
-                        <td><?php echo htmlspecialchars($emp['position'] ?? 'N/A'); ?></td>
+                         </span>
+                        <td><?php echo htmlspecialchars($emp['email'] ?? 'N/A'); ?> </span>
+                        <td><?php echo htmlspecialchars($emp['contact'] ?? 'N/A'); ?> </span>
+                        <td><?php echo htmlspecialchars($emp['department_name'] ?? 'N/A'); ?> </span>
+                        <td><?php echo htmlspecialchars($emp['section_name'] ?? 'N/A'); ?> </span>
+                        <td><?php echo htmlspecialchars($emp['position'] ?? 'N/A'); ?> </span>
                         <td>
                             <?php if ($emp['has_user_account']): ?>
                                 <span class="badge badge-success"><?php echo htmlspecialchars($emp['username']); ?></span>
@@ -846,14 +1505,17 @@ body {
                             <?php else: ?>
                                 <span class="badge badge-warning">Not Linked</span>
                             <?php endif; ?>
-                        </td>
+                         </span>
                         <td>
                             <?php if ($emp['status'] == 'Active'): ?>
                                 <span class="badge badge-success">Active</span>
                             <?php else: ?>
                                 <span class="badge badge-danger">Inactive</span>
                             <?php endif; ?>
-                        </td>
+                         </span>
+                        <td>
+                            <small><?php echo isset($emp['date_added']) && $emp['date_added'] != '0000-00-00' ? date('Y-m-d', strtotime($emp['date_added'])) : 'N/A'; ?></small>
+                         </span>
                         <td>
                             <div class="action-buttons">
                                 <button class="action-btn view" onclick="viewEmployee(<?php echo $emp['id']; ?>)" title="View">
@@ -862,38 +1524,113 @@ body {
                                 <button class="action-btn edit" onclick="editEmployee(<?php echo $emp['id']; ?>)" title="Edit">
                                     <i class="fas fa-edit"></i>
                                 </button>
-                                <a href="?delete=<?php echo $emp['id']; ?>&csrf_token=<?php echo $_SESSION['csrf_token']; ?>" 
-                                   class="action-btn delete" 
-                                   onclick="return confirm('Are you sure you want to delete this employee?')"
-                                   title="Delete">
+                                <button class="action-btn delete" onclick="openDeleteEmployeeModal(<?php echo $emp['id']; ?>, '<?php echo htmlspecialchars(addslashes($emp['lastname'] . ', ' . $emp['firstname'])); ?>')" title="Delete">
                                     <i class="fas fa-trash"></i>
-                                </a>
+                                </button>
                             </div>
-                        </td>
+                         </span>
                     </tr>
                     <?php endwhile; ?>
                 <?php else: ?>
                     <tr>
                         <td colspan="10" class="text-center" style="padding: 60px 20px;">
                             <i class="fas fa-users" style="font-size: 48px; color: var(--text-muted); margin-bottom: 16px; display: block;"></i>
-                            <p style="color: var(--text-muted); margin-bottom: 20px;">No employees found</p>
-                            <button class="btn btn-primary" onclick="openEmployeeModal()">Add Your First Employee</button>
-                        </td>
+                            <?php if ($search || $date_from || $date_to || $department_filter || $section_filter || $status_filter || $position_filter): ?>
+                                <p style="color: var(--text-muted); margin-bottom: 20px;">No employees found matching your search criteria</p>
+                                <a href="<?php echo SITE_URL; ?>/admin/employees.php" class="btn btn-primary">Clear All Filters</a>
+                            <?php else: ?>
+                                <p style="color: var(--text-muted); margin-bottom: 20px;">No employees found</p>
+                                <button class="btn btn-primary" onclick="openEmployeeModal()">Add Your First Employee</button>
+                            <?php endif; ?>
+                        </span>
                     </tr>
                 <?php endif; ?>
             </tbody>
         </table>
     </div>
+    
+    <!-- Pagination -->
+    <?php if ($total_pages > 1): ?>
+    <div class="pagination">
+        <?php
+        $query_params = array_filter([
+            'search' => $search,
+            'date_from' => $date_from,
+            'date_to' => $date_to,
+            'department_filter' => $department_filter,
+            'section_filter' => $section_filter,
+            'status_filter' => $status_filter,
+            'position_filter' => $position_filter
+        ]);
+        $query_string = http_build_query($query_params);
+        ?>
+        
+        <?php if ($page > 1): ?>
+            <a href="?page=1<?php echo $query_string ? '&' . $query_string : ''; ?>">&laquo; First</a>
+            <a href="?page=<?php echo $page - 1; ?><?php echo $query_string ? '&' . $query_string : ''; ?>">&lsaquo; Previous</a>
+        <?php else: ?>
+            <span class="disabled">&laquo; First</span>
+            <span class="disabled">&lsaquo; Previous</span>
+        <?php endif; ?>
+        
+        <?php
+        $start_page = max(1, $page - 2);
+        $end_page = min($total_pages, $page + 2);
+        
+        for ($i = $start_page; $i <= $end_page; $i++):
+        ?>
+            <?php if ($i == $page): ?>
+                <span class="active"><?php echo $i; ?></span>
+            <?php else: ?>
+                <a href="?page=<?php echo $i; ?><?php echo $query_string ? '&' . $query_string : ''; ?>"><?php echo $i; ?></a>
+            <?php endif; ?>
+        <?php endfor; ?>
+        
+        <?php if ($page < $total_pages): ?>
+            <a href="?page=<?php echo $page + 1; ?><?php echo $query_string ? '&' . $query_string : ''; ?>">Next &rsaquo;</a>
+            <a href="?page=<?php echo $total_pages; ?><?php echo $query_string ? '&' . $query_string : ''; ?>">Last &raquo;</a>
+        <?php else: ?>
+            <span class="disabled">Next &rsaquo;</span>
+            <span class="disabled">Last &raquo;</span>
+        <?php endif; ?>
+    </div>
+    <?php endif; ?>
+</div>
+
+<!-- Delete Employee Confirmation Modal -->
+<div id="deleteEmployeeModal" class="delete-modal-overlay">
+    <div class="delete-modal-container">
+        <div class="delete-modal-header">
+            <h3><i class="fas fa-trash-alt"></i> Delete Employee</h3>
+        </div>
+        <div class="delete-modal-body">
+            <input type="hidden" id="delete_employee_id">
+            <div class="delete-warning">
+                <i class="fas fa-exclamation-triangle"></i>
+                <p><strong>Are you absolutely sure?</strong></p>
+                <p class="warning-text">This action cannot be undone.</p>
+            </div>
+            <div class="delete-item-details">
+                <div class="detail-label">EMPLOYEE TO DELETE</div>
+                <div class="detail-name" id="delete_employee_name">-</div>
+                <div class="detail-extra">This will permanently remove the employee record.</div>
+            </div>
+        </div>
+        <div class="delete-modal-footer">
+            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeDeleteEmployeeModal()">Cancel</button>
+            <a href="#" id="confirmDeleteEmployeeBtn" class="btn-modal btn-modal-danger"><i class="fas fa-trash-alt"></i> Delete Employee</a>
+        </div>
+    </div>
 </div>
 
 <!-- Add/Edit Employee Modal -->
-<div id="employeeModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h2 id="modalTitle"><i class="fas fa-user-plus"></i> Add Employee</h2>
+<div id="employeeModal" class="modal-overlay">
+    <div class="modal-container">
+        <div class="modal-header-settings">
+            <h3 id="modalTitle"><i class="fas fa-user-plus"></i> Add Employee</h3>
             <span class="modal-close" onclick="closeEmployeeModal()">&times;</span>
         </div>
-        <div class="modal-body">
+        <div class="modal-scroll-content">
             <form method="POST" action="" id="employeeForm">
                 <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
                 <input type="hidden" name="action" id="action" value="add">
@@ -906,9 +1643,16 @@ body {
                         <label for="user_id">Select User (Optional)</label>
                         <select class="form-control" id="user_id" name="user_id" onchange="loadUserDetails()">
                             <option value="">-- Select User to Link --</option>
-                            <?php if ($users_result && $users_result->num_rows > 0): 
-                                $users_result->data_seek(0);
-                                while($user = $users_result->fetch_assoc()): ?>
+                            <?php 
+                            $users_dropdown = $conn->query("
+                                SELECT u.* 
+                                FROM users u 
+                                LEFT JOIN employees e ON u.id = e.user_id 
+                                WHERE e.id IS NULL OR e.user_id IS NULL
+                                ORDER BY u.lastname, u.firstname
+                            ");
+                            if ($users_dropdown && $users_dropdown->num_rows > 0): 
+                                while($user = $users_dropdown->fetch_assoc()): ?>
                             <option value="<?php echo $user['id']; ?>">
                                 <?php echo htmlspecialchars($user['lastname'] . ', ' . $user['firstname'] . ' (' . $user['username'] . ')'); ?>
                             </option>
@@ -955,9 +1699,10 @@ body {
                             <label for="department_id">Department</label>
                             <select class="form-control" id="department_id" name="department_id" onchange="loadSectionsByDepartment()">
                                 <option value="">-- Select Department --</option>
-                                <?php if ($departments_result && $departments_result->num_rows > 0): 
-                                    $departments_result->data_seek(0);
-                                    while($dept = $departments_result->fetch_assoc()): ?>
+                                <?php 
+                                $dept_dropdown = $conn->query("SELECT id, code, name FROM departments ORDER BY code, name");
+                                if ($dept_dropdown && $dept_dropdown->num_rows > 0): 
+                                    while($dept = $dept_dropdown->fetch_assoc()): ?>
                                 <option value="<?php echo $dept['id']; ?>">
                                     <?php echo htmlspecialchars($dept['code']); ?> - <?php echo htmlspecialchars($dept['name']); ?>
                                 </option>
@@ -971,15 +1716,9 @@ body {
                             </select>
                         </div>
                     </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="position">Position</label>
-                            <input type="text" class="form-control" id="position" name="position">
-                        </div>
-                        <div class="form-group">
-                            <label for="date_hired">Date Hired</label>
-                            <input type="date" class="form-control" id="date_hired" name="date_hired">
-                        </div>
+                    <div class="form-group">
+                        <label for="position">Position</label>
+                        <input type="text" class="form-control" id="position" name="position">
                     </div>
                     <div class="form-group">
                         <label for="status">Employment Status</label>
@@ -989,33 +1728,44 @@ body {
                         </select>
                     </div>
                 </div>
-                
-                <div class="modal-footer" style="margin-top: 20px;">
-                    <button type="button" class="btn btn-secondary" onclick="closeEmployeeModal()">Cancel</button>
-                    <button type="submit" class="btn btn-primary"><i class="fas fa-save"></i> Save Employee</button>
-                </div>
             </form>
+        </div>
+        <div class="modal-footer-buttons">
+            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeEmployeeModal()">Cancel</button>
+            <button type="submit" form="employeeForm" class="btn-modal" style="background-color: var(--accent); color: var(--text-primary);"><i class="fas fa-save"></i> Save Employee</button>
         </div>
     </div>
 </div>
 
 <!-- View Employee Modal -->
-<div id="viewEmployeeModal" class="modal">
-    <div class="modal-content" style="max-width: 550px;">
-        <div class="modal-header">
-            <h2><i class="fas fa-id-card"></i> Employee Details</h2>
+<div id="viewEmployeeModal" class="modal-overlay">
+    <div class="modal-container" style="max-width: 550px;">
+        <div class="modal-header-settings">
+            <h3><i class="fas fa-id-card"></i> Employee Details</h3>
             <span class="modal-close" onclick="closeViewEmployeeModal()">&times;</span>
         </div>
-        <div class="modal-body" id="viewEmployeeContent">
+        <div class="modal-body-scroll" id="viewEmployeeContent">
             <div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading...</div>
         </div>
-        <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" onclick="closeViewEmployeeModal()">Close</button>
+        <div class="modal-footer-buttons">
+            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeViewEmployeeModal()">Close</button>
         </div>
     </div>
 </div>
 
 <script>
+// Delete Employee Modal Functions
+function openDeleteEmployeeModal(id, name) {
+    document.getElementById('delete_employee_id').value = id;
+    document.getElementById('delete_employee_name').innerText = name;
+    document.getElementById('confirmDeleteEmployeeBtn').href = '?delete=' + id + '&csrf_token=<?php echo $_SESSION['csrf_token']; ?>';
+    document.getElementById('deleteEmployeeModal').style.display = 'flex';
+}
+
+function closeDeleteEmployeeModal() {
+    document.getElementById('deleteEmployeeModal').style.display = 'none';
+}
+
 // Load sections based on selected department using AJAX
 function loadSectionsByDepartment() {
     let departmentId = document.getElementById('department_id').value;
@@ -1094,7 +1844,6 @@ function editEmployee(id) {
                 document.getElementById('contact').value = emp.contact || '';
                 document.getElementById('department_id').value = emp.department_id || '';
                 document.getElementById('position').value = emp.position || '';
-                document.getElementById('date_hired').value = emp.date_hired || '';
                 document.getElementById('status').value = emp.status || 'Active';
                 document.getElementById('user_id').value = emp.user_id || '';
                 
@@ -1130,20 +1879,22 @@ function viewEmployee(id) {
                     userInfo = `<div class="detail-item"><div class="detail-label">Linked User</div><div class="detail-value"><span class="badge badge-warning">Not linked to any user account</span></div></div>`;
                 }
                 
-                // Combine department and section
                 let departmentDisplay = emp.department_name ?? 'N/A';
                 let sectionDisplay = emp.section_name ?? 'N/A';
                 
                 let content = `
-                    <h3 style="text-align:center;margin-bottom:20px;">${escapeHtml(emp.lastname)}, ${escapeHtml(emp.firstname)}</h3>
+                    <div style="text-align:center;margin-bottom:20px;">
+                        <div style="width: 80px;height: 80px;background: var(--accent-light);border-radius: 50%;display: flex;align-items: center;justify-content: center;margin: 0 auto 15px;">
+                            <i class="fas fa-user-tie" style="font-size: 40px; color: var(--primary);"></i>
+                        </div>
+                        <h3 style="margin:0;color: var(--text-primary);">${escapeHtml(emp.lastname)}, ${escapeHtml(emp.firstname)}</h3>
+                    </div>
                     <div class="detail-grid">
-                        <div class="detail-item"><div class="detail-label">ID</div><div class="detail-value">${emp.id}</div></div>
                         <div class="detail-item"><div class="detail-label">Email</div><div class="detail-value">${escapeHtml(emp.email || 'N/A')}</div></div>
                         <div class="detail-item"><div class="detail-label">Contact</div><div class="detail-value">${escapeHtml(emp.contact || 'N/A')}</div></div>
                         <div class="detail-item"><div class="detail-label">Department</div><div class="detail-value">${escapeHtml(departmentDisplay)}</div></div>
                         <div class="detail-item"><div class="detail-label">Section</div><div class="detail-value">${escapeHtml(sectionDisplay)}</div></div>
                         <div class="detail-item"><div class="detail-label">Position</div><div class="detail-value">${escapeHtml(emp.position || 'N/A')}</div></div>
-                        <div class="detail-item"><div class="detail-label">Date Hired</div><div class="detail-value">${emp.date_hired ? new Date(emp.date_hired).toLocaleDateString() : 'N/A'}</div></div>
                         <div class="detail-item"><div class="detail-label">Status</div><div class="detail-value"><span class="badge ${emp.status == 'Active' ? 'badge-success' : 'badge-danger'}">${emp.status}</span></div></div>
                         ${userInfo}
                     </div>
@@ -1152,11 +1903,13 @@ function viewEmployee(id) {
                 document.getElementById('viewEmployeeModal').style.display = 'block';
             } else {
                 document.getElementById('viewEmployeeContent').innerHTML = '<div class="alert alert-danger">Error loading employee details</div>';
+                document.getElementById('viewEmployeeModal').style.display = 'block';
             }
         })
         .catch(error => {
             console.error('Error:', error);
             document.getElementById('viewEmployeeContent').innerHTML = '<div class="alert alert-danger">Error loading employee details</div>';
+            document.getElementById('viewEmployeeModal').style.display = 'block';
         });
 }
 
@@ -1175,12 +1928,16 @@ function escapeHtml(text) {
 window.onclick = function(event) {
     let employeeModal = document.getElementById('employeeModal');
     let viewEmployeeModal = document.getElementById('viewEmployeeModal');
+    let deleteEmployeeModal = document.getElementById('deleteEmployeeModal');
     
     if (event.target == employeeModal) {
         closeEmployeeModal();
     }
     if (event.target == viewEmployeeModal) {
         closeViewEmployeeModal();
+    }
+    if (event.target == deleteEmployeeModal) {
+        closeDeleteEmployeeModal();
     }
 }
 

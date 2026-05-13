@@ -20,7 +20,7 @@ require_once $root_path . '/vendor/autoload.php';
 use Picqer\Barcode\BarcodeGeneratorPNG;
 
 /// Require admin role
-requireRole('admin' || 'superadmin' || 'supply');
+requireRole('admin');
 
 // Generate CSRF token if not exists
 if (empty($_SESSION['csrf_token'])) {
@@ -43,6 +43,9 @@ $equipment_sub_types = $conn->query("
 
 // Get users for dropdown
 $users = $conn->query("SELECT id, username, firstname, lastname FROM users WHERE status = 'active' ORDER BY firstname, lastname");
+
+// Get fund clusters for dropdown (from fund_cluster table)
+$fund_clusters = $conn->query("SELECT id, code, name FROM fund_cluster WHERE status = 'active' ORDER BY name");
 
 // Build equipment sub type options array for JavaScript
 $equipment_sub_type_options = [];
@@ -143,6 +146,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_property_preview' && isset($_G
     exit;
 }
 
+
 // Get multiple items for barcode view
 if (isset($_GET['get_multiple_items'])) {
     header('Content-Type: application/json');
@@ -153,38 +157,69 @@ if (isset($_GET['get_multiple_items'])) {
         exit;
     }
     
-    $base_property = preg_replace('/-\d+$/', '', $property_no);
+    // Debug logging
+    error_log("get_multiple_items called with property_no: " . $property_no);
+    
+    // Get the base pattern without the sequence number
+    // Property format examples:
+    // - Single: 2026-02-0201-5527 (4 segments, last is 4-digit sequence)
+    // - Multiple: 2026-02-0201-0001, 2026-02-0201-0002, etc.
+    $base_pattern = $property_no;
+    
+    // Check if property has 4 segments (YYYY-TYPE-SUBTYPE-SEQUENCE)
+    // Remove the last 4-digit sequence to get the base pattern
+    if (preg_match('/^(\d{4}-\d{2}-\d{4})-\d{4}$/', $property_no, $matches)) {
+        $base_pattern = $matches[1];
+        error_log("Extracted base pattern: " . $base_pattern);
+    } else {
+        error_log("No pattern match, using original: " . $base_pattern);
+    }
+    
+    // Use LIKE to find all items with the same base pattern
+    $like_pattern = $base_pattern . '-%';
+    error_log("LIKE pattern: " . $like_pattern);
+    
+    // Query items that match the base pattern
     $stmt = $conn->prepare("
-        SELECT i.*, e.name as equipment_name
+        SELECT i.id, i.property_no, i.article_name, i.barcode_data, 
+               i.qty_physical_count as quantity, i.uom, i.unit_value,
+               e.name as equipment_name
         FROM inventory i
         LEFT JOIN equipment e ON i.equipment_id = e.id
         WHERE i.property_no LIKE ? 
         ORDER BY i.property_no
     ");
-    $like_pattern = $base_property . '%';
     $stmt->bind_param("s", $like_pattern);
     $stmt->execute();
     $result = $stmt->get_result();
     
     $items = [];
     while ($row = $result->fetch_assoc()) {
+        // Ensure each item has a barcode (use property_no as fallback)
+        if (empty($row['barcode_data'])) {
+            $row['barcode_data'] = $row['property_no'];
+        }
         $items[] = [
             'id' => $row['id'],
             'property_no' => $row['property_no'],
             'article_name' => $row['article_name'],
             'barcode_data' => $row['barcode_data'],
-            'quantity' => $row['qty_physical_count'],
+            'quantity' => $row['quantity'],
             'uom' => $row['uom'],
             'unit_value' => $row['unit_value']
         ];
     }
     $stmt->close();
     
+    error_log("Found " . count($items) . " items for pattern: " . $like_pattern);
+    
     echo json_encode([
         'success' => true,
         'items' => $items,
         'count' => count($items),
-        'base_property' => $base_property
+        'base_pattern' => $base_pattern,
+        'original_property' => $property_no,
+        'like_pattern' => $like_pattern
     ]);
     exit;
 }
@@ -392,7 +427,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     // Supplier Information
     $supplier = sanitize($_POST['supplier'] ?? '');
     $ref_po_number = sanitize($_POST['ref_po_number'] ?? '');
-     $delivery_date = !empty($_POST['delivery_date']) ? sanitize($_POST['delivery_date']) : null;
+    $delivery_date = !empty($_POST['delivery_date']) ? sanitize($_POST['delivery_date']) : null;
     
     // Set year_acquired
     $year_acquired = date('Y');
@@ -616,26 +651,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     }
     
     $stmt->bind_param(
-        "sssddiiissssssssssi",
-        $article_name,
-        $description,
-        $uom,
-        $quantity,
-        $unit_value,
-        $equipment_id,
-        $type_equipment_id,
-        $equipment_sub_type_id,
-        $condition_text,
-        $fund_cluster,
-        $certified_correct,
-        $approved_by,
-        $verified_by,
-        $supplier,
-        $ref_po_number,
-        $delivery_date,
-        $remarks,
-        $barcode_data,
-        $id
+        "sssddi i i i s s s s s s s s s i",
+        $article_name, $description, $uom, $quantity, $unit_value,
+        $equipment_id, $type_equipment_id, $equipment_sub_type_id, $condition_text,
+        $fund_cluster, $certified_correct, $approved_by, $verified_by,
+        $supplier, $ref_po_number, $delivery_date,
+        $remarks, $barcode_data, $id
     );
     
     if ($stmt->execute()) {
@@ -913,8 +934,6 @@ body {
     margin-bottom: 20px;
     padding-bottom: 10px;
     border-bottom: 2px solid var(--accent-light);
-    flex-wrap: wrap;
-    gap: 10px;
 }
 
 .table-header h2 {
@@ -975,15 +994,9 @@ body {
     box-shadow: 0 4px 12px rgba(107, 140, 255, 0.3);
 }
 
-.table-wrapper {
-    overflow-x: auto;
-    width: 100%;
-}
-
 table {
     width: 100%;
     border-collapse: collapse;
-    min-width: 1200px;
 }
 
 thead tr {
@@ -1005,61 +1018,18 @@ td {
     border-bottom: 1px solid var(--border-light);
     color: var(--text-secondary);
     font-size: 13px;
-    white-space: normal;
-    word-wrap: break-word;
-    max-width: 250px;
 }
 
-tr:hover td {
+tr:hover {
     background-color: var(--light);
 }
 
 tr.stock-alert-row {
-    background-color: #FFF3E0;
-}
-tr.stock-alert-row:hover td {
-    background-color: #ffe0b2;
+    background-color: white;
 }
 
-/* Article name column styling */
-.article-name-cell strong {
-    color: var(--text-primary);
-}
-.article-name-cell small {
-    font-size: 11px;
-    color: var(--text-muted);
-    display: block;
-    margin-top: 4px;
-}
-
-/* Category column styling */
-.category-cell {
-    line-height: 1.4;
-}
-.category-cell small {
-    font-size: 11px;
-    color: var(--text-muted);
-}
-
-/* Badge styles */
-.badge-warning {
-    background-color: var(--secondary);
-    color: var(--text-primary);
-    padding: 4px 10px;
-    border-radius: 20px;
-    font-size: 11px;
-    font-weight: 600;
-    display: inline-block;
-}
-
-.badge-success {
-    background-color: var(--success-light);
-    color: var(--success);
-    padding: 4px 10px;
-    border-radius: 20px;
-    font-size: 11px;
-    font-weight: 600;
-    display: inline-block;
+tr.stock-alert-row:hover {
+    background-color: #f0c0d0;
 }
 
 .action-buttons {
@@ -1097,6 +1067,26 @@ tr.stock-alert-row:hover td {
     opacity: 0.6;
     cursor: not-allowed;
     transform: none;
+}
+
+.badge-warning {
+    background-color: var(--secondary);
+    color: var(--text-primary);
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    display: inline-block;
+}
+
+.badge-success {
+    background-color: var(--success-light);
+    color: var(--success);
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    display: inline-block;
 }
 
 .btn {
@@ -1293,12 +1283,10 @@ tr.stock-alert-row:hover td {
     display: flex;
     gap: 15px;
     margin-bottom: 15px;
-    flex-wrap: wrap;
 }
 
 .form-row .form-group {
     flex: 1;
-    min-width: 150px;
 }
 
 .form-text {
@@ -1855,22 +1843,22 @@ tr.stock-alert-row:hover td {
         <p>Showing <?php echo $uniqueCount; ?> of <?php echo $total_rows; ?> items</p>
     </div>
     
-    <div class="table-wrapper">
-        <table>
+    <div style="overflow-x: auto;">
+        <table style="width: 100%; min-width: 1200px; border-collapse: collapse;">
             <thead>
                 <tr>
-                    <th>Article Name</th>
-                    <th>Property No.</th>
-                    <th>Category/Type</th>
-                    <th>Quantity</th>
-                    <th>Unit Value</th>
-                    <th>Supplier</th>
-                    <th>PO Number</th>
-                    <th>Fund Cluster</th>
-                    <th>Condition</th>
-                    <th>Status</th>
-                    <th>Barcode</th>
-                    <th>Actions</th>
+                    <th style="padding: 15px 10px; text-align: left; white-space: nowrap;">Article Name</th>
+                    <th style="padding: 15px 10px; text-align: left; white-space: nowrap;">Property No.</th>
+                    <th style="padding: 15px 10px; text-align: left; white-space: nowrap;">Category/Type</th>
+                    <th style="padding: 15px 10px; text-align: left; white-space: nowrap;">Quantity</th>
+                    <th style="padding: 15px 10px; text-align: left; white-space: nowrap;">Unit Value</th>
+                    <th style="padding: 15px 10px; text-align: left; white-space: nowrap;">Supplier</th>
+                    <th style="padding: 15px 10px; text-align: left; white-space: nowrap;">PO Number</th>
+                    <th style="padding: 15px 10px; text-align: left; white-space: nowrap;">Fund Cluster</th>
+                    <th style="padding: 15px 10px; text-align: left; white-space: nowrap;">Condition</th>
+                    <th style="padding: 15px 10px; text-align: left; white-space: nowrap;">Status</th>
+                    <th style="padding: 15px 10px; text-align: left; white-space: nowrap;">Barcode</th>
+                    <th style="padding: 15px 10px; text-align: left; white-space: nowrap;">Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -1883,14 +1871,14 @@ tr.stock-alert-row:hover td {
                         $shown[$base] = true;
                     ?>
                     <tr class="<?php echo $item['qty_physical_count'] <= 5 ? 'stock-alert-row' : ''; ?>">
-                        <td class="article-name-cell">
+                        <td style="padding: 15px 10px; vertical-align: top;">
                             <strong><?php echo htmlspecialchars($item['article_name']); ?></strong>
                             <?php if ($item['description']): ?>
                             <br><small><?php echo htmlspecialchars(substr($item['description'], 0, 50) . (strlen($item['description']) > 50 ? '...' : '')); ?></small>
                             <?php endif; ?>
                         </td>
-                        <td><?php echo htmlspecialchars($item['property_no']); ?></td>
-                        <td class="category-cell">
+                        <td style="padding: 15px 10px; vertical-align: top;"><?php echo htmlspecialchars($item['property_no']); ?></td>
+                        <td style="padding: 15px 10px; vertical-align: top;">
                             <?php 
                             if ($item['type_equipment_name']):
                                 echo htmlspecialchars($item['type_equipment_name']);
@@ -1902,44 +1890,48 @@ tr.stock-alert-row:hover td {
                             endif;
                             ?>
                         </td>
-                        <td><?php echo $item['total_qty'] . ' ' . $item['uom']; ?></td>
-                        <td><?php echo formatCurrency($item['unit_value']); ?></td>
-                        <td><?php echo htmlspecialchars($item['supplier'] ?? 'N/A'); ?></td>
-                        <td><?php echo htmlspecialchars($item['ref_po_number'] ?? 'N/A'); ?></td>
-                        <td><?php echo htmlspecialchars($item['fund_cluster'] ?? 'N/A'); ?></td>
-                        <td><?php echo htmlspecialchars($item['condition_text'] ?? 'Good'); ?></td>
-                        <td>
+                        <td style="padding: 15px 10px; vertical-align: top;"><?php echo $item['total_qty'] . ' ' . $item['uom']; ?></td>
+                        <td style="padding: 15px 10px; vertical-align: top;"><?php echo formatCurrency($item['unit_value']); ?></td>
+                        <td style="padding: 15px 10px; vertical-align: top;"><?php echo htmlspecialchars($item['supplier'] ?? 'N/A'); ?></td>
+                        <td style="padding: 15px 10px; vertical-align: top;"><?php echo htmlspecialchars($item['ref_po_number'] ?? 'N/A'); ?></td>
+                        <td style="padding: 15px 10px; vertical-align: top;"><?php echo htmlspecialchars($item['fund_cluster'] ?? 'N/A'); ?></td>
+                        <td style="padding: 15px 10px; vertical-align: top;"><?php echo htmlspecialchars($item['condition_text'] ?? 'Good'); ?></td>
+                        <td style="padding: 15px 10px; vertical-align: top;">
                             <?php if ($item['is_issued'] > 0): ?>
                                 <span class="badge-warning">Issued</span>
                             <?php else: ?>
                                 <span class="badge-success">Available</span>
                             <?php endif; ?>
                         </td>
-                        <td>
-                            <div class="action-buttons" style="display: flex; gap: 5px; align-items: center;">
-                                <?php if (!empty($item['barcode_data'])): ?>
-                                    <button class="btn-xs" onclick="showBarcodeModal('<?php echo htmlspecialchars($item['barcode_data']); ?>', '<?php echo htmlspecialchars($item['article_name']); ?>')">
-                                        <i class="fas fa-barcode"></i> View
-                                    </button>
-                                <?php else: ?>
-                                    <span class="text-muted">No barcode</span>
-                                <?php endif; ?>
-                                <?php if ($item['is_multiple']):
-                                    $baseProperty = preg_replace('/-\d+$/', '', $item['property_no']);
-                                    $multipleCount = isset($counts[$baseProperty]) ? $counts[$baseProperty] : 1;
-                                    $hasMultipleItems = $multipleCount > 1;
-                                ?>
-                                    <button class="action-btn"
-                                            style="background-color: pink; <?php echo $hasMultipleItems ? '' : 'opacity:0.6;cursor:not-allowed;'; ?>"
-                                            <?php echo $hasMultipleItems ? "onclick=\"viewAllBarcodes('{$item['property_no']}', '" . htmlspecialchars($item['article_name']) . "')\"" : ''; ?>
-                                            title="<?php echo $hasMultipleItems ? 'View All Barcodes' : 'Only 1 item in this set'; ?>"
-                                            <?php echo $hasMultipleItems ? '' : 'disabled'; ?>>
-                                        <i class="fas fa-layer-group"></i>
-                                    </button>
-                                <?php endif; ?>
-                            </div>
+                        <td style="padding: 15px 10px; vertical-align: top;">
+                            <?php if (!empty($item['barcode_data'])): ?>
+                                <button class="btn-xs" onclick="showBarcodeModal('<?php echo htmlspecialchars($item['barcode_data']); ?>', '<?php echo htmlspecialchars($item['article_name']); ?>')">
+                                    <i class="fas fa-barcode"></i> View
+                                </button>
+                            <?php else: ?>
+                                <span class="text-muted">No barcode</span>
+                            <?php endif; ?>
+                            
+                            <?php 
+                            // Check if this property has multiple items
+                            $baseProp = preg_replace('/-\d+$/', '', $item['property_no']);
+                            $multipleCheck = $conn->prepare("SELECT COUNT(*) as cnt FROM inventory WHERE property_no LIKE ?");
+                            $likePattern = $baseProp . '-%';
+                            $multipleCheck->bind_param("s", $likePattern);
+                            $multipleCheck->execute();
+                            $multipleResult = $multipleCheck->get_result();
+                            $hasMultiple = $multipleResult->fetch_assoc()['cnt'] > 1;
+                            $multipleCheck->close();
+                            ?>
+                            <?php if ($hasMultiple): ?>
+                                <button class="action-btn" style="background-color: pink;" 
+                                        onclick="viewAllBarcodes('<?php echo htmlspecialchars($item['property_no']); ?>', '<?php echo htmlspecialchars($item['article_name']); ?>')" 
+                                        title="View all barcodes in this set">
+                                    <i class="fas fa-layer-group"></i>
+                                </button>
+                            <?php endif; ?>
                         </td>
-                        <td>
+                        <td style="padding: 15px 10px; vertical-align: top;">
                             <div class="action-buttons">
                                 <a href="?edit=<?php echo $item['id']; ?>&csrf_token=<?php echo $_SESSION['csrf_token']; ?>" class="action-btn edit" title="Edit">
                                     <i class="fas fa-edit"></i>
@@ -1965,7 +1957,7 @@ tr.stock-alert-row:hover td {
                     <?php endforeach; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="12" class="text-center">
+                        <td colspan="12" style="padding: 40px; text-align: center;">
                             <i class="fas fa-shield-alt" style="font-size: 48px; color: #ccc; margin-bottom: 10px;"></i>
                             <br>
                             No PPE items found
@@ -1983,7 +1975,6 @@ tr.stock-alert-row:hover td {
     <!-- Pagination -->
     <?php echo displayPagination($pagination_data, '?page=' . ($search ? '&search=' . urlencode($search) : '')); ?>
 </div>
-
 <!-- Sticky SCAN BARCODE Button -->
 <div class="sticky-scan-button-container">
     <a href="<?php echo SITE_URL; ?>/admin/barcodescannerforppe.php" class="sticky-scan-button">
@@ -2083,9 +2074,8 @@ tr.stock-alert-row:hover td {
                             <label for="uom">Unit of Measurement <span class="text-danger">*</span></label>
                             <select class="form-control" id="uom" name="uom" required>
                                 <option value="">-- Select UOM --</option>
-                                <option value="pcs">Pieces (pcs)</option>
-                                <option value="box">Box</option>
-                                <option value="unit">Unit</option>
+                                <option value="smallunit">Small Unit - Per Pieces</option>
+                                <option value="bigunit">Big Unit - Per Box</option>
                                 <option value="set">Set</option>
                                 <option value="pair">Pair</option>
                             </select>
@@ -2129,10 +2119,15 @@ tr.stock-alert-row:hover td {
                         <label for="fund_cluster">Fund Cluster</label>
                         <select class="form-control" id="fund_cluster" name="fund_cluster">
                             <option value="">-- Select Fund Cluster --</option>
-                            <option value="Regular Agency Funds (RAF)">Regular Agency Funds (RAF)</option>
-                            <option value="Internally Generated Funds (IGF)">Internally Generated Funds (IGF)</option>
-                            <option value="FUND 151">FUND 151</option>
-                            <option value="Trust Receipts">Trust Receipts</option>
+                            <?php 
+                            if ($fund_clusters): 
+                                $fund_clusters->data_seek(0);
+                                while($fund = $fund_clusters->fetch_assoc()): 
+                            ?>
+                            <option value="<?php echo htmlspecialchars($fund['name']); ?>">
+                                <?php echo htmlspecialchars($fund['name']); ?>
+                            </option>
+                            <?php endwhile; endif; ?>
                         </select>
                         <small class="form-text text-muted">Select the appropriate fund cluster for this item</small>
                     </div>
@@ -2303,6 +2298,245 @@ tr.stock-alert-row:hover td {
 </div>
 
 <script>
+// Print PPE
+function printPhysicalCountReport(itemId) {
+    // Fetch the item details first
+    fetch('?ajax=get_item&id=' + itemId)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                let item = data.data;
+                let currentDate = new Date().toLocaleDateString('en-PH', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric'
+                });
+                
+                let printWindow = window.open('', '_blank');
+                printWindow.document.write(`
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <style>
+                            * {
+                                margin: 0;
+                                padding: 0;
+                                box-sizing: border-box;
+                            }
+                            
+                            body {
+                                font-family: 'Arial', sans-serif;
+                                padding: 40px;
+                                background: white;
+                                color: #333;
+                            }
+                            
+                            .report-container {
+                                max-width: 1200px;
+                                margin: 0 auto;
+                                background: white;
+                            }
+                            
+                            .report-header {
+                                text-align: center;
+                                margin-bottom: 30px;
+                                padding-bottom: 20px;
+                                border-bottom: 3px solid #c6cadb;
+                            }
+                            
+                            .report-header h1 {
+                                font-size: 24px;
+                                color: #2c3e50;
+                                margin-bottom: 10px;
+                                text-transform: uppercase;
+                            }
+                            
+                            .report-header h2 {
+                                font-size: 18px;
+                                color: #34495e;
+                                margin-bottom: 5px;
+                            }
+                            
+                            .report-header p {
+                                font-size: 14px;
+                                color: #7f8c8d;
+                                margin-top: 10px;
+                            }
+                            
+                            .report-date {
+                                text-align: right;
+                                margin-bottom: 20px;
+                                font-size: 12px;
+                                color: #7f8c8d;
+                            }
+                            
+                            .report-table {
+                                width: 100%;
+                                border-collapse: collapse;
+                                margin-top: 20px;
+                                font-size: 13px;
+                            }
+                            
+                            .report-table th {
+                                background-color: #6B8CFF;
+                                color: white;
+                                padding: 12px;
+                                text-align: left;
+                                border: 1px solid #ddd;
+                                font-weight: 600;
+                            }
+                            
+                            .report-table td {
+                                border: 1px solid #ddd;
+                                padding: 10px;
+                                vertical-align: top;
+                            }
+                            
+                            .report-table tr:nth-child(even) {
+                                background-color: #f9f9f9;
+                            }
+                            
+                            .footer-section {
+                                margin-top: 50px;
+                                border-top: 1px solid #ddd;
+                                padding-top: 20px;
+                            }
+                            
+                            .signature-area {
+                                display: flex;
+                                justify-content: space-between;
+                                margin-top: 40px;
+                                padding: 0 20px;
+                            }
+                            
+                            .signature-box {
+                                text-align: center;
+                                width: 250px;
+                            }
+                            
+                            .signature-line {
+                                margin-top: 50px;
+                                border-top: 1px solid #000;
+                                width: 100%;
+                            }
+                            
+                            .signature-name {
+                                font-weight: bold;
+                                margin-top: 5px;
+                            }
+                            
+                            .signature-title {
+                                font-size: 11px;
+                                color: #7f8c8d;
+                                margin-top: 5px;
+                            }
+                            
+                            .report-footer {
+                                text-align: center;
+                                margin-top: 30px;
+                                font-size: 10px;
+                                color: #95a5a6;
+                            }
+                            
+                            @media print {
+                                body {
+                                    padding: 20px;
+                                }
+                                .report-header {
+                                    break-inside: avoid;
+                                }
+                                .report-table {
+                                    break-inside: avoid;
+                                }
+                                .signature-area {
+                                    break-inside: avoid;
+                                }
+                            }
+                        </style>
+                    </head>
+                    <body>
+                        <div class="report-container">
+                            <div class="report-header">
+                                
+                                <h2>REPORT ON THE PHYSIKAL COUNT OF PROPERTY PLANT, AND EQUIPMENT</h2>
+                                <h2>Property, Plant and Equipment (PPE)</h2>
+                                <p>As of ${currentDate}</p>
+                            </div>
+                             <p>Fund Cluster</p>
+                             <p>${escapeHtml(item.fund_cluster || 'N/A')}</p>
+                            <div class="report-date">
+                                Date Printed: ${currentDate}
+                            </div>
+                            
+                            <table class="report-table">
+                                <thead>
+                                    <tr>
+                                       
+                                        <th>Article Name</th>
+                                        <th>Description</th>
+                                        <th>Property Number</th>
+                                        <th>UOM</th>
+                                        <th>Unit Value (₱)</th>
+                                        <th>Quantity</th>
+                                        <th>Physical Count</th>
+                                        <th>Remark</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>${escapeHtml(item.article_name)}</div>
+                                        <td>${escapeHtml(item.description || 'N/A')}</div>
+                                        <td>${escapeHtml(item.property_no || 'N/A')}</div>
+                                        <td>${escapeHtml(item.uom || 'N/A')}</div>
+                                        <td style="text-align: right;">₱${parseFloat(item.unit_value || 0).toFixed(2)}</div>
+                                        <td style="text-align: center;">${item.qty_physical_count || 0}</div>
+                                        <td style="text-align: center;">${item.qty_physical_count || 0}</div>
+                                        <td>${escapeHtml(item.remarks || 'No remarks')}</div>
+                                    </tr>
+                                </tbody>
+                            </table> 
+                            <div class="signature-area">
+                                <div class="signature-box">
+                                    <div class="signature-line"></div>
+                                    <div class="signature-name">${escapeHtml(item.certified_correct_names || '_________________')}</div>
+                                    <div class="signature-title">Certified Correct By</div>
+                                </div>
+                                <div class="signature-box">
+                                    <div class="signature-line"></div>
+                                    <div class="signature-name">${escapeHtml(item.approved_by_names || '_________________')}</div>
+                                    <div class="signature-title">Approved By</div>
+                                </div>
+                                <div class="signature-box">
+                                    <div class="signature-line"></div>
+                                    <div class="signature-name">${escapeHtml(item.verified_by_names || '_________________')}</div>
+                                    <div class="signature-title">Verified By</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <script>
+                            window.onload = function() {
+                                setTimeout(function() {
+                                    window.print();
+                                    setTimeout(function() {
+                                        window.close();
+                                    }, 500);
+                                }, 300);
+                            }
+                        <\/script>
+                    </body>
+                    </html>
+                `);
+                printWindow.document.close();
+            } else {
+                alert('Error loading item details for report: ' + (data.message || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred while generating the report: ' + error.message);
+        });
+}
 // Store equipment sub types data for JavaScript
 var equipmentSubTypes = <?php echo json_encode($equipment_sub_type_options); ?>;
 
@@ -2558,7 +2792,8 @@ function generateBarcodeForEdit() {
     });
 }
 
-// View Item
+// viewitem
+
 function viewItem(id) {
     let modal = document.getElementById('viewModal');
     let content = document.getElementById('viewModalContent');
@@ -2736,6 +2971,16 @@ function viewItem(id) {
                             <div class="detail-value">${escapeHtml(item.remarks || 'No remarks')}</div>
                         </div>
                     </div>
+                    
+                    <!-- PRINT REPORT BUTTON - ADDED HERE -->
+                    <div class="detail-section no-print">
+                        <div class="detail-header"><i class="fas fa-print"></i> Report</div>
+                        <div class="detail-content" style="text-align: center;">
+                            <button class="btn print-btn" onclick="printPhysicalCountReport(${item.id})">
+                                <i class="fas fa-print"></i> Print Physical Count Report
+                            </button>
+                        </div>
+                    </div>
                 `;
                 content.innerHTML = html;
             } else {
@@ -2748,43 +2993,70 @@ function viewItem(id) {
         });
 }
 
+
+ 
 // View all barcodes for a multiple set
 function viewAllBarcodes(propertyNo, itemName) {
-    document.getElementById('allBarcodesModalTitle').textContent = 'All Barcodes - ' + escapeHtml(itemName);
+    document.getElementById('allBarcodesModalTitle').innerHTML = 'Barcodes - ' + escapeHtml(itemName);
     document.getElementById('allBarcodesContent').innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i><br>Loading barcodes...</div>';
     document.getElementById('viewAllBarcodesModal').style.display = 'block';
     
+    // Use the property number as-is - the server will handle the pattern extraction
     let timestamp = new Date().getTime();
     let url = '?get_multiple_items=1&property_no=' + encodeURIComponent(propertyNo) + '&t=' + timestamp;
+    
+    console.log('Fetching barcodes for property:', propertyNo);
     
     fetch(url)
         .then(response => response.json())
         .then(data => {
+            console.log('Response:', data);
+            
             if (data.error) {
                 document.getElementById('allBarcodesContent').innerHTML = '<div class="alert alert-danger">Error: ' + escapeHtml(data.error) + '</div>';
                 return;
             }
             
-            if (data.success && data.items.length > 0) {
+            if (data.success && data.items && data.items.length > 0) {
                 let html = `
-                    <p><strong>Found ${data.count} items in this set:</strong></p>
-                    <div class="all-barcodes-grid">
+                    <div style="background: #e8f4f8; padding: 12px; border-radius: 8px; margin-bottom: 20px;">
+                        <i class="fas fa-info-circle" style="color: #2196F3;"></i>
+                        <strong>Base Pattern:</strong> ${escapeHtml(data.base_pattern || propertyNo)}<br>
+                        <strong>Total Items in this set:</strong> ${data.count}
+                    </div>
+                    <div class="all-barcodes-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px;">
                 `;
                 
                 data.items.forEach((item, index) => {
+                    // Use the stored barcode_data, or fallback to property_no
+                    let barcodeValue = item.barcode_data || item.property_no;
+                    
                     html += `
-                        <div class="barcode-item-card">
-                            <div class="item-property">Item ${index + 1}: ${escapeHtml(item.property_no)}</div>
-                            <div class="barcode-image" style="text-align: center; margin: 10px 0;">
-                                <img src="generate_barcodeppe.php?code=${encodeURIComponent(item.barcode_data)}&width=250&height=60" 
-                                     alt="Barcode" style="max-width: 100%; height: auto; border: 1px solid #ddd; padding: 5px; border-radius: 4px;">
+                        <div class="barcode-item-card" style="background: white; border: 1px solid #e0e0e0; border-radius: 12px; padding: 15px; text-align: center; transition: all 0.2s;">
+                            <div style="font-size: 12px; color: #6B8CFF; margin-bottom: 8px;">Item #${index + 1}</div>
+                            <div class="item-property" style="font-weight: bold; font-size: 13px; background: #f5f5f5; padding: 8px; border-radius: 6px; margin-bottom: 10px; word-break: break-all;">
+                                ${escapeHtml(item.property_no)}
                             </div>
-                            <div class="barcode-value" style="font-family: monospace; font-size: 13px; padding: 10px; background: var(--light); border-radius: 5px; margin: 10px 0;">${escapeHtml(item.barcode_data)}</div>
-                            <div class="item-actions">
-                                <button class="btn-xs" onclick="showBarcodeModal('${item.barcode_data}', '${escapeHtml(item.article_name)} - ${escapeHtml(item.property_no)}')">
+                            <div class="barcode-image" style="text-align: center; margin: 10px 0; min-height: 80px;">
+                                <img src="generate_barcodeppe.php?code=${encodeURIComponent(barcodeValue)}&width=250&height=60" 
+                                     alt="Barcode" 
+                                     style="max-width: 100%; height: auto; border: 1px solid #ddd; padding: 5px; border-radius: 4px; background: white;"
+                                     onerror="this.style.display='none'; this.parentNode.innerHTML += '<div style=\\'font-family: monospace; padding: 10px; background: #f5f5f5; border-radius: 4px; font-size: 11px; word-break: break-all;\\'>' + escapeHtml('${barcodeValue}') + '</div>';">
+                            </div>
+                            <div class="barcode-value" style="font-family: monospace; font-size: 11px; padding: 6px; background: #f9f9f9; border-radius: 4px; margin: 8px 0; word-break: break-all;">
+                                ${escapeHtml(barcodeValue)}
+                            </div>
+                            <div class="item-details" style="font-size: 11px; color: #666; margin-top: 8px; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap;">
+                                <span><i class="fas fa-box"></i> Qty: ${item.quantity || 1} ${escapeHtml(item.uom || 'pcs')}</span>
+                                ${item.unit_value ? `<span><i class="fas fa-tag"></i> ₱${parseFloat(item.unit_value).toFixed(2)}</span>` : ''}
+                            </div>
+                            <div class="item-actions" style="margin-top: 12px; display: flex; gap: 8px; justify-content: center;">
+                                <button class="btn-xs" style="padding: 5px 10px; background: #6B8CFF; color: white; border: none; border-radius: 4px; cursor: pointer;" 
+                                        onclick="showBarcodeModal('${escapeHtml(barcodeValue)}', '${escapeHtml(item.article_name)} - ${escapeHtml(item.property_no)}')">
                                     <i class="fas fa-search"></i> View
                                 </button>
-                                <button class="btn-xs" onclick="printBarcode('${item.barcode_data}', '${escapeHtml(item.article_name)} - ${escapeHtml(item.property_no)}')">
+                                <button class="btn-xs" style="padding: 5px 10px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;" 
+                                        onclick="printBarcode('${escapeHtml(barcodeValue)}', '${escapeHtml(item.article_name)} - ${escapeHtml(item.property_no)}')">
                                     <i class="fas fa-print"></i> Print
                                 </button>
                             </div>
@@ -2795,7 +3067,20 @@ function viewAllBarcodes(propertyNo, itemName) {
                 html += '</div>';
                 document.getElementById('allBarcodesContent').innerHTML = html;
             } else {
-                document.getElementById('allBarcodesContent').innerHTML = '<div class="alert alert-warning">No related items found.</div>';
+                // Try a different approach - maybe it's a single item
+                document.getElementById('allBarcodesContent').innerHTML = `
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle"></i> No related items found for property: ${escapeHtml(propertyNo)}
+                        <br><br>
+                        <small>Debug info:</small><br>
+                        <small>- Base pattern used: ${escapeHtml(data.base_pattern || propertyNo)}</small><br>
+                        <small>- This is likely a single item, not part of a multiple set.</small>
+                        <br><br>
+                        <button class="btn btn-primary" onclick="showBarcodeModal('${escapeHtml(propertyNo)}', '${escapeHtml(itemName)}')">
+                            <i class="fas fa-barcode"></i> View Single Barcode
+                        </button>
+                    </div>
+                `;
             }
         })
         .catch(error => {
@@ -3086,3 +3371,4 @@ function issueItem(id) {
 include INCLUDE_PATH . '/footer.php';
 ob_end_flush();
 ?>
+

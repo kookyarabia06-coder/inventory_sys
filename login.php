@@ -25,47 +25,37 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 
 // ============================================
-// FIXED AUDIT TRAIL FUNCTION - MATCHES YOUR TABLE STRUCTURE
+// FIXED AUDIT TRAIL FUNCTION
 // ============================================
 function logAuditEvent($conn, $user_id, $action, $category, $description, $details = null, $table_name = null, $record_id = null, $old_value = null, $new_value = null) {
     $ip = $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
     $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown';
     
-    // For user_id = 0 or null, use NULL in database
-    $user_id_param = ($user_id > 0) ? $user_id : null;
+    // For user_id = 0 or null, use 0
+    $user_id_param = ($user_id > 0) ? $user_id : 0;
     
-    // Prepare the statement with all columns
-    $stmt = $conn->prepare("INSERT INTO audit_trail (user_id, action, action_category, description, ip_address, user_agent, details, table_name, record_id, old_value, new_value, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())");
+    // Use direct INSERT for reliability
+    $direct_sql = "INSERT INTO audit_trail (user_id, action, action_category, description, ip_address, user_agent, created_at) 
+                   VALUES ($user_id_param, '$action', '$category', '$description', '$ip', '$user_agent', NOW())";
     
-    if (!$stmt) {
-        error_log("Audit trail prepare failed: " . $conn->error);
-        // Fallback to simple insert
-        $simple_query = "INSERT INTO audit_trail (user_id, action, action_category, description, ip_address, user_agent, created_at) VALUES ($user_id_param, '$action', '$category', '$description', '$ip', '$user_agent', NOW())";
-        return $conn->query($simple_query);
+    $result = $conn->query($direct_sql);
+    
+    if ($result) {
+        error_log("AUDIT: $action for user_id $user_id_param - SUCCESS");
+        return true;
+    } else {
+        error_log("AUDIT FAILED: " . $conn->error);
+        
+        // Try prepared statement as fallback
+        $stmt = $conn->prepare("INSERT INTO audit_trail (user_id, action, action_category, description, ip_address, user_agent, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())");
+        if ($stmt) {
+            $stmt->bind_param("isssss", $user_id_param, $action, $category, $description, $ip, $user_agent);
+            $result2 = $stmt->execute();
+            $stmt->close();
+            return $result2;
+        }
+        return false;
     }
-    
-    $stmt->bind_param("isssssssiss", 
-        $user_id_param, 
-        $action, 
-        $category, 
-        $description, 
-        $ip, 
-        $user_agent, 
-        $details, 
-        $table_name, 
-        $record_id, 
-        $old_value, 
-        $new_value
-    );
-    
-    $result = $stmt->execute();
-    
-    if (!$result) {
-        error_log("Audit trail insert failed: " . $stmt->error);
-    }
-    
-    $stmt->close();
-    return $result;
 }
 
 // ============================================
@@ -108,39 +98,30 @@ if (isset($_POST['forgot_password'])) {
         $result = $check->get_result();
         
         if ($row = $result->fetch_assoc()) {
-            // Generate 6-digit OTP
             $otp = sprintf("%06d", mt_rand(1, 999999));
             $expiry = date('Y-m-d H:i:s', strtotime('+10 minutes'));
             
-            // Store OTP in database
             $update = $conn->prepare("UPDATE users SET reset_otp = ?, reset_otp_expiry = ? WHERE id = ?");
             $update->bind_param("ssi", $otp, $expiry, $row['id']);
             $update->execute();
             $update->close();
             
-            // Send OTP email
             $email_sent = sendForgotPasswordOTP($reset_email, $otp, $row['username']);
             
             if ($email_sent) {
                 $_SESSION['reset_success'] = "OTP sent to " . htmlspecialchars($reset_email) . "! Valid for 10 minutes.";
                 $_SESSION['reset_email'] = $reset_email;
-                
-                // LOG: OTP Sent Successfully
                 logAuditEvent($conn, $row['id'], 'PASSWORD_RESET_OTP_SENT', 'SECURITY', 
-                    "Password reset OTP sent successfully to email: $reset_email", 
-                    "User: {$row['username']} | IP: $ip_address", 'users', $row['id']);
+                    "Password reset OTP sent to email: $reset_email", 
+                    "User: {$row['username']}", 'users', $row['id']);
             } else {
                 $_SESSION['reset_error'] = "Failed to send OTP email. Please check SMTP settings.";
-                
-                // LOG: OTP Send Failed
                 logAuditEvent($conn, $row['id'], 'PASSWORD_RESET_OTP_FAILED', 'SECURITY', 
                     "Failed to send password reset OTP to email: $reset_email", 
-                    "User: {$row['username']} | SMTP error | IP: $ip_address", 'users', $row['id']);
+                    "User: {$row['username']}", 'users', $row['id']);
             }
         } else {
             $_SESSION['reset_error'] = "Email address not found in our records.";
-            
-            // LOG: Email Not Found
             logAuditEvent($conn, 0, 'PASSWORD_RESET_EMAIL_NOT_FOUND', 'SECURITY', 
                 "Password reset attempted with non-existent email: $reset_email", 
                 "IP: $ip_address");
@@ -148,8 +129,6 @@ if (isset($_POST['forgot_password'])) {
         $check->close();
     } else {
         $_SESSION['reset_error'] = "Please enter your email address.";
-        
-        // LOG: Empty Email Attempt
         logAuditEvent($conn, 0, 'PASSWORD_RESET_EMPTY_EMAIL', 'SECURITY', 
             "Password reset attempted with empty email field", 
             "IP: $ip_address");
@@ -180,28 +159,19 @@ if (isset($_POST['verify_otp'])) {
     
     if (empty($otp_code) || empty($new_password) || empty($confirm_password)) {
         $_SESSION['reset_error_msg'] = "Please fill in all fields.";
-        
-        // LOG: Incomplete Form Submission
         logAuditEvent($conn, 0, 'PASSWORD_RESET_INCOMPLETE', 'SECURITY', 
             "Password reset form submitted with missing fields", 
             "Email: $reset_email | IP: $ip_address");
-            
     } elseif ($new_password !== $confirm_password) {
         $_SESSION['reset_error_msg'] = "Passwords do not match.";
-        
-        // LOG: Password Mismatch
         logAuditEvent($conn, 0, 'PASSWORD_RESET_MISMATCH', 'SECURITY', 
             "Password reset attempted with mismatched passwords", 
             "Email: $reset_email | IP: $ip_address");
-            
     } elseif (strlen($new_password) < 6) {
         $_SESSION['reset_error_msg'] = "Password must be at least 6 characters long.";
-        
-        // LOG: Weak Password Attempt
         logAuditEvent($conn, 0, 'PASSWORD_RESET_WEAK_PASSWORD', 'SECURITY', 
-            "Password reset attempted with weak password (less than 6 chars)", 
+            "Password reset attempted with weak password", 
             "Email: $reset_email | IP: $ip_address");
-            
     } else {
         $check = $conn->prepare("SELECT id, username FROM users WHERE email = ? AND reset_otp = ? AND reset_otp_expiry > NOW()");
         $check->bind_param("ss", $reset_email, $otp_code);
@@ -216,7 +186,6 @@ if (isset($_POST['verify_otp'])) {
             $update->close();
             $_SESSION['reset_success_msg'] = "Password has been reset successfully! You can now login.";
             
-            // LOG: Password Reset Success
             logAuditEvent($conn, $row['id'], 'PASSWORD_RESET_SUCCESS', 'SECURITY', 
                 "Password reset successfully using OTP", 
                 "User: {$row['username']} | Email: $reset_email | IP: $ip_address", 'users', $row['id']);
@@ -224,11 +193,9 @@ if (isset($_POST['verify_otp'])) {
             unset($_SESSION['reset_email']);
         } else {
             $_SESSION['reset_error_msg'] = "Invalid or expired OTP. Please request a new one.";
-            
-            // LOG: Invalid OTP Attempt
             logAuditEvent($conn, 0, 'PASSWORD_RESET_INVALID_OTP', 'SECURITY', 
                 "Invalid or expired OTP used for password reset", 
-                "Email: $reset_email | OTP entered: $otp_code | IP: $ip_address");
+                "Email: $reset_email | IP: $ip_address");
         }
         $check->close();
     }
@@ -238,7 +205,7 @@ if (isset($_POST['verify_otp'])) {
 }
 
 // ============================================
-// HANDLE LOGIN
+// HANDLE LOGIN - MAIN LOGIC
 // ============================================
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['forgot_password']) && !isset($_POST['verify_otp'])) {
     $username = trim($_POST['username']);
@@ -253,114 +220,98 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['forgot_password']) &&
     $result = $stmt->get_result();
     
     if ($row = $result->fetch_assoc()) {
-        
-        // ============================================
-        // LOCK CHECK WITH AUTO-UNLOCK
-        // ============================================
-        $is_locked = false;
-        $lock_message = '';
-        $current_time = time();
-        
-        if (!empty($row['locked_until']) && $row['locked_until'] != '0000-00-00 00:00:00') {
-            $lock_timestamp = strtotime($row['locked_until']);
-            
-            if ($lock_timestamp > $current_time) {
-                $is_locked = true;
-                $remaining_seconds = $lock_timestamp - $current_time;
-                $remaining_minutes = ceil($remaining_seconds / 60);
-                $lock_message = "⏰ Account locked. Please try again after {$remaining_minutes} minute(s).";
-                
-                // LOG: Failed Login on Locked Account
-                logAuditEvent($conn, $row['id'], 'LOGIN_ATTEMPT_LOCKED', 'SECURITY', 
-                    "Login attempt on locked account: $username", 
-                    "Locked until: {$row['locked_until']} | IP: $ip_address", 'users', $row['id']);
-            } else {
-                // Lock expired - automatically unlock
-                $conn->query("UPDATE users SET login_attempts = 0, locked_until = NULL WHERE id = {$row['id']}");
-                
-                // LOG: Account Auto-Unlocked
-                logAuditEvent($conn, $row['id'], 'ACCOUNT_AUTO_UNLOCKED', 'SECURITY', 
-                    "Account automatically unlocked after lock period expired", 
-                    "Locked until was: {$row['locked_until']} | IP: $ip_address", 'users', $row['id']);
-                    
-                $row['locked_until'] = null;
-                $row['login_attempts'] = 0;
-            }
-        }
-        
-        if ($is_locked) {
-            $error = $lock_message;
-        } elseif (password_verify($password, $row['password'])) {
-            // ============================================
-            // LOGIN SUCCESS
-            // ============================================
-            $conn->query("UPDATE users SET login_attempts = 0, locked_until = NULL, last_login = NOW() WHERE id = {$row['id']}");
-            
-            $_SESSION['user_id'] = $row['id'];
-            $_SESSION['role'] = $row['role'];
-            $_SESSION['username'] = $row['username'];
-            $_SESSION['user_name'] = $row['firstname'] . ' ' . $row['lastname'];
-            $_SESSION['user_email'] = $row['email'];
-            
-            if ($remember) {
-                setcookie('remember_username', $username, time() + (86400 * 30), "/", "", false, true);
-            } else {
-                setcookie('remember_username', '', time() - 3600, "/");
-            }
-            
-            // LOG: Successful Login - THIS IS THE CRITICAL LOG
-            $log_result = logAuditEvent($conn, $row['id'], 'LOGIN_SUCCESS', 'AUTHENTICATION', 
-                "User logged in successfully: $username", 
-                "Role: {$row['role']} | Remember Me: " . ($remember ? 'Yes' : 'No') . " | IP: $ip_address", 
-                'users', $row['id']);
-            
-            // Debug: Check if log was inserted
-            if (!$log_result) {
-                error_log("Failed to insert login audit for user: $username");
-            }
-            
-            $redirect = SITE_URL;
-            switch ($row['role']) {
-                case 'super_admin': $redirect .= '/superadmin/dashboard.php'; break;
-                case 'admin': $redirect .= '/admin/dashboard.php'; break;
-                case 'supply': $redirect .= '/supply/dashboard.php'; break;
-                default: $redirect .= '/user/dashboard.php';
-            }
-            header('Location: ' . $redirect);
-            exit();
+        // Check if user status is active
+        if ($row['status'] !== 'active') {
+            $error = '❌ Your account is inactive. Please contact administrator.';
+            logAuditEvent($conn, $row['id'], 'LOGIN_INACTIVE_ACCOUNT', 'AUTHENTICATION', 
+                "Login attempt on inactive account: $username", 
+                "Status: {$row['status']} | IP: $ip_address", 'users', $row['id']);
         } else {
-            // ============================================
-            // LOGIN FAILED - INCREMENT ATTEMPTS
-            // ============================================
-            $attempts = (int)($row['login_attempts'] ?? 0) + 1;
-            $remaining = 5 - $attempts;
+            // Check lock status
+            $is_locked = false;
+            $lock_message = '';
             
-            // LOG: Failed Login Attempt
-            logAuditEvent($conn, $row['id'], 'LOGIN_FAILED', 'AUTHENTICATION', 
-                "Failed login attempt for username: $username", 
-                "Attempt $attempts of 5 | Remaining attempts: $remaining | IP: $ip_address", 'users', $row['id']);
-            
-            if ($attempts >= 5) {
-                $lock_until = date('Y-m-d H:i:s', time() + (15 * 60));
-                $conn->query("UPDATE users SET login_attempts = $attempts, locked_until = '$lock_until' WHERE id = {$row['id']}");
-                $error = "❌ Too many failed attempts. Account locked for 15 minutes.";
+            if (!empty($row['locked_until']) && $row['locked_until'] != '0000-00-00 00:00:00') {
+                $lock_timestamp = strtotime($row['locked_until']);
                 
-                // LOG: Account Locked
-                logAuditEvent($conn, $row['id'], 'ACCOUNT_LOCKED', 'SECURITY', 
-                    "Account locked after $attempts failed login attempts", 
-                    "Locked until: $lock_until | User: $username | IP: $ip_address", 'users', $row['id']);
+                if ($lock_timestamp > time()) {
+                    $is_locked = true;
+                    $remaining_minutes = ceil(($lock_timestamp - time()) / 60);
+                    $lock_message = "⏰ Account locked. Please try again after {$remaining_minutes} minute(s).";
+                    
+                    logAuditEvent($conn, $row['id'], 'LOGIN_ATTEMPT_LOCKED', 'SECURITY', 
+                        "Login attempt on locked account: $username", 
+                        "Locked until: {$row['locked_until']} | IP: $ip_address", 'users', $row['id']);
+                } else {
+                    $conn->query("UPDATE users SET login_attempts = 0, locked_until = NULL WHERE id = {$row['id']}");
+                    logAuditEvent($conn, $row['id'], 'ACCOUNT_AUTO_UNLOCKED', 'SECURITY', 
+                        "Account automatically unlocked after lock period expired", 
+                        "User: {$row['username']} | IP: $ip_address", 'users', $row['id']);
+                    $row['locked_until'] = null;
+                    $row['login_attempts'] = 0;
+                }
+            }
+            
+            if ($is_locked) {
+                $error = $lock_message;
+            } elseif (password_verify($password, $row['password'])) {
+                // ============================================
+                // LOGIN SUCCESS - AUDIT LOGGING
+                // ============================================
+                $conn->query("UPDATE users SET login_attempts = 0, locked_until = NULL, last_login = NOW() WHERE id = {$row['id']}");
+                
+                $_SESSION['user_id'] = $row['id'];
+                $_SESSION['role'] = $row['role'];
+                $_SESSION['username'] = $row['username'];
+                $_SESSION['user_name'] = $row['firstname'] . ' ' . $row['lastname'];
+                $_SESSION['user_email'] = $row['email'];
+                
+                if ($remember) {
+                    setcookie('remember_username', $username, time() + (86400 * 30), "/", "", false, true);
+                } else {
+                    setcookie('remember_username', '', time() - 3600, "/");
+                }
+                
+                // IMPORTANT: Log successful login
+                logAuditEvent($conn, $row['id'], 'LOGIN_SUCCESS', 'AUTHENTICATION', 
+                    "User logged in successfully: $username", 
+                    "Role: {$row['role']} | Remember Me: " . ($remember ? 'Yes' : 'No') . " | IP: $ip_address", 
+                    'users', $row['id']);
+                
+                $redirect = SITE_URL;
+                switch ($row['role']) {
+                    case 'super_admin': $redirect .= '/superadmin/dashboard.php'; break;
+                    case 'admin': $redirect .= '/admin/dashboard.php'; break;
+                    case 'supply': $redirect .= '/supply/dashboard.php'; break;
+                    default: $redirect .= '/user/dashboard.php';
+                }
+                header('Location: ' . $redirect);
+                exit();
             } else {
-                $conn->query("UPDATE users SET login_attempts = $attempts WHERE id = {$row['id']}");
-                $error = "❌ Invalid password. {$remaining} attempt(s) remaining.";
+                // Failed login
+                $attempts = (int)($row['login_attempts'] ?? 0) + 1;
+                $remaining = 5 - $attempts;
+                
+                logAuditEvent($conn, $row['id'], 'LOGIN_FAILED', 'AUTHENTICATION', 
+                    "Failed login attempt for username: $username", 
+                    "Attempt $attempts of 5 | Remaining attempts: $remaining | IP: $ip_address", 'users', $row['id']);
+                
+                if ($attempts >= 5) {
+                    $lock_until = date('Y-m-d H:i:s', time() + (15 * 60));
+                    $conn->query("UPDATE users SET login_attempts = $attempts, locked_until = '$lock_until' WHERE id = {$row['id']}");
+                    $error = "❌ Too many failed attempts. Account locked for 15 minutes.";
+                    
+                    logAuditEvent($conn, $row['id'], 'ACCOUNT_LOCKED', 'SECURITY', 
+                        "Account locked after $attempts failed login attempts", 
+                        "Locked until: $lock_until | User: $username | IP: $ip_address", 'users', $row['id']);
+                } else {
+                    $conn->query("UPDATE users SET login_attempts = $attempts WHERE id = {$row['id']}");
+                    $error = "❌ Invalid password. {$remaining} attempt(s) remaining.";
+                }
             }
         }
     } else {
-        // ============================================
-        // USER NOT FOUND
-        // ============================================
         $error = '❌ Username or email not found.';
-        
-        // LOG: User Not Found Attempt
         logAuditEvent($conn, 0, 'LOGIN_USER_NOT_FOUND', 'AUTHENTICATION', 
             "Failed login attempt - username/email not found: $username", 
             "IP: $ip_address | User Agent: $user_agent");
@@ -368,33 +319,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !isset($_POST['forgot_password']) &&
     $stmt->close();
 }
 
-// ============================================
-// CHECK FOR EXPIRED LOCKS ON EVERY PAGE LOAD
-// ============================================
-$expired_locks = $conn->query("SELECT id, username, locked_until FROM users WHERE locked_until IS NOT NULL AND locked_until < NOW()");
-if ($expired_locks && $expired_locks->num_rows > 0) {
-    while ($locked_user = $expired_locks->fetch_assoc()) {
-        // LOG: Lock Expired (will be cleared by the query below)
-        logAuditEvent($conn, $locked_user['id'], 'LOCK_EXPIRED', 'SECURITY', 
-            "Account lock expired automatically", 
-            "User: {$locked_user['username']} | Locked until was: {$locked_user['locked_until']}", 'users', $locked_user['id']);
-    }
-}
+// Check for expired locks
 $conn->query("UPDATE users SET login_attempts = 0, locked_until = NULL WHERE locked_until IS NOT NULL AND locked_until < NOW()");
 
 $remembered_username = isset($_COOKIE['remember_username']) ? $_COOKIE['remember_username'] : '';
-
-// Debug: Check if audit trail has any records
-$audit_check = $conn->query("SELECT COUNT(*) as total FROM audit_trail");
-if ($audit_check) {
-    $total = $audit_check->fetch_assoc()['total'];
-    error_log("Audit trail total records: $total");
-}
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <!-- Keep your existing head section - unchanged -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - IMS | Rodriguez Medical Center</title>
@@ -403,9 +335,7 @@ if ($audit_check) {
     <link rel="shortcut icon" href="<?php echo SITE_URL; ?>/assets/icons/armmc.png">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- Keep your existing styles - they are fine -->
     <style>
-        /* Keep all your existing styles - they are the same */
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
         body { background: linear-gradient(135deg, #2C3E50 0%, #34495E 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
         .login-container { background: #FFFFFF; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); width: 450px; max-width: 100%; padding: 35px; animation: slideIn 0.5s ease; border: 1px solid #E0E0E0; }
@@ -476,37 +406,11 @@ if ($audit_check) {
         .modal-divider::before, .modal-divider::after { content: ""; flex: 1; height: 1px; background: #E0E0E0; }
         .modal-divider span { padding: 0 10px; }
         
-        .modal-password-field {
-            position: relative;
-            margin-bottom: 15px;
-        }
-        .modal-password-field input {
-            width: 100%;
-            padding: 12px 45px 12px 15px;
-            border: 1px solid #E0E0E0;
-            border-radius: 10px;
-            font-size: 14px;
-            transition: all 0.3s;
-            box-sizing: border-box;
-        }
-        .modal-password-field input:focus {
-            outline: none;
-            border-color: #6B8CFF;
-        }
-        .modal-password-field .toggle-password {
-            position: absolute;
-            right: 12px;
-            top: 50%;
-            transform: translateY(-50%);
-            color: #9E9E9E;
-            cursor: pointer;
-            transition: color 0.3s;
-            font-size: 16px;
-            z-index: 2;
-        }
-        .modal-password-field .toggle-password:hover {
-            color: #6B8CFF;
-        }
+        .modal-password-field { position: relative; margin-bottom: 15px; }
+        .modal-password-field input { width: 100%; padding: 12px 45px 12px 15px; border: 1px solid #E0E0E0; border-radius: 10px; font-size: 14px; transition: all 0.3s; box-sizing: border-box; }
+        .modal-password-field input:focus { outline: none; border-color: #6B8CFF; }
+        .modal-password-field .toggle-password { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: #9E9E9E; cursor: pointer; transition: color 0.3s; font-size: 16px; z-index: 2; }
+        .modal-password-field .toggle-password:hover { color: #6B8CFF; }
     </style>
 </head>
 <body>
@@ -587,16 +491,10 @@ if ($audit_check) {
             </form>
             <div class="modal-divider"><span>or</span></div>
             <button class="modal-btn modal-btn-secondary" onclick="showResetWithOTPModal()">I have an OTP</button>
-            <?php if ($reset_success): ?>
-                <div class="puzzle-message success" style="margin-top: 15px;"><?php echo $reset_success; ?></div>
-            <?php endif; ?>
-            <?php if ($reset_error): ?>
-                <div class="puzzle-message error" style="margin-top: 15px;"><?php echo $reset_error; ?></div>
-            <?php endif; ?>
         </div>
     </div>
     
-    <!-- Reset OTP Modal with Show Password Toggle -->
+    <!-- Reset OTP Modal -->
     <div id="resetOTPModal" class="modal-overlay">
         <div class="modal-content">
             <span class="modal-close-btn" onclick="closeResetOTPModal()">&times;</span>
@@ -619,12 +517,6 @@ if ($audit_check) {
                 <input type="hidden" name="verify_otp" value="1">
                 <button type="submit" class="modal-btn">Reset Password</button>
             </form>
-            <?php if ($reset_success_msg): ?>
-                <div class="puzzle-message success" style="margin-top: 15px;"><?php echo $reset_success_msg; ?></div>
-            <?php endif; ?>
-            <?php if ($reset_error_msg): ?>
-                <div class="puzzle-message error" style="margin-top: 15px;"><?php echo $reset_error_msg; ?></div>
-            <?php endif; ?>
         </div>
     </div>
     
@@ -654,12 +546,10 @@ if ($audit_check) {
                 pwd.type = 'text'; 
                 icon.classList.remove('fa-eye'); 
                 icon.classList.add('fa-eye-slash'); 
-                icon.title = 'Hide Password';
             } else { 
                 pwd.type = 'password'; 
                 icon.classList.remove('fa-eye-slash'); 
                 icon.classList.add('fa-eye'); 
-                icon.title = 'Show Password';
             }
         }
         
@@ -684,6 +574,17 @@ if ($audit_check) {
             let modal = document.getElementById(modalId);
             if (modal) modal.addEventListener('click', function(e) { if (e.target === this) this.classList.remove('active'); });
         });
+        
+        // Show modal if there are messages
+        <?php if ($reset_success_msg): ?>
+        showCustomModal('fa-check-circle', 'Password Reset', '<?php echo addslashes($reset_success_msg); ?>', 'success');
+        <?php elseif ($reset_error_msg): ?>
+        showCustomModal('fa-exclamation-triangle', 'Error', '<?php echo addslashes($reset_error_msg); ?>', 'error');
+        <?php elseif ($reset_success): ?>
+        showCustomModal('fa-envelope', 'OTP Sent', '<?php echo addslashes($reset_success); ?>', 'success');
+        <?php elseif ($reset_error): ?>
+        showCustomModal('fa-exclamation-triangle', 'Error', '<?php echo addslashes($reset_error); ?>', 'error');
+        <?php endif; ?>
     </script>
 </body>
 </html>

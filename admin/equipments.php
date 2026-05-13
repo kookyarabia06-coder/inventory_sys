@@ -144,17 +144,10 @@ if (isset($_GET['delete'])) {
     $id = (int)$_GET['delete'];
     
     if ($type == 'type') {
-        // Check if type has sub-types
-        $stmt = $pdo->prepare("SELECT COUNT(*) FROM equipment_sub_type WHERE type_of_equipment_id = ?");
+        $stmt = $pdo->prepare("DELETE FROM type_of_equipment WHERE id = ?");
         $stmt->execute([$id]);
-        if ($stmt->fetchColumn() > 0) {
-            $_SESSION['error'] = "Cannot delete: This equipment type has sub-types. Delete sub-types first.";
-        } else {
-            $stmt = $pdo->prepare("DELETE FROM type_of_equipment WHERE id = ?");
-            $stmt->execute([$id]);
-            logActivity('Delete Equipment Type', $id, "Deleted equipment type ID: $id");
-            $_SESSION['success'] = "Equipment type deleted successfully";
-        }
+        logActivity('Delete Equipment Type', $id, "Deleted equipment type ID: $id");
+        $_SESSION['success'] = "Equipment type deleted successfully";
     }
     
     elseif ($type == 'subtype') {
@@ -183,245 +176,6 @@ $page_description = 'Manage equipment types and sub-types';
 include INCLUDE_PATH . '/header.php';
 ?>
 
-<!-- Display Success/Error Messages -->
-<?php if (isset($_SESSION['success'])): ?>
-    <div class="alert alert-success">
-        <i class="fas fa-check-circle"></i>
-        <?php 
-        echo $_SESSION['success'];
-        unset($_SESSION['success']);
-        ?>
-    </div>
-<?php endif; ?>
-
-<?php if (isset($_SESSION['error'])): ?>
-    <div class="alert alert-danger">
-        <i class="fas fa-exclamation-circle"></i>
-        <?php 
-        echo $_SESSION['error'];
-        unset($_SESSION['error']);
-        ?>
-    </div>
-<?php endif; ?>
-
-<div class="dashboard-cards">
-    <div class="card">
-        <div class="card-icon">
-            <i class="fas fa-cubes"></i>
-        </div>
-        <h3>Equipment Types</h3>
-        <div class="card-value"><?php echo count($types); ?></div>
-        <div class="card-label">Total Categories</div>
-    </div>
-    
-    <div class="card">
-        <div class="card-icon">
-            <i class="fas fa-microchip"></i>
-        </div>
-        <h3>Equipment Sub-Types</h3>
-        <div class="card-value"><?php echo count($subtypes); ?></div>
-        <div class="card-label">Total Sub-Categories</div>
-    </div>
-    
-    <div class="card">
-        <div class="card-icon">
-            <i class="fas fa-tag"></i>
-        </div>
-        <h3>Generated Codes</h3>
-        <div class="card-value"><?php echo count($types) + count($subtypes); ?></div>
-        <div class="card-label">Total Equipment Codes</div>
-    </div>
-</div>
-
-<!-- Equipment Types Section -->
-<div class="table-container">
-    <div class="table-header">
-        <h2><i class="fas fa-cubes"></i> Equipment Types</h2>
-        <button class="btn btn-primary" onclick="openTypeModal()">
-            <i class="fas fa-plus"></i> Add Equipment Type
-        </button>
-    </div>
-    
-    <div style="overflow-x: auto;">
-        <table style="min-width: 600px;">
-            <thead>
-                <tr>
-                    <th>Code</th>
-                    <th>Name</th>
-                    <th>Sub-Types Count</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php if (!empty($types)): ?>
-                    <?php foreach ($types as $type): 
-                        // Count sub-types for this type
-                        $stmt = $pdo->prepare("SELECT COUNT(*) FROM equipment_sub_type WHERE type_of_equipment_id = ?");
-                        $stmt->execute([$type['id']]);
-                        $subtype_count = $stmt->fetchColumn();
-                    ?>
-                    <tr>
-                        <td><span class="badge-warning"><?php echo htmlspecialchars($type['code']); ?></span></td>
-                        <td><strong><?php echo htmlspecialchars($type['name']); ?></strong></td>
-                        <td><?php echo $subtype_count; ?> sub-type(s)</td>
-                        <td>
-                            <div class="action-buttons">
-                                <button class="action-btn edit" onclick="editType(<?php echo $type['id']; ?>)" title="Edit">
-                                    <i class="fas fa-edit"></i>
-                                </button>
-                                <a href="?delete=<?php echo $type['id']; ?>&type=type" 
-                                   class="action-btn delete" 
-                                   onclick="return confirm('Are you sure you want to delete this equipment type? This will also delete all related sub-types.')"
-                                   title="Delete">
-                                    <i class="fas fa-trash"></i>
-                                </a>
-                            </div>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
-                <?php else: ?>
-                    <tr>
-                        <td colspan="4" class="text-center">
-                            <i class="fas fa-cubes" style="font-size: 48px; color: #ccc; margin-bottom: 10px;"></i>
-                            <br>
-                            No equipment types found
-                            <br>
-                            <button class="btn btn-primary mt-3" onclick="openTypeModal()">
-                                <i class="fas fa-plus"></i> Add Your First Equipment Type
-                            </button>
-                        </td>
-                    </tr>
-                <?php endif; ?>
-            </tbody>
-        </table>
-    </div>
-</div>
-
-<!-- Equipment Sub-Types Section -->
-<div class="table-container">
-    <div class="table-header">
-        <h2><i class="fas fa-microchip"></i> Equipment Sub-Types</h2>
-        <button class="btn btn-primary" onclick="openSubTypeModal()">
-            <i class="fas fa-plus"></i> Add Sub-Type
-        </button>
-    </div>
-    
-    <div style="overflow-x: auto;">
-        <table style="min-width: 800px;">
-            <thead>
-                <tr>
-                    <th>Code</th>
-                    <th>Parent Type</th>
-                    <th>Name</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php if (!empty($subtypes)): ?>
-                    <?php foreach ($subtypes as $subtype): ?>
-                    <tr>
-                        <td><span class="badge-warning"><?php echo htmlspecialchars($subtype['code']); ?></span></td>
-                        <td><?php echo htmlspecialchars($subtype['type_name']); ?></td>
-                        <td><strong><?php echo htmlspecialchars($subtype['name']); ?></strong></td>
-                        <td>
-                            <div class="action-buttons">
-                                <button class="action-btn edit" onclick="editSubType(<?php echo $subtype['id']; ?>)" title="Edit">
-                                    <i class="fas fa-edit"></i>
-                                </button>
-                                <a href="?delete=<?php echo $subtype['id']; ?>&type=subtype" 
-                                   class="action-btn delete" 
-                                   onclick="return confirm('Are you sure you want to delete this sub-type?')"
-                                   title="Delete">
-                                    <i class="fas fa-trash"></i>
-                                </a>
-                            </div>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
-                <?php else: ?>
-                    <tr>
-                        <td colspan="4" class="text-center">
-                            <i class="fas fa-microchip" style="font-size: 48px; color: #ccc; margin-bottom: 10px;"></i>
-                            <br>
-                            No equipment sub-types found
-                            <br>
-                            <button class="btn btn-primary mt-3" onclick="openSubTypeModal()">
-                                <i class="fas fa-plus"></i> Add Your First Sub-Type
-                            </button>
-                        </td>
-                    </tr>
-                <?php endif; ?>
-            </tbody>
-        </table>
-    </div>
-</div>
-
-<!-- Equipment Type Modal -->
-<div id="typeModal" class="modal">
-    <div class="modal-content" style="max-width: 500px;">
-        <div class="modal-header">
-            <h2 id="typeModalTitle">Add Equipment Type</h2>
-            <span class="modal-close" onclick="closeTypeModal()">&times;</span>
-        </div>
-        <div class="modal-body">
-            <form method="POST" action="" id="typeForm">
-                <input type="hidden" name="type_action" id="type_action" value="add">
-                <input type="hidden" name="id" id="type_id" value="">
-                
-                <div class="form-group">
-                    <label for="type_name">Equipment Type Name <span class="text-danger">*</span></label>
-                    <input type="text" class="form-control" id="type_name" name="name" required maxlength="255" placeholder="e.g., Heavy Machinery, Electronics, Furniture">
-                    <div class="form-text">This will automatically generate a 2-digit code (e.g., 01, 02, 03...)</div>
-                </div>
-                
-                <div class="form-group" style="margin-top: 20px;">
-                    <button type="submit" class="btn btn-primary">Save Equipment Type</button>
-                    <button type="button" class="btn btn-secondary" onclick="closeTypeModal()">Cancel</button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
-
-<!-- Equipment Sub-Type Modal -->
-<div id="subtypeModal" class="modal">
-    <div class="modal-content" style="max-width: 500px;">
-        <div class="modal-header">
-            <h2 id="subtypeModalTitle">Add Equipment Sub-Type</h2>
-            <span class="modal-close" onclick="closeSubTypeModal()">&times;</span>
-        </div>
-        <div class="modal-body">
-            <form method="POST" action="" id="subtypeForm">
-                <input type="hidden" name="subtype_action" id="subtype_action" value="add">
-                <input type="hidden" name="id" id="subtype_id" value="">
-                
-                <div class="form-group">
-                    <label for="type_id">Parent Equipment Type <span class="text-danger">*</span></label>
-                    <select class="form-control" id="type_id" name="type_id" required>
-                        <option value="">-- Select Equipment Type --</option>
-                        <?php foreach ($types as $type): ?>
-                            <option value="<?php echo $type['id']; ?>">
-                                <?php echo htmlspecialchars($type['code'] . ' - ' . $type['name']); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                    <div class="form-text">The sub-type code will be automatically generated (e.g., 01-01, 01-02...)</div>
-                </div>
-                
-                <div class="form-group">
-                    <label for="subtype_name">Sub-Type Name <span class="text-danger">*</span></label>
-                    <input type="text" class="form-control" id="subtype_name" name="name" required maxlength="255" placeholder="e.g., Excavator, Laptop, Office Chair">
-                </div>
-                
-                <div class="form-group" style="margin-top: 20px;">
-                    <button type="submit" class="btn btn-primary">Save Sub-Type</button>
-                    <button type="button" class="btn btn-secondary" onclick="closeSubTypeModal()">Cancel</button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
-
 <style>
 :root {
     --primary: #6B8CFF;
@@ -438,6 +192,7 @@ include INCLUDE_PATH . '/header.php';
     --text-light: #FFFFFF;
     --success: #4CAF50;
     --danger: #f44336;
+    --warning: #FF9800;
     --info: #8FB5FF;
 }
 
@@ -576,16 +331,6 @@ tr:hover {
     font-family: 'Courier New', monospace;
 }
 
-.badge-success {
-    background-color: var(--success-light);
-    color: var(--success);
-    padding: 4px 10px;
-    border-radius: 20px;
-    font-size: 11px;
-    font-weight: 600;
-    display: inline-block;
-}
-
 /* Action Buttons */
 .action-buttons {
     display: flex;
@@ -654,14 +399,8 @@ tr:hover {
     box-shadow: 0 4px 12px rgba(143, 181, 255, 0.3);
 }
 
-.btn-xs {
-    padding: 4px 8px;
-    font-size: 11px;
-    border-radius: 4px;
-}
-
-/* Modal Styles */
-.modal {
+/* Modal Styles - Matching Settings.php */
+.modal-overlay {
     display: none;
     position: fixed;
     z-index: 1000;
@@ -673,15 +412,121 @@ tr:hover {
     backdrop-filter: blur(3px);
 }
 
-.modal-content {
-    background: var(--white);
+.modal-container {
+    background-color: var(--white);
     margin: 5% auto;
+    padding: 25px;
     border-radius: 12px;
+    width: 550px;
+    max-width: 90%;
     box-shadow: 0 10px 30px rgba(107, 140, 255, 0.2);
-    position: relative;
     animation: modalSlideIn 0.3s;
-    width: 90%;
-    max-width: 500px;
+}
+
+/* Custom Delete Confirmation Modal */
+.delete-modal-overlay {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    backdrop-filter: blur(3px);
+    align-items: center;
+    justify-content: center;
+}
+
+.delete-modal-container {
+    background-color: var(--white);
+    border-radius: 16px;
+    width: 450px;
+    max-width: 90%;
+    box-shadow: 0 20px 35px rgba(0,0,0,0.2);
+    animation: modalSlideIn 0.2s;
+    overflow: hidden;
+}
+
+.delete-modal-header {
+    padding: 24px 24px 16px 24px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.delete-modal-header h3 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--danger);
+}
+
+.delete-modal-header h3 i {
+    margin-right: 10px;
+}
+
+.delete-modal-body {
+    padding: 24px;
+}
+
+.delete-warning {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.delete-warning i {
+    font-size: 48px;
+    margin-bottom: 12px;
+}
+
+.delete-warning .fa-exclamation-triangle,
+.delete-warning .fa-times-circle,
+.delete-warning .fa-trash-alt {
+    color: var(--danger);
+}
+
+.delete-warning p {
+    margin: 8px 0;
+    font-size: 16px;
+}
+
+.delete-warning .warning-text {
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.delete-item-details {
+    background-color: var(--light);
+    border-radius: 12px;
+    padding: 16px;
+    margin-top: 16px;
+}
+
+.delete-item-details .detail-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+.delete-item-details .detail-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.delete-item-details .detail-extra {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.delete-modal-footer {
+    padding: 16px 24px 24px 24px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    border-top: 1px solid var(--border-light);
 }
 
 @keyframes modalSlideIn {
@@ -695,24 +540,30 @@ tr:hover {
     }
 }
 
-.modal-header {
+.modal-header-settings {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 20px 25px;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
     border-bottom: 2px solid var(--accent-light);
 }
 
-.modal-header h2 {
+.modal-header-settings h3 {
     color: var(--primary);
-    font-size: 20px;
     margin: 0;
+    font-size: 20px;
+}
+
+.modal-header-settings h3 i {
+    color: var(--accent);
+    margin-right: 10px;
 }
 
 .modal-close {
+    cursor: pointer;
     font-size: 28px;
     font-weight: bold;
-    cursor: pointer;
     color: var(--text-muted);
     transition: color 0.2s;
 }
@@ -721,8 +572,14 @@ tr:hover {
     color: var(--accent);
 }
 
-.modal-body {
-    padding: 25px;
+.modal-footer-buttons {
+    text-align: right;
+    margin-top: 20px;
+    padding-top: 15px;
+    border-top: 1px solid var(--border-light);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
 }
 
 /* Form Styles */
@@ -746,6 +603,7 @@ tr:hover {
     font-size: 14px;
     color: var(--text-primary);
     transition: border-color 0.2s, box-shadow 0.2s;
+    box-sizing: border-box;
 }
 
 .form-control:focus {
@@ -787,6 +645,40 @@ tr:hover {
     border-left-color: var(--danger);
 }
 
+/* Button Modal Styles */
+.btn-modal {
+    padding: 8px 20px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-modal-secondary {
+    background-color: #6c757d;
+    color: var(--text-light);
+}
+
+.btn-modal-secondary:hover {
+    background-color: #5a6268;
+    transform: translateY(-2px);
+}
+
+.btn-modal-danger {
+    background-color: var(--danger);
+    color: var(--text-light);
+}
+
+.btn-modal-danger:hover {
+    opacity: 0.9;
+    transform: translateY(-2px);
+}
+
 /* Text Utilities */
 .text-center {
     text-align: center;
@@ -812,16 +704,324 @@ tr:hover {
         align-items: flex-start;
     }
     
-    .modal-content {
-        margin: 20px;
-        width: auto;
+    .modal-container {
+        margin: 20px auto;
+        padding: 20px;
+        width: 95%;
+    }
+    
+    .delete-modal-container {
+        width: 95%;
     }
     
     .action-buttons {
         justify-content: flex-start;
     }
+    
+    .delete-modal-footer {
+        flex-direction: column-reverse;
+    }
+    
+    .delete-modal-footer .btn-modal {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .modal-footer-buttons {
+        flex-direction: column-reverse;
+    }
+    
+    .modal-footer-buttons .btn-modal {
+        width: 100%;
+        justify-content: center;
+    }
 }
 </style>
+
+<!-- Display Success/Error Messages -->
+<?php if (isset($_SESSION['success'])): ?>
+    <div class="alert alert-success">
+        <i class="fas fa-check-circle"></i>
+        <?php 
+        echo $_SESSION['success'];
+        unset($_SESSION['success']);
+        ?>
+    </div>
+<?php endif; ?>
+
+<?php if (isset($_SESSION['error'])): ?>
+    <div class="alert alert-danger">
+        <i class="fas fa-exclamation-circle"></i>
+        <?php 
+        echo $_SESSION['error'];
+        unset($_SESSION['error']);
+        ?>
+    </div>
+<?php endif; ?>
+
+<div class="dashboard-cards">
+    <div class="card">
+        <div class="card-icon">
+            <i class="fas fa-cubes"></i>
+        </div>
+        <h3>Equipment Types</h3>
+        <div class="card-value"><?php echo count($types); ?></div>
+        <div class="card-label">Total Categories</div>
+    </div>
+    
+    <div class="card">
+        <div class="card-icon">
+            <i class="fas fa-microchip"></i>
+        </div>
+        <h3>Equipment Sub-Types</h3>
+        <div class="card-value"><?php echo count($subtypes); ?></div>
+        <div class="card-label">Total Sub-Categories</div>
+    </div>
+    
+    <div class="card">
+        <div class="card-icon">
+            <i class="fas fa-tag"></i>
+        </div>
+        <h3>Generated Codes</h3>
+        <div class="card-value"><?php echo count($types) + count($subtypes); ?></div>
+        <div class="card-label">Total Equipment Codes</div>
+    </div>
+</div>
+
+<!-- Equipment Types Section -->
+<div class="table-container">
+    <div class="table-header">
+        <h2><i class="fas fa-cubes"></i> Equipment Types</h2>
+        <button class="btn btn-primary" onclick="openTypeModal()">
+            <i class="fas fa-plus"></i> Add Equipment Type
+        </button>
+    </div>
+    
+    <div style="overflow-x: auto;">
+        <table style="min-width: 600px;">
+            <thead>
+                <tr>
+                    <th>Code</th>
+                    <th>Name</th>
+                    <th>Sub-Types Count</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if (!empty($types)): ?>
+                    <?php foreach ($types as $type): 
+                        // Count sub-types for this type
+                        $stmt = $pdo->prepare("SELECT COUNT(*) FROM equipment_sub_type WHERE type_of_equipment_id = ?");
+                        $stmt->execute([$type['id']]);
+                        $subtype_count = $stmt->fetchColumn();
+                    ?>
+                    <tr>
+                        <td><span class="badge-warning"><?php echo htmlspecialchars($type['code']); ?></span></td>
+                        <td><strong><?php echo htmlspecialchars($type['name']); ?></strong></td>
+                        <td><?php echo $subtype_count; ?> sub-type(s)</td>
+                        <td>
+                            <div class="action-buttons">
+                                <button class="action-btn edit" onclick="editType(<?php echo $type['id']; ?>)" title="Edit">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button class="action-btn delete" onclick="openDeleteTypeModal(<?php echo $type['id']; ?>, '<?php echo htmlspecialchars(addslashes($type['name'])); ?>', <?php echo $subtype_count; ?>)" title="Delete">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <tr>
+                        <td colspan="4" class="text-center">
+                            <i class="fas fa-cubes" style="font-size: 48px; color: #ccc; margin-bottom: 10px;"></i>
+                            <br>
+                            No equipment types found
+                            <br>
+                            <button class="btn btn-primary mt-3" onclick="openTypeModal()">
+                                <i class="fas fa-plus"></i> Add Your First Equipment Type
+                            </button>
+                        </td>
+                    </tr>
+                <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Equipment Sub-Types Section -->
+<div class="table-container">
+    <div class="table-header">
+        <h2><i class="fas fa-microchip"></i> Equipment Sub-Types</h2>
+        <button class="btn btn-primary" onclick="openSubTypeModal()">
+            <i class="fas fa-plus"></i> Add Sub-Type
+        </button>
+    </div>
+    
+    <div style="overflow-x: auto;">
+        <table style="min-width: 800px;">
+            <thead>
+                <tr>
+                    <th>Code</th>
+                    <th>Parent Type</th>
+                    <th>Name</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if (!empty($subtypes)): ?>
+                    <?php foreach ($subtypes as $subtype): ?>
+                    <tr>
+                        <td><span class="badge-warning"><?php echo htmlspecialchars($subtype['code']); ?></span></td>
+                        <td><?php echo htmlspecialchars($subtype['type_name']); ?></td>
+                        <td><strong><?php echo htmlspecialchars($subtype['name']); ?></strong></td>
+                        <td>
+                            <div class="action-buttons">
+                                <button class="action-btn edit" onclick="editSubType(<?php echo $subtype['id']; ?>)" title="Edit">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button class="action-btn delete" onclick="openDeleteSubTypeModal(<?php echo $subtype['id']; ?>, '<?php echo htmlspecialchars(addslashes($subtype['name'])); ?>', '<?php echo htmlspecialchars(addslashes($subtype['type_name'])); ?>')" title="Delete">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <tr>
+                        <td colspan="4" class="text-center">
+                            <i class="fas fa-microchip" style="font-size: 48px; color: #ccc; margin-bottom: 10px;"></i>
+                            <br>
+                            No equipment sub-types found
+                            <br>
+                            <button class="btn btn-primary mt-3" onclick="openSubTypeModal()">
+                                <i class="fas fa-plus"></i> Add Your First Sub-Type
+                            </button>
+                        </td>
+                    </tr>
+                <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Delete Type Confirmation Modal -->
+<div id="deleteTypeModal" class="delete-modal-overlay">
+    <div class="delete-modal-container">
+        <div class="delete-modal-header">
+            <h3><i class="fas fa-trash-alt"></i> Delete Equipment Type</h3>
+        </div>
+        <div class="delete-modal-body">
+            <input type="hidden" id="delete_type_id">
+            <div class="delete-warning">
+                <i class="fas fa-exclamation-triangle"></i>
+                <p><strong>Are you absolutely sure?</strong></p>
+                <p class="warning-text">This action cannot be undone.</p>
+            </div>
+            <div class="delete-item-details">
+                <div class="detail-label">EQUIPMENT TYPE TO DELETE</div>
+                <div class="detail-name" id="delete_type_name">-</div>
+                <div class="detail-extra" id="delete_type_warning"></div>
+            </div>
+        </div>
+        <div class="delete-modal-footer">
+            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeDeleteTypeModal()">Cancel</button>
+            <a href="#" id="confirmDeleteTypeBtn" class="btn-modal btn-modal-danger"><i class="fas fa-trash-alt"></i> Delete Type</a>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Sub-Type Confirmation Modal -->
+<div id="deleteSubTypeModal" class="delete-modal-overlay">
+    <div class="delete-modal-container">
+        <div class="delete-modal-header">
+            <h3><i class="fas fa-trash-alt"></i> Delete Sub-Type</h3>
+        </div>
+        <div class="delete-modal-body">
+            <input type="hidden" id="delete_subtype_id">
+            <div class="delete-warning">
+                <i class="fas fa-exclamation-triangle"></i>
+                <p><strong>Are you absolutely sure?</strong></p>
+                <p class="warning-text">This action cannot be undone.</p>
+            </div>
+            <div class="delete-item-details">
+                <div class="detail-label">SUB-TYPE TO DELETE</div>
+                <div class="detail-name" id="delete_subtype_name">-</div>
+                <div class="detail-extra" id="delete_subtype_parent">-</div>
+            </div>
+        </div>
+        <div class="delete-modal-footer">
+            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeDeleteSubTypeModal()">Cancel</button>
+            <a href="#" id="confirmDeleteSubTypeBtn" class="btn-modal btn-modal-danger"><i class="fas fa-trash-alt"></i> Delete Sub-Type</a>
+        </div>
+    </div>
+</div>
+
+<!-- Equipment Type Modal -->
+<div id="typeModal" class="modal-overlay">
+    <div class="modal-container">
+        <div class="modal-header-settings">
+            <h3 id="typeModalTitle"><i class="fas fa-cubes"></i> Add Equipment Type</h3>
+            <span class="modal-close" onclick="closeTypeModal()">&times;</span>
+        </div>
+        <div style="padding: 0 25px;">
+            <form method="POST" action="" id="typeForm">
+                <input type="hidden" name="type_action" id="type_action" value="add">
+                <input type="hidden" name="id" id="type_id" value="">
+                
+                <div class="form-group">
+                    <label for="type_name">Equipment Type Name <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="type_name" name="name" required maxlength="255" placeholder="e.g., Heavy Machinery, Electronics, Furniture">
+                    <div class="form-text">This will automatically generate a 2-digit code (e.g., 01, 02, 03...)</div>
+                </div>
+                
+                <div class="modal-footer-buttons">
+                    <button type="button" class="btn-modal btn-modal-secondary" onclick="closeTypeModal()">Cancel</button>
+                    <button type="submit" class="btn-modal" style="background-color: var(--accent); color: var(--text-primary);">Save Equipment Type</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Equipment Sub-Type Modal -->
+<div id="subtypeModal" class="modal-overlay">
+    <div class="modal-container">
+        <div class="modal-header-settings">
+            <h3 id="subtypeModalTitle"><i class="fas fa-microchip"></i> Add Equipment Sub-Type</h3>
+            <span class="modal-close" onclick="closeSubTypeModal()">&times;</span>
+        </div>
+        <div style="padding: 0 25px;">
+            <form method="POST" action="" id="subtypeForm">
+                <input type="hidden" name="subtype_action" id="subtype_action" value="add">
+                <input type="hidden" name="id" id="subtype_id" value="">
+                
+                <div class="form-group">
+                    <label for="type_id">Parent Equipment Type <span class="text-danger">*</span></label>
+                    <select class="form-control" id="type_id" name="type_id" required>
+                        <option value="">-- Select Equipment Type --</option>
+                        <?php foreach ($types as $type): ?>
+                            <option value="<?php echo $type['id']; ?>">
+                                <?php echo htmlspecialchars($type['code'] . ' - ' . $type['name']); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <div class="form-text">The sub-type code will be automatically generated (e.g., 01-01, 01-02...)</div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="subtype_name">Sub-Type Name <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="subtype_name" name="name" required maxlength="255" placeholder="e.g., Excavator, Laptop, Office Chair">
+                </div>
+                
+                <div class="modal-footer-buttons">
+                    <button type="button" class="btn-modal btn-modal-secondary" onclick="closeSubTypeModal()">Cancel</button>
+                    <button type="submit" class="btn-modal" style="background-color: var(--accent); color: var(--text-primary);">Save Sub-Type</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 
 <script>
 // Store types data for reference
@@ -835,9 +1035,41 @@ typesData.push({
 });
 <?php endforeach; ?>
 
+// Delete Type Modal Functions
+function openDeleteTypeModal(id, name, subtypeCount) {
+    document.getElementById('delete_type_id').value = id;
+    document.getElementById('delete_type_name').innerText = name;
+    var warningText = '';
+    if (subtypeCount > 0) {
+        warningText = '<span style="color: var(--warning);"><i class="fas fa-exclamation-triangle"></i> Warning: This type has ' + subtypeCount + ' sub-type(s). They will also be deleted.</span>';
+        document.getElementById('delete_type_warning').innerHTML = warningText;
+    } else {
+        document.getElementById('delete_type_warning').innerHTML = 'No sub-types associated.';
+    }
+    document.getElementById('confirmDeleteTypeBtn').href = '?delete=' + id + '&type=type';
+    document.getElementById('deleteTypeModal').style.display = 'flex';
+}
+
+function closeDeleteTypeModal() {
+    document.getElementById('deleteTypeModal').style.display = 'none';
+}
+
+// Delete Sub-Type Modal Functions
+function openDeleteSubTypeModal(id, name, parentType) {
+    document.getElementById('delete_subtype_id').value = id;
+    document.getElementById('delete_subtype_name').innerText = name;
+    document.getElementById('delete_subtype_parent').innerHTML = 'Parent Type: ' + parentType;
+    document.getElementById('confirmDeleteSubTypeBtn').href = '?delete=' + id + '&type=subtype';
+    document.getElementById('deleteSubTypeModal').style.display = 'flex';
+}
+
+function closeDeleteSubTypeModal() {
+    document.getElementById('deleteSubTypeModal').style.display = 'none';
+}
+
 // Type Modal Functions
 function openTypeModal() {
-    document.getElementById('typeModalTitle').textContent = 'Add Equipment Type';
+    document.getElementById('typeModalTitle').innerHTML = '<i class="fas fa-cubes"></i> Add Equipment Type';
     document.getElementById('type_action').value = 'add';
     document.getElementById('type_id').value = '';
     document.getElementById('type_name').value = '';
@@ -845,10 +1077,9 @@ function openTypeModal() {
 }
 
 function editType(id) {
-    // Find type by id
     let type = typesData.find(t => t.id == id);
     if (type) {
-        document.getElementById('typeModalTitle').textContent = 'Edit Equipment Type';
+        document.getElementById('typeModalTitle').innerHTML = '<i class="fas fa-edit"></i> Edit Equipment Type';
         document.getElementById('type_action').value = 'edit';
         document.getElementById('type_id').value = type.id;
         document.getElementById('type_name').value = type.name;
@@ -864,7 +1095,7 @@ function closeTypeModal() {
 
 // Sub-Type Modal Functions
 function openSubTypeModal() {
-    document.getElementById('subtypeModalTitle').textContent = 'Add Equipment Sub-Type';
+    document.getElementById('subtypeModalTitle').innerHTML = '<i class="fas fa-microchip"></i> Add Equipment Sub-Type';
     document.getElementById('subtype_action').value = 'add';
     document.getElementById('subtype_id').value = '';
     document.getElementById('subtype_name').value = '';
@@ -873,7 +1104,6 @@ function openSubTypeModal() {
 }
 
 function editSubType(id) {
-    // Fetch sub-type data via AJAX
     fetch(window.location.pathname + '?get_subtype=' + id)
         .then(response => {
             if (!response.ok) {
@@ -883,7 +1113,7 @@ function editSubType(id) {
         })
         .then(data => {
             if (data.success) {
-                document.getElementById('subtypeModalTitle').textContent = 'Edit Equipment Sub-Type';
+                document.getElementById('subtypeModalTitle').innerHTML = '<i class="fas fa-edit"></i> Edit Equipment Sub-Type';
                 document.getElementById('subtype_action').value = 'edit';
                 document.getElementById('subtype_id').value = data.subtype.id;
                 document.getElementById('subtype_name').value = data.subtype.name;
@@ -907,6 +1137,8 @@ function closeSubTypeModal() {
 window.onclick = function(event) {
     let typeModal = document.getElementById('typeModal');
     let subtypeModal = document.getElementById('subtypeModal');
+    let deleteTypeModal = document.getElementById('deleteTypeModal');
+    let deleteSubTypeModal = document.getElementById('deleteSubTypeModal');
     
     if (event.target == typeModal) {
         closeTypeModal();
@@ -914,7 +1146,28 @@ window.onclick = function(event) {
     if (event.target == subtypeModal) {
         closeSubTypeModal();
     }
+    if (event.target == deleteTypeModal) {
+        closeDeleteTypeModal();
+    }
+    if (event.target == deleteSubTypeModal) {
+        closeDeleteSubTypeModal();
+    }
 }
+
+// Auto-hide alerts after 5 seconds
+setTimeout(function() {
+    var alerts = document.querySelectorAll('.alert');
+    alerts.forEach(function(alert) {
+        setTimeout(function() {
+            alert.style.opacity = '0';
+            setTimeout(function() {
+                if (alert.style.display !== 'none') {
+                    alert.style.display = 'none';
+                }
+            }, 300);
+        }, 4700);
+    });
+}, 1000);
 </script>
 
 <?php include INCLUDE_PATH . '/footer.php'; ?>

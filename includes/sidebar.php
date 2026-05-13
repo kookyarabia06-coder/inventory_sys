@@ -1,5 +1,3 @@
-
-
 <?php
 /**
  * Sidebar Navigation Template
@@ -79,7 +77,7 @@ if (isset($conn) && $conn && ($user_role == 'super_admin' || $user_role == 'admi
                         $dashboard_path = '/dashboard';
                 }
                 echo $base_path . $dashboard_path;
-            ?>" class="<?php echo ($current_page == 'dashboard.php') ? 'active' : ''; ?>">
+            ?>.php" class="<?php echo ($current_page == 'dashboard.php') ? 'active' : ''; ?>">
                 <i class="fas fa-tachometer-alt"></i>
                 <span>Dashboard</span>
             </a>
@@ -102,8 +100,6 @@ if (isset($conn) && $conn && ($user_role == 'super_admin' || $user_role == 'admi
                 <i class="fas fa-file-alt"></i>
                 <span>Reports</span>
             </a>
-        </li>
-        
         </li>
         <li>
             <a href="<?php echo SITE_URL; ?>/admin/ppe_equipment.php" class="<?php echo basename($_SERVER['PHP_SELF']) == 'ppe_equipment.php' ? 'active' : ''; ?>">
@@ -195,7 +191,6 @@ if (isset($conn) && $conn && ($user_role == 'super_admin' || $user_role == 'admi
                 <span>Reports</span>
             </a>
         </li>
-      
         <li>
             <a href="<?php echo SITE_URL; ?>/admin/ppe_equipment.php" class="<?php echo basename($_SERVER['PHP_SELF']) == 'ppe_equipment.php' ? 'active' : ''; ?>">
                 <i class="fas fa-shield-alt"></i>
@@ -263,28 +258,26 @@ if (isset($conn) && $conn && ($user_role == 'super_admin' || $user_role == 'admi
         <li class="menu-category">
             <small><i class="fas fa-truck"></i> SUPPLY OFFICER</small>
         </li>
-        
-        </li>
         <li>
-            <a href="<?php echo $base_path; ?>/admin/all_inventory" class="<?php echo $current_page == 'all_inventory.php' ? 'active' : ''; ?>">
+            <a href="<?php echo $base_path; ?>/admin/all_inventory.php" class="<?php echo $current_page == 'all_inventory.php' ? 'active' : ''; ?>">
                 <i class="fas fa-boxes"></i>
                 <span>Inventory List</span>
             </a>
         </li>
         <li>
-            <a href="<?php echo $base_path; ?>/admin/ppe_equipment" class="<?php echo $current_page == 'ppe_equipment.php' ? 'active' : ''; ?>">
+            <a href="<?php echo $base_path; ?>/admin/ppe_equipment.php" class="<?php echo $current_page == 'ppe_equipment.php' ? 'active' : ''; ?>">
                 <i class="fas fa-shield-alt"></i>
                 <span>PPE Equipment</span>
             </a>
         </li>
         <li>
-            <a href="<?php echo $base_path; ?>/admin/semi_expendable" class="<?php echo $current_page == 'semi_expendable.php' ? 'active' : ''; ?>">
+            <a href="<?php echo $base_path; ?>/admin/semi_expendable.php" class="<?php echo $current_page == 'semi_expendable.php' ? 'active' : ''; ?>">
                 <i class="fas fa-box-open"></i>
                 <span>Semi-Expendable</span>
             </a>
         </li>
         <li>
-            <a href="<?php echo $base_path; ?>/admin/equipments" class="<?php echo $current_page == 'equipments.php' ? 'active' : ''; ?>">
+            <a href="<?php echo $base_path; ?>/admin/equipments.php" class="<?php echo $current_page == 'equipments.php' ? 'active' : ''; ?>">
                 <i class="fas fa-laptop"></i>
                 <span>Equipment Types</span>
             </a>
@@ -297,13 +290,13 @@ if (isset($conn) && $conn && ($user_role == 'super_admin' || $user_role == 'admi
             <small><i class="fas fa-user"></i> USER</small>
         </li>
         <li>
-            <a href="<?php echo $base_path; ?>/user/my_issued_items" class="<?php echo $current_page == 'my_issued_items.php' ? 'active' : ''; ?>">
+            <a href="<?php echo $base_path; ?>/user/my_issued_items.php" class="<?php echo $current_page == 'my_issued_items.php' ? 'active' : ''; ?>">
                 <i class="fas fa-clipboard-list"></i>
                 <span>My Issued Items</span>
             </a>
         </li>
         <li>
-            <a href="<?php echo $base_path; ?>/user/view_inventory" class="<?php echo $current_page == 'view_inventory.php' ? 'active' : ''; ?>">
+            <a href="<?php echo $base_path; ?>/user/view_inventory.php" class="<?php echo $current_page == 'view_inventory.php' ? 'active' : ''; ?>">
                 <i class="fas fa-search"></i>
                 <span>View Inventory</span>
             </a>
@@ -315,9 +308,8 @@ if (isset($conn) && $conn && ($user_role == 'super_admin' || $user_role == 'admi
         <li class="menu-category">
             <small><i class="fas fa-link"></i> GENERAL</small>
         </li>
-      
         <li>
-            <a href="<?php echo SITE_URL; ?>/logout" class="logout-btn">
+            <a href="<?php echo SITE_URL; ?>/logout.php" class="logout-btn">
                 <i class="fas fa-sign-out-alt"></i>
                 <span>Logout</span>
             </a>

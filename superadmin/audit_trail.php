@@ -525,8 +525,11 @@ tr:hover {
     border-color: var(--primary);
 }
 
-/* Modal Styles */
-.modal {
+/* ============================================
+   MODAL STYLES - MATCHING SETTINGS.PHP
+   ============================================ */
+
+.modal-overlay {
     display: none;
     position: fixed;
     z-index: 1000;
@@ -534,88 +537,85 @@ tr:hover {
     top: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(4px);
-    animation: modalFadeIn 0.3s ease;
-}
-
-@keyframes modalFadeIn {
-    from { opacity: 0; backdrop-filter: blur(0px); }
-    to { opacity: 1; backdrop-filter: blur(4px); }
-}
-
-.modal-content {
-    background: var(--white);
-    margin: 3% auto;
-    border-radius: 20px;
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
-    max-width: 850px;
-    width: 90%;
-    animation: modalSlideUp 0.3s ease;
-}
-
-@keyframes modalSlideUp {
-    from { transform: translateY(30px); opacity: 0; }
-    to { transform: translateY(0); opacity: 1; }
-}
-
-.modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px 24px;
-    border-bottom: 2px solid var(--accent-light);
-    background: linear-gradient(135deg, var(--light) 0%, var(--white) 100%);
-    border-radius: 20px 20px 0 0;
-}
-
-.modal-header h2 {
-    color: var(--primary);
-    font-size: 20px;
-    font-weight: 600;
-    margin: 0;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.modal-header h2 i {
-    color: var(--accent);
-    font-size: 22px;
-}
-
-.modal-close {
-    font-size: 28px;
-    font-weight: bold;
-    cursor: pointer;
-    color: var(--text-muted);
-    transition: all 0.2s;
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 50%;
-}
-
-.modal-close:hover {
-    color: var(--danger);
-    background: rgba(244, 67, 54, 0.1);
-    transform: rotate(90deg);
-}
-
-.modal-body {
-    padding: 24px;
-    max-height: 65vh;
+    background-color: rgba(0,0,0,0.5);
+    backdrop-filter: blur(3px);
     overflow-y: auto;
 }
 
-.modal-footer {
-    padding: 16px 24px;
-    border-top: 1px solid var(--border-light);
+.modal-container {
+    background-color: var(--white);
+    margin: 5% auto;
+    padding: 0;
+    border-radius: 12px;
+    width: 850px;
+    max-width: 90%;
+    box-shadow: 0 10px 30px rgba(107, 140, 255, 0.2);
+    animation: modalSlideIn 0.3s;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    max-height: 85vh;
+}
+
+@keyframes modalSlideIn {
+    from {
+        transform: translateY(-30px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.modal-header-settings {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 25px;
+    border-bottom: 2px solid var(--accent-light);
+    background: var(--white);
+    flex-shrink: 0;
+}
+
+.modal-header-settings h3 {
+    color: var(--primary);
+    margin: 0;
+    font-size: 20px;
+}
+
+.modal-header-settings h3 i {
+    color: var(--accent);
+    margin-right: 10px;
+}
+
+.modal-close {
+    cursor: pointer;
+    font-size: 28px;
+    font-weight: bold;
+    color: var(--text-muted);
+    transition: color 0.2s;
+}
+
+.modal-close:hover {
+    color: var(--accent);
+}
+
+.modal-body-scroll {
+    padding: 25px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.modal-footer-buttons {
     text-align: right;
+    padding: 16px 25px;
+    border-top: 1px solid var(--border-light);
     background: var(--light);
-    border-radius: 0 0 20px 20px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-shrink: 0;
 }
 
 /* Detail Sections */
@@ -653,8 +653,8 @@ tr:hover {
 }
 
 .detail-item {
-    border-bottom: 1px dashed var(--border-light);
     padding: 8px 0;
+    border-bottom: 1px dashed var(--border-light);
 }
 
 .detail-item:last-child {
@@ -693,6 +693,56 @@ pre {
     font-size: 11px;
     font-family: 'Courier New', monospace;
     margin: 0;
+}
+
+/* Modal Buttons */
+.btn-modal {
+    padding: 8px 20px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-modal-secondary {
+    background-color: #6c757d;
+    color: var(--text-light);
+}
+
+.btn-modal-secondary:hover {
+    background-color: #5a6268;
+    transform: translateY(-2px);
+}
+
+.btn-modal-primary {
+    background-color: var(--accent);
+    color: var(--text-primary);
+}
+
+.btn-modal-primary:hover {
+    background-color: #e69eb0;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(248, 176, 192, 0.3);
+}
+
+/* Scrollbar Styling */
+.modal-body-scroll::-webkit-scrollbar {
+    width: 6px;
+}
+
+.modal-body-scroll::-webkit-scrollbar-track {
+    background: var(--light);
+    border-radius: 3px;
+}
+
+.modal-body-scroll::-webkit-scrollbar-thumb {
+    background: var(--primary);
+    border-radius: 3px;
 }
 
 /* Pagination */
@@ -749,8 +799,10 @@ pre {
     .table-actions { flex-direction: column; width: 100%; }
     .table-actions .btn { width: 100%; justify-content: center; }
     .detail-grid { grid-template-columns: 1fr; gap: 12px; }
-    .modal-content { width: 95%; margin: 10% auto; }
-    .modal-body { padding: 16px; }
+    .modal-container { width: 95%; margin: 10% auto; }
+    .modal-body-scroll { padding: 16px; }
+    .modal-header-settings { padding: 15px 20px; }
+    .modal-footer-buttons { padding: 12px 20px; }
 }
 </style>
 
@@ -973,7 +1025,7 @@ pre {
                         $desc = htmlspecialchars($log['description'] ?? '');
                         echo strlen($desc) > 100 ? substr($desc, 0, 100) . '...' : $desc;
                         ?>
-                    </td>
+                    <td>
                     <td><code><?php echo htmlspecialchars($log['ip_address'] ?? '-'); ?></code></td>
                     <td>
                         <button class="view-details-btn" onclick="viewDetails(<?php echo $log['id']; ?>)">
@@ -1026,21 +1078,21 @@ pre {
     </div>
 </div>
 
-<!-- Details Modal -->
-<div id="detailsModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h2><i class="fas fa-info-circle"></i> Activity Details</h2>
+<!-- Details Modal - Updated to match settings.php style -->
+<div id="detailsModal" class="modal-overlay">
+    <div class="modal-container">
+        <div class="modal-header-settings">
+            <h3><i class="fas fa-info-circle"></i> Activity Details</h3>
             <span class="modal-close" onclick="closeModal()">&times;</span>
         </div>
-        <div class="modal-body" id="modalBody">
+        <div class="modal-body-scroll" id="modalBody">
             <div class="text-center" style="padding: 40px;">
                 <i class="fas fa-spinner fa-spin" style="font-size: 32px; color: var(--primary);"></i>
                 <p style="margin-top: 16px; color: var(--text-muted);">Loading details...</p>
             </div>
         </div>
-        <div class="modal-footer">
-            <button class="btn btn-outline" onclick="closeModal()">Close</button>
+        <div class="modal-footer-buttons">
+            <button class="btn-modal btn-modal-secondary" onclick="closeModal()">Close</button>
         </div>
     </div>
 </div>
@@ -1063,35 +1115,35 @@ function viewDetails(id) {
                             <div class="detail-grid">
                                 <div class="detail-item">
                                     <div class="detail-label"><i class="far fa-calendar-alt"></i> Timestamp</div>
-                                    <div class="detail-value">${data.data.created_at}</div>
+                                    <div class="detail-value">${escapeHtml(data.data.created_at)}</div>
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label"><i class="fas fa-user"></i> User</div>
-                                    <div class="detail-value">${data.data.user_name || 'System'} ${data.data.username ? '(' + data.data.username + ')' : ''}</div>
+                                    <div class="detail-value">${escapeHtml(data.data.user_name || 'System')} ${data.data.username ? '(' + escapeHtml(data.data.username) + ')' : ''}</div>
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label"><i class="fas fa-tag"></i> Action Category</div>
-                                    <div class="detail-value"><span class="badge badge-primary">${data.data.action_category || 'N/A'}</span></div>
+                                    <div class="detail-value"><span class="badge badge-primary">${escapeHtml(data.data.action_category || 'N/A')}</span></div>
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label"><i class="fas fa-cog"></i> Action</div>
-                                    <div class="detail-value"><span class="badge badge-secondary">${data.data.action}</span></div>
+                                    <div class="detail-value"><span class="badge badge-secondary">${escapeHtml(data.data.action)}</span></div>
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label"><i class="fas fa-table"></i> Table/Module</div>
-                                    <div class="detail-value">${data.data.table_name || 'N/A'}</div>
+                                    <div class="detail-value">${escapeHtml(data.data.table_name || 'N/A')}</div>
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label"><i class="fas fa-hashtag"></i> Record ID</div>
-                                    <div class="detail-value">${data.data.record_id || 'N/A'}</div>
+                                    <div class="detail-value">${escapeHtml(data.data.record_id || 'N/A')}</div>
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label"><i class="fas fa-network-wired"></i> IP Address</div>
-                                    <div class="detail-value"><code>${data.data.ip_address || 'N/A'}</code></div>
+                                    <div class="detail-value"><code>${escapeHtml(data.data.ip_address || 'N/A')}</code></div>
                                 </div>
                                 <div class="detail-item">
                                     <div class="detail-label"><i class="fas fa-globe"></i> User Agent</div>
-                                    <div class="detail-value"><small>${data.data.user_agent || 'N/A'}</small></div>
+                                    <div class="detail-value"><small>${escapeHtml(data.data.user_agent || 'N/A')}</small></div>
                                 </div>
                             </div>
                         </div>
@@ -1148,7 +1200,7 @@ function viewDetails(id) {
                 
                 body.innerHTML = html;
             } else {
-                body.innerHTML = `<div class="text-center" style="padding: 40px;"><i class="fas fa-exclamation-triangle" style="font-size: 32px; color: var(--danger);"></i><p style="margin-top: 16px; color: var(--danger);">Error: ${data.message}</p></div>`;
+                body.innerHTML = `<div class="text-center" style="padding: 40px;"><i class="fas fa-exclamation-triangle" style="font-size: 32px; color: var(--danger);"></i><p style="margin-top: 16px; color: var(--danger);">Error: ${escapeHtml(data.message)}</p></div>`;
             }
         })
         .catch(error => {
