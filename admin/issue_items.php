@@ -283,7 +283,51 @@ if (isset($_GET['print_user_par']) && is_numeric($_GET['print_user_par'])) {
 }
 
 // ============================================
-// HANDLE ISSUANCE FORM SUBMISSION - UPDATED FOR SIGNATORY
+// FUNCTION TO GENERATE PROPERTY NUMBER WITH DEPARTMENT CODE
+// ============================================
+
+function generatePropertyNumberWithDeptCode($conn, $inventory_id, $employee_id, $table = 'inventory') {
+    // Get item details from the appropriate table
+    if ($table == 'inventory') {
+        $inv_query = $conn->query("SELECT property_no, article_name FROM inventory WHERE id = $inventory_id");
+    } else {
+        // For semi_ppe table
+        $inv_query = $conn->query("SELECT property_no, article_name FROM semi_ppe WHERE id = $inventory_id");
+    }
+    $item = $inv_query->fetch_assoc();
+    $original_property_no = $item['property_no'];
+    
+    // Get employee department code
+    $emp_query = $conn->query("
+        SELECT d.code as department_code 
+        FROM employees e
+        LEFT JOIN sections s ON e.section_id = s.id
+        LEFT JOIN departments d ON s.department_id = d.id
+        WHERE e.id = $employee_id
+    ");
+    $employee = $emp_query->fetch_assoc();
+    $dept_code = $employee['department_code'] ?? '00';
+    
+    // Check if property number already has a department code
+    if (strpos($original_property_no, '-') !== false) {
+        $parts = explode('-', $original_property_no);
+        $last_part = end($parts);
+        // If the last part looks like a department code (2 digits), replace it
+        if (strlen($last_part) == 2 && ctype_digit($last_part)) {
+            array_pop($parts);
+            $new_property_no = implode('-', $parts) . '-' . $dept_code;
+        } else {
+            $new_property_no = $original_property_no . '-' . $dept_code;
+        }
+    } else {
+        $new_property_no = $original_property_no . '-' . $dept_code;
+    }
+    
+    return $new_property_no;
+}
+
+// ============================================
+// HANDLE ISSUANCE FORM SUBMISSION
 // ============================================
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $is_reissue = isset($_POST['is_reissue']) && $_POST['is_reissue'] == '1';
@@ -295,6 +339,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $condition = sanitize($_POST['condition']);
     $remarks = sanitize($_POST['remarks'] ?? '');
     $signatory_id = !empty($_POST['signatory_id']) ? (int)$_POST['signatory_id'] : NULL;
+    $category = isset($_POST['category']) ? sanitize($_POST['category']) : 'inventory';
     
     $conn->begin_transaction();
     try {
@@ -313,7 +358,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             // Update old issuance as returned
             $conn->query("UPDATE equipment_issuance SET status='returned', actual_return=NOW(), condition_on_return='Good' WHERE id=$original_issuance_id");
             
-            // Create new issuance with signatory_id
+            // Generate new property number with department code
+            $new_property_no = generatePropertyNumberWithDeptCode($conn, $original_issuance['inventory_id'], $issued_to, 'inventory');
+            
+            // Update inventory property number
+            $conn->query("UPDATE inventory SET property_no = '$new_property_no' WHERE id = {$original_issuance['inventory_id']}");
+            
+            // Also update semi_ppe if the item came from there
+            $conn->query("UPDATE semi_ppe SET property_no = '$new_property_no' WHERE property_no = '{$original_issuance['property_no']}'");
+            
+            // Create new issuance
             $stmt = $conn->prepare("
                 INSERT INTO equipment_issuance (
                     inventory_id, issued_to, issued_by, signatory_id, quantity_issued, purpose, 
@@ -331,12 +385,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $remarks
             );
             $stmt->execute();
-            $new_issuance_id = $stmt->insert_id;
+            $stmt->close();
             
             // Update inventory current holder
             $conn->query("UPDATE inventory SET current_holder=$issued_to WHERE id={$original_issuance['inventory_id']}");
             
-            $stmt->close();
             $success_count = 1;
             
         } 
@@ -356,11 +409,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     throw new Exception("Insufficient quantity for: " . $selected_item['article_name']);
                 }
                 
-                // Update inventory quantity
-                $new_quantity = $selected_item['qty_physical_count'] - $requested_qty;
-                $conn->query("UPDATE inventory SET qty_physical_count=$new_quantity, current_holder=$issued_to WHERE id=$inventory_id");
+                // Generate new property number with department code
+                $new_property_no = generatePropertyNumberWithDeptCode($conn, $inventory_id, $issued_to, 'inventory');
                 
-                // Insert into equipment_issuance with signatory_id
+                // Update inventory quantity AND property number
+                $new_quantity = $selected_item['qty_physical_count'] - $requested_qty;
+                $conn->query("UPDATE inventory SET qty_physical_count=$new_quantity, current_holder=$issued_to, property_no='$new_property_no' WHERE id=$inventory_id");
+                
+                // Also update semi_ppe if the item came from there (by property number)
+                $conn->query("UPDATE semi_ppe SET property_no = '$new_property_no' WHERE property_no = '{$selected_item['property_no']}'");
+                
+                // Insert into equipment_issuance
                 $stmt = $conn->prepare("
                     INSERT INTO equipment_issuance (
                         inventory_id, issued_to, issued_by, signatory_id, quantity_issued, purpose, 
@@ -378,7 +437,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     $remarks
                 );
                 $stmt->execute();
-                $issuance_id = $stmt->insert_id;
                 $stmt->close();
                 
                 $success_count++;
@@ -388,7 +446,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         }
         
         $conn->commit();
-        $_SESSION['success'] = $is_reissue ? "Item reissued successfully" : "$success_count item(s) issued successfully";
+        $_SESSION['success'] = $is_reissue ? "Item reissued successfully with department code added to property number" : "$success_count item(s) issued successfully with department codes added to property numbers";
         
     } catch (Exception $e) {
         $conn->rollback();
@@ -406,7 +464,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 if (isset($_GET['return']) && is_numeric($_GET['return'])) {
     $issuance_id = (int)$_GET['return'];
     $issuance = $conn->query("
-        SELECT ei.*, i.qty_physical_count, i.article_name, i.property_no 
+        SELECT ei.*, i.qty_physical_count, i.article_name, i.property_no, i.uom
         FROM equipment_issuance ei 
         JOIN inventory i ON ei.inventory_id = i.id 
         WHERE ei.id=$issuance_id
@@ -481,9 +539,9 @@ $sections_list = $conn->query("SELECT s.id, s.name, d.name as department_name FR
 // Get positions for filter
 $positions_list = $conn->query("SELECT DISTINCT position FROM employees WHERE position IS NOT NULL AND position != '' ORDER BY position");
 
-// Get employees list
+// Get employees list with department codes
 $employees_list = $conn->query("
-    SELECT e.*, d.name as department_name, s.name as section_name, b.name as building_name,
+    SELECT e.*, d.name as department_name, d.code as department_code, s.name as section_name, b.name as building_name,
            CONCAT(
                LPAD(COALESCE(b.id, 0), 2, '0'),
                LPAD(COALESCE(d.id, 0), 2, '0'),
@@ -509,6 +567,7 @@ $issuances = $conn->query("
         e.position,
         s.name as section_name,
         d.name as department_name,
+        d.code as department_code,
         b.name as building_name,
         CONCAT(
             LPAD(COALESCE(b.id, 0), 2, '0'),
@@ -540,12 +599,23 @@ if ($issuances && $issuances->num_rows > 0) {
             $employee_issuances[$eid] = [
                 'employee_name' => $issue['issued_to_name'], 
                 'position' => $issue['position'],
+                'department_code' => $issue['department_code'],
                 'location_code' => $issue['location_code'],
                 'location_string' => $location_string,
                 'items' => []
             ];
         }
         $employee_issuances[$eid]['items'][] = $issue;
+    }
+}
+
+// Get inventory items
+$inventory_query = "SELECT * FROM inventory WHERE qty_physical_count > 0 ORDER BY article_name";
+$inventory_items_result = $conn->query($inventory_query);
+$inventory_data = [];
+if ($inventory_items_result) {
+    while ($item = $inventory_items_result->fetch_assoc()) {
+        $inventory_data[$item['id']] = $item;
     }
 }
 
@@ -560,30 +630,101 @@ if (isset($_SESSION['reissue_from'])) {
                e.id as original_employee_id,
                e.position as original_position,
                s.name as original_section,
-               d.name as original_department
+               d.name as original_department,
+               d.code as original_department_code
         FROM equipment_issuance ei 
         JOIN inventory i ON ei.inventory_id=i.id 
-        JOIN employees e ON ei.issued_to = e.id
-        LEFT JOIN sections s ON e.section_id = s.id
+        JOIN employees e ON ei.issued_to = e.id        LEFT JOIN sections s ON e.section_id = s.id
         LEFT JOIN departments d ON s.department_id = d.id
         WHERE ei.id=$reissue_from_id
     ")->fetch_assoc();
     if (!$reissue_item) unset($_SESSION['reissue_from']);
 }
 
-// Get inventory items for barcode scanning
-$inventory_items_result = $conn->query("SELECT * FROM inventory WHERE qty_physical_count > 0 ORDER BY article_name");
-$inventory_data = [];
-if ($inventory_items_result) {
-    while ($item = $inventory_items_result->fetch_assoc()) {
-        $inventory_data[$item['id']] = $item;
-    }
-}
-
 include INCLUDE_PATH . '/header.php';
 ?>
 
 <style>
+/* Add this CSS for property number search */
+.property-search-section {
+    background: #fff;
+    border-radius: 12px;
+    padding: 15px;
+    margin-bottom: 20px;
+    border: 1px solid var(--border-light);
+}
+.property-search-box {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+.property-search-box input {
+    flex: 1;
+    padding: 10px 15px;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    font-size: 14px;
+}
+.property-search-box button {
+    background: var(--primary);
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+.property-search-box button:hover {
+    background: #5a7ae6;
+}
+.property-search-result {
+    margin-top: 15px;
+    display: none;
+}
+.property-search-result.show {
+    display: block;
+}
+.result-property-card {
+    background: var(--light);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+.result-property-info h5 {
+    margin: 0 0 5px;
+    color: var(--primary);
+}
+.result-property-info p {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+.btn-add-property {
+    background: var(--success);
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.btn-add-property:hover {
+    background: #45a049;
+}
+
+/* Department code badge in property number */
+.property-dept-code {
+    font-size: 10px;
+    background: var(--accent-light);
+    padding: 2px 6px;
+    border-radius: 12px;
+    margin-left: 5px;
+    color: var(--text-primary);
+}
+
 :root{--primary:#6B8CFF;--secondary:#8FB5FF;--accent:#F8B0C0;--accent-light:#FFD8E0;--success-light:#C5E8C5;--light:#F0F0F0;--white:#FFF;--border-light:#E0E0E0;--text-primary:#3A3A3A;--text-secondary:#6B6B6B;--text-muted:#9E9E9E;--success:#4CAF50;--danger:#f44336;--warning:#FF9800;--info:#2196F3}
 body{background:var(--light);color:var(--text-primary)}
 .barcode-search-section{background:linear-gradient(135deg,#6B8CFF,#8FB5FF);border-radius:12px;padding:20px;margin-bottom:25px;color:#fff}
@@ -894,238 +1035,238 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
     transform: translateY(-2px);
     box-shadow: 0 5px 15px rgba(107,140,255,0.3);
 }
+
+/* New style for Issue Form Container */
+.issue-form-container {
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 25px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.08);
+}
+.issue-form-container h3 {
+    margin: 0 0 20px 0;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--accent-light);
+    color: var(--primary);
+    font-size: 18px;
+}
 </style>
-<!-- barcode scanner -->
-<div class="barcode-search-section">
-    <h4><i class="fas fa-barcode"></i> Physical Barcode Scanner</h4>
-    <div style="display:flex;gap:10px;margin-bottom:15px">
-        <button type="button" onclick="openHardwareScannerModal()" class="btn-primary" style="flex:1;padding:12px;background:linear-gradient(135deg,#F8B0C0,#e69eb0);border:none;color:#fff"><i class="fas fa-barcode"></i> <strong>Open Hardware Scanner</strong></button>
-        <button type="button" onclick="openScannerModal()" class="btn-primary" style="flex:1;padding:12px;background:linear-gradient(135deg,#6B8CFF,#8FB5FF);border:none;color:#fff"><i class="fas fa-camera"></i> Webcam / Manual</button>
-        <div style="background:rgba(255,255,255,.2);padding:10px 15px;border-radius:8px;font-size:13px"><i class="fas fa-check-circle"></i> Scanner Ready</div>
-    </div>
-    <div class="barcode-search-box">
-        <i class="fas fa-search"></i>
-        <input type="text" id="barcode_input" placeholder="Place cursor here and scan barcode..." autocomplete="off" spellcheck="false">
-        <button type="button" onclick="searchBarcode()"><i class="fas fa-barcode"></i> Search</button>
-    </div>
-    <div id="barcode_result" class="barcode-search-result"></div>
-</div>
 
-<div id="scannerModal" class="scanner-modal">
-    <div class="scanner-modal-content">
-        <div class="scanner-modal-header"><h3><i class="fas fa-barcode"></i> Barcode Scanner</h3><button type="button" class="close-modal-btn" onclick="closeScannerModal()">&times;</button></div>
-        <div class="scanner-modal-body">
-            <div class="scanner-input-section">
-                <label>Enter Barcode Manually</label>
-                <input type="text" id="modal_barcode_input" placeholder="Type barcode or article name..." autocomplete="off">
-                <small>Press Enter to search</small>
-            </div>
-            <div id="modal_barcode_result" class="scanner-result-box"></div>
-        </div>
-        <div class="scanner-modal-footer"><button type="button" onclick="closeScannerModal()" class="btn-secondary">Close</button></div>
+<!-- Issue New Item Form Container (Moved outside stat-chart) -->
+<div class="issue-form-container">
+    <h3><i class="fas fa-hand-holding"></i> <?php echo $reissue_item ? 'Reissue Item' : 'Issue New Item'; ?></h3>
+    
+    <?php if ($reissue_item): ?>
+    <div class="alert-warning"><strong>Important:</strong> Reissuing from <strong><?php echo htmlspecialchars($reissue_item['issued_to_name']); ?></strong>
+    <?php if(!empty($reissue_item['original_position'])) echo ' - ' . htmlspecialchars($reissue_item['original_position']); ?>
+    <?php if(!empty($reissue_item['original_department'])) echo ' (' . htmlspecialchars($reissue_item['original_department']) . ')'; ?>
     </div>
-</div>
-<!-- hardwaremodal ung radio  -->
-<div id="hardwareScannerModal" class="hardware-scanner-modal">
-    <div class="hardware-scanner-content">
-        <div class="hardware-scanner-header"><h2><i class="fas fa-barcode"></i> Hardware Barcode Scanner</h2><button type="button" class="close-btn" onclick="closeHardwareScannerModal()">&times;</button></div>
-        <div class="hardware-scanner-body">
-            <div class="scanner-instructions"><strong><i class="fas fa-info-circle"></i> Ready to Scan</strong> Click the input field below and scan barcodes. When done, click "Add to Cart".</div>
-            <div class="scanner-input-container">
-                <label><i class="fas fa-barcode"></i> Scan Barcode</label>
-                <div class="scanner-input-wrapper"><i class="fas fa-barcode"></i><input type="text" id="hardwareScannerInput" class="hardware-scanner-input" placeholder="Place cursor here and scan..." autocomplete="off"></div>
-            </div>
-            <div class="scanned-items-list"><div id="hardwareScannedItemsContainer"><div class="empty-scan-state"><i class="fas fa-box"></i><p>No items scanned yet</p></div></div></div>
+    <?php endif; ?>
+    
+    <!-- SEARCH SECTIONS MOVED INSIDE THE FORM -->
+    <!-- Property Number Search Section -->
+    <div class="property-search-section">
+        <h4><i class="fas fa-search"></i> Search Items by Property Number</h4>
+        <div class="property-search-box">
+            <input type="text" id="property_search_input" placeholder="Enter property number, article name, or barcode..." autocomplete="off">
+            <button type="button" onclick="searchByProperty()"><i class="fas fa-search"></i> Search</button>
+            <button type="button" onclick="clearPropertySearch()" style="background:#6c757d"><i class="fas fa-times"></i> Clear</button>
         </div>
-        <div class="hardware-scanner-footer">
-            <button type="button" class="btn-clear-scans" onclick="clearHardwareScans()" id="clearScansBtn" style="display:none"><i class="fas fa-trash"></i> Clear All</button>
-            <button type="button" class="btn-add-all-to-cart" onclick="addHardwareScannedToCart()" id="addToCartBtn" disabled><i class="fas fa-cart-plus"></i> Add to Cart</button>
-            <button type="button" class="btn-close-hardware-scanner" onclick="closeHardwareScannerModal()">Close</button>
-        </div>
+        <div id="property_search_result" class="property-search-result"></div>
     </div>
-</div>
 
-<div class="stats-grid">
-    <div class="stat-chart">
-        <h3><i class="fas fa-hand-holding"></i> <?php echo $reissue_item ? 'Reissue Item' : 'Issue New Item'; ?></h3>
+    <!-- Barcode Scanner Section -->
+    <div class="barcode-search-section">
+        <h4><i class="fas fa-barcode"></i> Physical Barcode Scanner</h4>
+        <div style="display:flex;gap:10px;margin-bottom:15px">
+            <button type="button" onclick="openHardwareScannerModal()" class="btn-primary" style="flex:1;padding:12px;background:linear-gradient(135deg,#F8B0C0,#e69eb0);border:none;color:#fff"><i class="fas fa-barcode"></i> <strong>Open Hardware Scanner</strong></button>
+            <button type="button" onclick="openScannerModal()" class="btn-primary" style="flex:1;padding:12px;background:linear-gradient(135deg,#6B8CFF,#8FB5FF);border:none;color:#fff"><i class="fas fa-camera"></i> Webcam / Manual</button>
+            <div style="background:rgba(255,255,255,.2);padding:10px 15px;border-radius:8px;font-size:13px"><i class="fas fa-check-circle"></i> Scanner Ready</div>
+        </div>
+        <div class="barcode-search-box">
+            <i class="fas fa-search"></i>
+            <input type="text" id="barcode_input" placeholder="Place cursor here and scan barcode..." autocomplete="off" spellcheck="false">
+            <button type="button" onclick="searchBarcode()"><i class="fas fa-barcode"></i> Search</button>
+        </div>
+        <div id="barcode_result" class="barcode-search-result"></div>
+    </div>
+    
+    <form method="POST" action="" id="issueForm">
         <?php if ($reissue_item): ?>
-        <div class="alert-warning"><strong>Important:</strong> Reissuing from <strong><?php echo htmlspecialchars($reissue_item['issued_to_name']); ?></strong>
-        <?php if(!empty($reissue_item['original_position'])) echo ' - ' . htmlspecialchars($reissue_item['original_position']); ?>
-        <?php if(!empty($reissue_item['original_department'])) echo ' (' . htmlspecialchars($reissue_item['original_department']) . ')'; ?>
-        </div>
+        <input type="hidden" name="is_reissue" value="1">
+        <input type="hidden" name="original_issuance_id" value="<?php echo $reissue_from_id; ?>">
         <?php endif; ?>
         
-        <form method="POST" action="" id="issueForm">
-            <?php if ($reissue_item): ?>
-            <input type="hidden" name="is_reissue" value="1">
-            <input type="hidden" name="original_issuance_id" value="<?php echo $reissue_from_id; ?>">
-            <?php endif; ?>
-            
-            <!-- SELECTED ITEMS SECTION (TOP) -->
-            <div class="form-group">
-                <label><i class="fas fa-boxes"></i> Selected Items</label>
-                <div class="selected-items-grid" id="selectedItemsContainer">
-                    <div class="empty-cart" id="emptyCartMessage">
-                        <i class="fas fa-barcode"></i>
-                        <p>No items selected. Scan barcodes above.</p>
-                    </div>
-                    <div id="selectedItemsList"></div>
-                    <div id="cartSummary" class="cart-summary" style="display:none"></div>
+        <!-- SELECTED ITEMS SECTION -->
+        <div class="form-group">
+            <label><i class="fas fa-boxes"></i> Selected Items</label>
+            <div class="selected-items-grid" id="selectedItemsContainer">
+                <div class="empty-cart" id="emptyCartMessage">
+                    <i class="fas fa-barcode"></i>
+                    <p>No items selected. Scan barcodes or search by property number above.</p>
                 </div>
+                <div id="selectedItemsList"></div>
+                <div id="cartSummary" class="cart-summary" style="display:none"></div>
             </div>
+        </div>
+        
+
+        
+        <!-- ISSUE TO SECTION - SEARCH WITH BUTTON -->
+        <div class="form-group">
+            <label><i class="fas fa-user-tie"></i> Issue To:</label>
             
-            <!-- ISSUE TO SECTION - SEARCH WITH BUTTON -->
-            <div class="form-group">
-                <label><i class="fas fa-user-tie"></i> Issue To:</label>
-                
-                <div class="employee-search-section">
-                    <div class="employee-search-bar">
-                        <div class="search-group">
-                            <label>NAME</label>
-                            <input type="text" id="search_employee_name" placeholder="Search by name...">
-                        </div>
-                        <div class="search-group">
-                            <label>DEPARTMENT</label>
-                            <select id="search_department">
-                                <option value="">All Departments</option>
-                                <?php if($departments_list && $departments_list->num_rows > 0): 
-                                    $departments_list->data_seek(0);
-                                    while($dept = $departments_list->fetch_assoc()): ?>
-                                    <option value="<?php echo htmlspecialchars($dept['name']); ?>"><?php echo htmlspecialchars($dept['code'] . ' - ' . $dept['name']); ?></option>
-                                <?php endwhile; endif; ?>
-                            </select>
-                        </div>
-                        <div class="search-group">
-                            <label>SECTION</label>
-                            <select id="search_section">
-                                <option value="">All Sections</option>
-                                <?php if($sections_list && $sections_list->num_rows > 0): 
-                                    $sections_list->data_seek(0);
-                                    while($sec = $sections_list->fetch_assoc()): ?>
-                                    <option value="<?php echo htmlspecialchars($sec['name']); ?>"><?php echo htmlspecialchars($sec['name']); ?></option>
-                                <?php endwhile; endif; ?>
-                            </select>
-                        </div>
-                        <div class="search-group">
-                            <label>POSITION</label>
-                            <select id="search_position">
-                                <option value="">All Positions</option>
-                                <?php if($positions_list && $positions_list->num_rows > 0): 
-                                    $positions_list->data_seek(0);
-                                    while($pos = $positions_list->fetch_assoc()): ?>
-                                    <option value="<?php echo htmlspecialchars($pos['position']); ?>"><?php echo htmlspecialchars($pos['position']); ?></option>
-                                <?php endwhile; endif; ?>
-                            </select>
-                        </div>
-                        <div class="search-group" style="flex: 0.5;">
-                            <label>&nbsp;</label>
-                            <button type="button" class="btn-search-employee" onclick="searchEmployees()">
-                                <i class="fas fa-search"></i> Search
-                            </button>
-                        </div>
-                        <div class="search-group" style="flex: 0.3;">
-                            <label>&nbsp;</label>
-                            <button type="button" class="btn-clear-employee" onclick="clearEmployeeSearch()">
-                                <i class="fas fa-times"></i> Clear
-                            </button>
-                        </div>
+            <div class="employee-search-section">
+                <div class="employee-search-bar">
+                    <div class="search-group">
+                        <label>NAME</label>
+                        <input type="text" id="search_employee_name" placeholder="Search by name...">
                     </div>
-                    
-                    <!-- Search Results Table -->
-                    <div id="employee_results_container" style="max-height: 300px; overflow-y: auto;">
-                        <table class="employee-results-table" style="width: 100%;">
-                            <thead>
-                                <tr>
-                                    <th>Employee Name</th>
-                                    <th>Position</th>
-                                    <th>Department</th>
-                                    <th>Action</th>
-                                </tr>
-                            </thead>
-                            <tbody id="employee_results_body">
-                                <tr>
-                                    <td colspan="4" class="no-results">
-                                        <i class="fas fa-search"></i>
-                                        <p>Click "Search" to find employees</p>
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
+                    <div class="search-group">
+                        <label>DEPARTMENT</label>
+                        <select id="search_department">
+                            <option value="">All Departments</option>
+                            <?php if($departments_list && $departments_list->num_rows > 0): 
+                                $departments_list->data_seek(0);
+                                while($dept = $departments_list->fetch_assoc()): ?>
+                                <option value="<?php echo htmlspecialchars($dept['name']); ?>"><?php echo htmlspecialchars($dept['code'] . ' - ' . $dept['name']); ?></option>
+                            <?php endwhile; endif; ?>
+                        </select>
+                    </div>
+                    <div class="search-group">
+                        <label>SECTION</label>
+                        <select id="search_section">
+                            <option value="">All Sections</option>
+                            <?php if($sections_list && $sections_list->num_rows > 0): 
+                                $sections_list->data_seek(0);
+                                while($sec = $sections_list->fetch_assoc()): ?>
+                                <option value="<?php echo htmlspecialchars($sec['name']); ?>"><?php echo htmlspecialchars($sec['name']); ?></option>
+                            <?php endwhile; endif; ?>
+                        </select>
+                    </div>
+                    <div class="search-group">
+                        <label>POSITION</label>
+                        <select id="search_position">
+                            <option value="">All Positions</option>
+                            <?php if($positions_list && $positions_list->num_rows > 0): 
+                                $positions_list->data_seek(0);
+                                while($pos = $positions_list->fetch_assoc()): ?>
+                                <option value="<?php echo htmlspecialchars($pos['position']); ?>"><?php echo htmlspecialchars($pos['position']); ?></option>
+                            <?php endwhile; endif; ?>
+                        </select>
+                    </div>
+                    <div class="search-group" style="flex: 0.5;">
+                        <label>&nbsp;</label>
+                        <button type="button" class="btn-search-employee" onclick="searchEmployees()">
+                            <i class="fas fa-search"></i> Search
+                        </button>
+                    </div>
+                    <div class="search-group" style="flex: 0.3;">
+                        <label>&nbsp;</label>
+                        <button type="button" class="btn-clear-employee" onclick="clearEmployeeSearch()">
+                            <i class="fas fa-times"></i> Clear
+                        </button>
                     </div>
                 </div>
                 
-                <!-- Selected Employee Display -->
-                <div id="selected_employee_display" style="display: none; margin-top: 10px; padding: 12px 15px; background: var(--success-light); border-radius: 6px;">
-                    <i class="fas fa-user-check" style="color: var(--success); margin-right: 10px;"></i>
-                    <span style="color: var(--success);">Selected: <strong id="selected_employee_name"></strong></span>
+                <!-- Search Results Table -->
+                <div id="employee_results_container" style="max-height: 300px; overflow-y: auto;">
+                    <table class="employee-results-table" style="width: 100%;">
+                        <thead>
+                            <tr>
+                                <th>Employee Name</th>
+                                <th>Position</th>
+                                <th>Department</th>
+                                <th>Department Code</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="employee_results_body">
+                            <tr>
+                                <td colspan="5" class="no-results">
+                                    <i class="fas fa-search"></i>
+                                    <p>Click "Search" to find employees</p>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
-                <input type="hidden" id="selected_employee_id" name="issued_to" value="">
             </div>
             
-            <!-- SIGNATORY DROPDOWN -->
-            <div class="form-group">
-                <label for="signatory_id"><i class="fas fa-signature"></i> Signatory <small>(Optional)</small></label>
-                <select name="signatory_id" id="signatory_id" class="form-control">
-                    <option value="">-- Select Signatory (Optional) --</option>
-                    <?php
-                    // Fetch active signatories
-                    $signatories_query = $conn->query("
-                        SELECT s.*, 
-                               CASE 
-                                   WHEN s.employee_id IS NOT NULL THEN CONCAT(e.firstname, ' ', e.lastname)
-                                   ELSE s.name 
-                               END as display_name,
-                               CASE 
-                                   WHEN s.employee_id IS NOT NULL THEN e.position
-                                   ELSE s.position 
-                               END as display_position
-                        FROM signatories s
-                        LEFT JOIN employees e ON s.employee_id = e.id
-                        WHERE s.is_active = 1
-                        ORDER BY s.name ASC
-                    ");
-                    
-                    if ($signatories_query && $signatories_query->num_rows > 0) {
-                        while ($signatory = $signatories_query->fetch_assoc()) {
-                            $display_text = htmlspecialchars($signatory['display_name']);
-                            if (!empty($signatory['display_position'])) {
-                                $display_text .= ' - ' . htmlspecialchars($signatory['display_position']);
-                            }
-                            echo '<option value="' . $signatory['id'] . '">' . $display_text . '</option>';
+            <!-- Selected Employee Display -->
+            <div id="selected_employee_display" style="display: none; margin-top: 10px; padding: 12px 15px; background: var(--success-light); border-radius: 6px;">
+                <i class="fas fa-user-check" style="color: var(--success); margin-right: 10px;"></i>
+                <span style="color: var(--success);">Selected: <strong id="selected_employee_name"></strong></span>
+                <span id="selected_dept_code_display" style="margin-left: 10px; font-size: 11px; background: var(--accent-light); padding: 2px 8px; border-radius: 12px;"></span>
+            </div>
+            <input type="hidden" id="selected_employee_id" name="issued_to" value="">
+            <input type="hidden" id="selected_dept_code" name="department_code" value="">
+        </div>
+        
+        <!-- SIGNATORY DROPDOWN -->
+        <div class="form-group">
+            <label for="signatory_id"><i class="fas fa-signature"></i> Signatory <small>(Optional)</small></label>
+            <select name="signatory_id" id="signatory_id" class="form-control">
+                <option value="">-- Select Signatory (Optional) --</option>
+                <?php
+                // Fetch active signatories
+                $signatories_query = $conn->query("
+                    SELECT s.*, 
+                           CASE 
+                               WHEN s.employee_id IS NOT NULL THEN CONCAT(e.firstname, ' ', e.lastname)
+                               ELSE s.name 
+                           END as display_name,
+                           CASE 
+                               WHEN s.employee_id IS NOT NULL THEN e.position
+                               ELSE s.position 
+                           END as display_position
+                    FROM signatories s
+                    LEFT JOIN employees e ON s.employee_id = e.id
+                    WHERE s.is_active = 1
+                    ORDER BY s.name ASC
+                ");
+                
+                if ($signatories_query && $signatories_query->num_rows > 0) {
+                    while ($signatory = $signatories_query->fetch_assoc()) {
+                        $display_text = htmlspecialchars($signatory['display_name']);
+                        if (!empty($signatory['display_position'])) {
+                            $display_text .= ' - ' . htmlspecialchars($signatory['display_position']);
                         }
+                        echo '<option value="' . $signatory['id'] . '">' . $display_text . '</option>';
                     }
-                    ?>
-                </select>
-                <small class="text-muted">Select a signatory for the issuance documents</small>
-            </div>
-            
-            <div class="form-group">
-                <label for="purpose"><i class="fas fa-clipboard"></i> Purpose</label>
-                <input type="text" id="purpose" name="purpose" class="form-control" placeholder="Enter purpose of issuance" required>
-            </div>
-            
-            <div class="form-group">
-                <label>Condition</label>
-                <select name="condition" class="form-control">
-                    <option value="Serviceable">Serviceable</option>
-                    <option value="Good">Good</option>
-                    <option value="Fair">Fair</option>
-                    <option value="Poor">Poor</option>
-                </select>
-            </div>
-            
-            <div class="form-group">
-                <label>Remarks</label>
-                <textarea name="remarks" class="form-control" rows="2" placeholder="Optional notes"></textarea>
-            </div>
-            
-            <div class="form-group">
-                <button type="button" class="btn-primary" id="submitBtn" onclick="showConfirmModal()">
-                    <i class="fas fa-hand-holding"></i> <?php echo $reissue_item?'Reissue':'Issue Selected Items'; ?> (<span id="selectedCount">0</span>)
-                </button>
-            </div>
-        </form>
-    </div>
+                }
+                ?>
+            </select>
+            <small class="text-muted">Select a signatory for the issuance documents</small>
+        </div>
+        
+        <div class="form-group">
+            <label for="purpose"><i class="fas fa-clipboard"></i> Purpose</label>
+            <input type="text" id="purpose" name="purpose" class="form-control" placeholder="Enter purpose of issuance" required>
+        </div>
+        
+        <div class="form-group">
+            <label>Condition</label>
+            <select name="condition" class="form-control">
+                <option value="Serviceable">Serviceable</option>
+                <option value="Good">Good</option>
+                <option value="Fair">Fair</option>
+                <option value="Poor">Poor</option>
+            </select>
+        </div>
+        
+        <div class="form-group">
+            <label>Remarks</label>
+            <textarea name="remarks" class="form-control" rows="2" placeholder="Optional notes"></textarea>
+        </div>
+        
+        <div class="form-group">
+            <button type="button" class="btn-primary" id="submitBtn" onclick="showConfirmModal()">
+                <i class="fas fa-hand-holding"></i> <?php echo $reissue_item?'Reissue':'Issue Selected Items'; ?> (<span id="selectedCount">0</span>)
+            </button>
+        </div>
+    </form>
 </div>
 
 <!-- Currently Issued Items Section -->
@@ -1138,17 +1279,21 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
                     <th>Employee</th>
                     <th>Department / Section</th>
                     <th>Location Code</th>
-                    <th>Items</th>
-                    <th>Total Qty</th>
+                    <th>Item / Property No.</th>
+                    <th>Qty</th>
+                    <th>Issued Date</th>
                     <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
                 <?php if(!empty($employee_issuances)): foreach($employee_issuances as $eid=>$edata): $ti=0;$tq=0;foreach($edata['items'] as $it){$ti++;$tq+=$it['quantity_issued'];} ?>
-                <tr style="background:#f8f9fa"><td colspan="6" style="padding:15px;border-bottom:2px solid #6B8CFF">
+                <tr style="background:#f8f9fa"><td colspan="7" style="padding:15px;border-bottom:2px solid #6B8CFF">
                     <strong style="color:#6B8CFF;font-size:16px"><i class="fas fa-user"></i> <?php echo htmlspecialchars($edata['employee_name']); ?></strong>
                     <?php if(!empty($edata['position'])): ?>
                     <span class="user-department-badge"><i class="fas fa-briefcase"></i> <?php echo htmlspecialchars($edata['position']); ?></span>
+                    <?php endif; ?>
+                    <?php if(!empty($edata['department_code'])): ?>
+                    <span class="user-location-badge"><i class="fas fa-building"></i> Dept Code: <?php echo htmlspecialchars($edata['department_code']); ?></span>
                     <?php endif; ?>
                     <?php if(!empty($edata['location_code']) && $edata['location_code'] != '000000'): ?>
                     <span class="user-location-badge"><i class="fas fa-location-dot"></i> LOC: <?php echo htmlspecialchars($edata['location_code']); ?></span>
@@ -1157,10 +1302,16 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
                     <span class="user-department-badge"><i class="fas fa-building"></i> <?php echo htmlspecialchars($edata['location_string']); ?></span>
                     <?php endif; ?>
                     <span style="float:right;background:#6B8CFF;color:#fff;padding:4px 12px;border-radius:20px;font-size:12px"><?php echo $ti; ?> item(s) • <?php echo $tq; ?> total qty</span>
-                </td></tr>
+                 </div></div>
                 <?php foreach($edata['items'] as $item): ?>
                 <tr style="background:#fafafa">
-                    <td style="padding-left:30px"><strong><?php echo htmlspecialchars($item['article_name']); ?></strong><br><small><?php echo htmlspecialchars($item['property_no']??'N/A'); ?></small></td>
+                    <td style="padding-left:30px">
+                        <strong><?php echo htmlspecialchars($item['article_name']); ?></strong>
+                        <br><small>Property: <code><?php echo htmlspecialchars($item['property_no']??'N/A'); ?></code></small>
+                        <?php if(strpos($item['property_no']??'', '-') !== false): ?>
+                        <br><small class="property-dept-code">Dept Code: <?php echo substr($item['property_no'], strrpos($item['property_no'], '-') + 1); ?></small>
+                        <?php endif; ?>
+                     </div>
                     <td class="text-muted" style="font-size:11px">
                         <?php 
                         $loc_parts = [];
@@ -1169,10 +1320,10 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
                         if(!empty($item['section_name'])) $loc_parts[] = $item['section_name'];
                         echo !empty($loc_parts) ? htmlspecialchars(implode(' → ', $loc_parts)) : '-';
                         ?>
-                    </td>
-                    <td class="text-muted" style="font-size:11px"><?php echo htmlspecialchars($item['location_code'] ?? '-'); ?></td>
-                    <td><?php echo $item['quantity_issued'].' '.htmlspecialchars($item['uom']??'pcs'); ?></td>
-                    <td><?php echo date('M d, Y',strtotime($item['issued_date'])); ?></td>
+                     </div>
+                    <td class="text-muted" style="font-size:11px"><?php echo htmlspecialchars($item['location_code'] ?? '-'); ?> </div>
+                    <td><?php echo $item['quantity_issued'].' '.htmlspecialchars($item['uom']??'pcs'); ?> </div>
+                    <td><?php echo date('M d, Y',strtotime($item['issued_date'])); ?> </div>
                     <td><div class="action-buttons">
                         <a href="?print_par=<?php echo $item['id']; ?>" class="action-btn" style="background:#2c3e50" target="_blank" title="Print PAR"><i class="fas fa-file-signature"></i></a>
                         <a href="?return=<?php echo $item['id']; ?>" class="action-btn success" onclick="return confirmReturnItem(event, this)"><i class="fas fa-undo"></i></a>
@@ -1182,10 +1333,10 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
                         <span class="action-btn" style="background:#ccc;cursor:not-allowed"><i class="fas fa-redo"></i></span>
                         <?php endif; ?>
                         <button class="action-btn view" onclick="viewIssuanceDetails(<?php echo $item['id']; ?>)"><i class="fas fa-eye"></i></button>
-                    </div></td>
-                </tr>
+                    </div></div>
+                 </tr>
                 <?php endforeach; endforeach; else: ?>
-                <tr><td colspan="6" class="text-center">No items currently issued</td></tr>
+                <tr><td colspan="7" class="text-center">No items currently issued</td></tr>
                 <?php endif; ?>
             </tbody>
         </table>
@@ -1207,7 +1358,8 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
             CONCAT(ub.firstname, ' ', ub.lastname) as issued_by_name,
             e.position,
             s.name as section_name,
-            d.name as department_name
+            d.name as department_name,
+            d.code as department_code
         FROM equipment_issuance ei 
         JOIN inventory i ON ei.inventory_id = i.id 
         JOIN employees e ON ei.issued_to = e.id
@@ -1220,7 +1372,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
     ?>
     <?php if($history && $history->num_rows > 0): ?>
     <div style="overflow-x: auto;">
-        <table style="width: 100%; min-width: 1000px;">
+        <table style="width: 100%; min-width: 1100px;">
             <thead>
                 <tr>
                     <th>Date</th>
@@ -1228,9 +1380,9 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
                     <th>Property No.</th>
                     <th>Issued To</th>
                     <th>Department/Section</th>
+                    <th>Dept Code</th>
                     <th>Issued By</th>
                     <th>Qty</th>
-                    <th>Purpose</th>
                     <th>Status</th>
                     <th>Return Date</th>
                 </tr>
@@ -1238,10 +1390,14 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
             <tbody>
                 <?php while($item = $history->fetch_assoc()): ?>
                 <tr>
-                    <td style="white-space: nowrap;"><?php echo date('M d, Y',strtotime($item['issued_date'])); ?></td>
-                    <td><strong><?php echo htmlspecialchars($item['article_name']); ?></strong></td>
-                    <td><code><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></code></td>
-                    <td><?php echo htmlspecialchars($item['issued_to_name']); ?></td>
+                    <td style="white-space: nowrap;"><?php echo date('M d, Y',strtotime($item['issued_date'])); ?> </div>
+                    <td><strong><?php echo htmlspecialchars($item['article_name']); ?></strong></div>
+                    <td><code><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></code>
+                        <?php if(strpos($item['property_no']??'', '-') !== false): ?>
+                        <br><small class="property-dept-code">Dept: <?php echo substr($item['property_no'], strrpos($item['property_no'], '-') + 1); ?></small>
+                        <?php endif; ?>
+                    </div>
+                    <td><?php echo htmlspecialchars($item['issued_to_name']); ?> </div>
                     <td>
                         <?php 
                         $loc_parts = [];
@@ -1249,19 +1405,19 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
                         if(!empty($item['section_name'])) $loc_parts[] = $item['section_name'];
                         echo !empty($loc_parts) ? htmlspecialchars(implode(' → ', $loc_parts)) : '-';
                         ?>
-                    </td>
-                    <td><?php echo htmlspecialchars($item['issued_by_name']); ?></td>
-                    <td><?php echo $item['quantity_issued']; ?></td>
-                    <td style="max-width: 200px;"><?php echo htmlspecialchars(substr($item['purpose'] ?? '', 0, 50)); ?></td>
+                     </div>
+                    <td><span class="user-location-badge"><?php echo htmlspecialchars($item['department_code'] ?? '-'); ?></span></div>
+                    <td><?php echo htmlspecialchars($item['issued_by_name']); ?> </div>
+                    <td><?php echo $item['quantity_issued']; ?> </div>
                     <td>
                         <?php 
                         $status_color = $item['status'] == 'issued' ? '#FF9800' : ($item['status'] == 'returned' ? '#4CAF50' : '#f44336');
                         $status_bg = $item['status'] == 'issued' ? '#FFF3E0' : ($item['status'] == 'returned' ? '#E8F5E9' : '#FFEBEE');
                         echo '<span style="background:'.$status_bg.';color:'.$status_color.';padding:4px 10px;border-radius:20px;font-size:11px;font-weight:600">'.ucfirst($item['status']).'</span>';
                         ?>
-                    </td>
-                    <td><?php echo $item['actual_return'] ? date('M d, Y', strtotime($item['actual_return'])) : '—'; ?></td>
-                </tr>
+                     </div>
+                    <td><?php echo $item['actual_return'] ? date('M d, Y', strtotime($item['actual_return'])) : '—'; ?> </div>
+                 </tr>
                 <?php endwhile; ?>
             </tbody>
         </table>
@@ -1296,6 +1452,66 @@ const inventoryData = <?php echo json_encode($inventory_data); ?>;
 let cartItems = [];
 let hardwareScannedItems = [];
 let selectedEmployeeId = null;
+let selectedDeptCode = null;
+
+// Property Number Search Function
+function searchByProperty() {
+    const searchTerm = document.getElementById('property_search_input').value.trim();
+    const resultDiv = document.getElementById('property_search_result');
+    
+    if (!searchTerm) {
+        resultDiv.innerHTML = '<div class="alert-warning" style="padding:10px">Please enter a property number, article name, or barcode</div>';
+        resultDiv.classList.add('show');
+        return;
+    }
+    
+    let found = [];
+    for (let id in inventoryData) {
+        const item = inventoryData[id];
+        const propertyNo = (item.property_no || '').toLowerCase();
+        const articleName = (item.article_name || '').toLowerCase();
+        const barcode = (item.barcode_data || '').toLowerCase();
+        const searchLower = searchTerm.toLowerCase();
+        
+        if (propertyNo.includes(searchLower) || articleName.includes(searchLower) || barcode.includes(searchLower)) {
+            found.push(item);
+        }
+    }
+    
+    if (found.length > 0) {
+        let html = '<div style="max-height: 300px; overflow-y: auto;">';
+        found.forEach(item => {
+            const isInCart = cartItems.some(cartItem => cartItem.id == item.id);
+            html += `
+                <div class="result-property-card">
+                    <div class="result-property-info">
+                        <h5>${escapeHtml(item.article_name)}</h5>
+                        <p>Property No: <strong>${escapeHtml(item.property_no || 'N/A')}</strong> | Available: ${parseFloat(item.qty_physical_count).toFixed(2)} ${escapeHtml(item.uom || 'pcs')}</p>
+                        <p>Value: ${formatCurrency(item.unit_value)} each</p>
+                    </div>
+                    <div>
+                        ${isInCart ? 
+                            '<button class="btn-add-property" disabled style="background:#ccc">Already in Cart</button>' : 
+                            `<button class="btn-add-property" onclick="addToCart(${item.id}, 1)">Add to Cart</button>`
+                        }
+                    </div>
+                </div>
+            `;
+        });
+        html += '</div>';
+        resultDiv.innerHTML = html;
+        resultDiv.classList.add('show');
+    } else {
+        resultDiv.innerHTML = `<div class="result-property-card"><div class="result-property-info"><h5 style="color:#f44336">No items found</h5><p>No items match: <strong>${escapeHtml(searchTerm)}</strong></p></div></div>`;
+        resultDiv.classList.add('show');
+    }
+}
+
+function clearPropertySearch() {
+    document.getElementById('property_search_input').value = '';
+    document.getElementById('property_search_result').innerHTML = '';
+    document.getElementById('property_search_result').classList.remove('show');
+}
 
 // Search for employees
 function searchEmployees() {
@@ -1320,7 +1536,7 @@ function searchEmployees() {
         .catch(error => {
             console.error('Error:', error);
             const tbody = document.getElementById('employee_results_body');
-            tbody.innerHTML = '<tr><td colspan="4" class="no-results"><i class="fas fa-exclamation-triangle"></i><p>Error loading employees</p></td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" class="no-results"><i class="fas fa-exclamation-triangle"></i><p>Error loading employees</p></td></tr>';
         });
 }
 
@@ -1328,7 +1544,7 @@ function displayEmployeeResults(employees) {
     const tbody = document.getElementById('employee_results_body');
     
     if (!employees || employees.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" class="no-results"><i class="fas fa-search"></i><p>No employees found</p></td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="no-results"><i class="fas fa-search"></i><p>No employees found</p></td></tr>';
         return;
     }
     
@@ -1338,11 +1554,12 @@ function displayEmployeeResults(employees) {
         const selectedClass = isSelected ? 'selected' : '';
         
         html += `
-            <tr class="employee-result-row ${selectedClass}" onclick="selectEmployeeFromResult(${emp.id}, '${escapeHtml(emp.firstname + ' ' + emp.lastname)}', '${escapeHtml(emp.position || '')}', '${escapeHtml(emp.department_name || '')}')">
+            <tr class="employee-result-row ${selectedClass}" onclick="selectEmployeeFromResult(${emp.id}, '${escapeHtml(emp.firstname + ' ' + emp.lastname)}', '${escapeHtml(emp.position || '')}', '${escapeHtml(emp.department_name || '')}', '${escapeHtml(emp.department_code || '')}')">
                 <td class="employee-name-result">${escapeHtml(emp.lastname + ', ' + emp.firstname)}</td>
                 <td class="employee-position-result">${escapeHtml(emp.position || '—')}</td>
                 <td class="employee-dept-result">${escapeHtml(emp.department_name || '—')}</td>
-                <td><button class="select-employee-btn" onclick="event.stopPropagation();selectEmployeeFromResult(${emp.id}, '${escapeHtml(emp.firstname + ' ' + emp.lastname)}', '${escapeHtml(emp.position || '')}', '${escapeHtml(emp.department_name || '')}')">Select</button></td>
+                <td class="employee-dept-result"><span class="user-location-badge">${escapeHtml(emp.department_code || '—')}</span></td>
+                <td><button class="select-employee-btn" onclick="event.stopPropagation();selectEmployeeFromResult(${emp.id}, '${escapeHtml(emp.firstname + ' ' + emp.lastname)}', '${escapeHtml(emp.position || '')}', '${escapeHtml(emp.department_name || '')}', '${escapeHtml(emp.department_code || '')}')">Select</button></td>
             </tr>
         `;
     });
@@ -1350,15 +1567,18 @@ function displayEmployeeResults(employees) {
     tbody.innerHTML = html;
 }
 
-function selectEmployeeFromResult(id, name, position, department) {
+function selectEmployeeFromResult(id, name, position, department, deptCode) {
     selectedEmployeeId = id;
+    selectedDeptCode = deptCode;
     document.getElementById('selected_employee_id').value = id;
+    document.getElementById('selected_dept_code').value = deptCode;
     
     let displayText = name;
     if (position) displayText += ` - ${position}`;
     if (department) displayText += ` (${department})`;
     
     document.getElementById('selected_employee_name').innerHTML = displayText;
+    document.getElementById('selected_dept_code_display').innerHTML = `Dept Code: ${deptCode || 'N/A'}`;
     document.getElementById('selected_employee_display').style.display = 'flex';
     
     // Update selected row styling
@@ -1382,7 +1602,7 @@ function clearEmployeeSearch() {
     document.getElementById('search_position').value = '';
     
     const tbody = document.getElementById('employee_results_body');
-    tbody.innerHTML = '<tr><td colspan="4" class="no-results"><i class="fas fa-search"></i><p>Click "Search" to find employees</p></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" class="no-results"><i class="fas fa-search"></i><p>Click "Search" to find employees</p></td></tr>';
 }
 
 function showConfirmModal() {
@@ -1405,9 +1625,11 @@ function showConfirmModal() {
     }
     
     const employeeName = document.getElementById('selected_employee_name').innerHTML;
+    const deptCode = document.getElementById('selected_dept_code').value;
     const itemCount = cartCount > 0 ? cartCount : 1;
+    const deptMsg = deptCode ? ` (Department Code: ${deptCode})` : '';
     
-    document.getElementById('confirmModalMessage').innerHTML = `Issue ${itemCount} item(s) to ${employeeName}?`;
+    document.getElementById('confirmModalMessage').innerHTML = `Issue ${itemCount} item(s) to ${employeeName}${deptMsg}?<br><small style="color:var(--success);">Property numbers will be updated with department code: ${deptCode || 'N/A'}</small>`;
     document.getElementById('confirmModal').classList.add('show');
 }
 
@@ -1427,7 +1649,7 @@ function submitForm() {
 function confirmReturnItem(event, element) {
     event.preventDefault();
     const modal = document.getElementById('confirmModal');
-    document.getElementById('confirmModalMessage').innerHTML = `Return this item?`;
+    document.getElementById('confirmModalMessage').innerHTML = `Return this item?<br><small>This will add the quantity back to inventory.</small>`;
     modal.classList.add('show');
     
     window.pendingReturnUrl = element.getAttribute('href');
@@ -1539,7 +1761,7 @@ function performBarcodeSearch(barcode, inputId, resultId) {
                     <div class="result-info">
                         <h5>${escapeHtml(an)}</h5>
                         <p>Available: <strong>${ta.toFixed(2)} ${fi.uom || 'pcs'}</strong> | Value: ${formatCurrency(fi.unit_value)}</p>
-                        <p style="font-size:12px;color:#666">${fi.category ? `Category: <strong>${escapeHtml(fi.category)}</strong>` : ''}${fi.type_equipment && fi.type_equipment !== fi.category ? ` | Type: <strong>${escapeHtml(fi.type_equipment)}</strong>` : ''}</p>
+                        <p style="font-size:12px;color:#666">Property: <code>${escapeHtml(fi.property_no || 'N/A')}</code></p>
                     </div>
                     <div class="result-actions">
                         ${aic ? '<button class="btn-add-item" disabled>Already Added</button>' : `<button class="btn-add-item" onclick="openVariantSelector(${gIdx},'${resultId}')">Select Variant & Add</button>`}
@@ -1580,9 +1802,9 @@ function openVariantSelector(gi, rid) {
             <div style="padding:12px;border:1px solid #E0E0E0;border-radius:8px;margin-bottom:10px">
                 <div style="display:flex;justify-content:space-between">
                     <div>
-                        <p><strong>Barcode:</strong> ${escapeHtml(it.barcode_data || 'N/A')}</p>
                         <p><strong>Property:</strong> ${escapeHtml(it.property_no || 'N/A')}</p>
                         <p><strong>Available:</strong> ${q.toFixed(2)} ${escapeHtml(it.uom || 'pcs')}</p>
+                        <p><strong>Value:</strong> ${formatCurrency(it.unit_value)} each</p>
                     </div>
                     <div style="text-align:right">
                         <input type="number" id="qty_${gi}_${i}" value="1" min="1" max="${q}" style="width:70px;padding:5px;border:1px solid #E0E0E0;border-radius:5px;margin-bottom:8px">
@@ -1646,6 +1868,11 @@ function addToCart(id, q = 1) {
         });
     }
     updateCartDisplay();
+    // Clear search results after adding
+    document.getElementById('property_search_result').innerHTML = '';
+    document.getElementById('property_search_result').classList.remove('show');
+    document.getElementById('barcode_result').innerHTML = '';
+    document.getElementById('barcode_result').classList.remove('show');
 }
 
 function removeFromCart(id) {
@@ -1755,10 +1982,10 @@ function viewIssuanceDetails(id) {
             document.getElementById('modal-body').innerHTML = `
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
                     <div><strong>Item:</strong><br>${escapeHtml(d.article_name || 'N/A')}</div>
-                    <div><strong>Property No.:</strong><br>${escapeHtml(d.property_no || 'N/A')}</div>
+                    <div><strong>Property No.:</strong><br><code>${escapeHtml(d.property_no || 'N/A')}</code></div>
                     <div><strong>Issued To:</strong><br>${escapeHtml(d.issued_to_name || 'N/A')}</div>
                     <div><strong>Department:</strong><br>${escapeHtml(d.department_name || 'N/A')}</div>
-                    <div><strong>Section:</strong><br>${escapeHtml(d.section_name || 'N/A')}</div>
+                    <div><strong>Dept Code:</strong><br><span class="user-location-badge">${escapeHtml(d.department_code || 'N/A')}</span></div>
                     <div><strong>Quantity:</strong><br>${d.quantity_issued} ${escapeHtml(d.uom || 'pcs')}</div>
                     <div><strong>Purpose:</strong><br>${escapeHtml(d.purpose || 'N/A')}</div>
                     <div><strong>Condition:</strong><br>${escapeHtml(d.condition_on_issue || 'N/A')}</div>
@@ -1988,6 +2215,13 @@ document.addEventListener('DOMContentLoaded', function() {
         if (e.key === 'Enter') {
             e.preventDefault();
             searchBarcode();
+        }
+    });
+    
+    document.getElementById('property_search_input')?.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            searchByProperty();
         }
     });
     

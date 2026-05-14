@@ -54,17 +54,17 @@ if ($check->num_rows == 0) {
 }
 
 // Insert sample sections if not exists
-$check = $conn->query("SELECT * FROM sections LIMIT 1");
-if ($check->num_rows == 0) {
-    $conn->query("INSERT INTO sections (department_id, name) VALUES 
-                  (1, 'Triage'),
-                  (1, 'Treatment Room'),
-                  (2, 'Dispensing'),
-                  (3, 'ICU Ward A'),
-                  (3, 'ICU Ward B'),
-                  (4, 'Operating Room 1'),
-                  (4, 'Operating Room 2')");
-}
+// $check = $conn->query("SELECT * FROM sections LIMIT 1");
+// if ($check->num_rows == 0) {
+//     $conn->query("INSERT INTO sections (department_id, name) VALUES 
+//                   (1, 'Triage'),
+//                   (1, 'Treatment Room'),
+//                   (2, 'Dispensing'),
+//                   (3, 'ICU Ward A'),
+//                   (3, 'ICU Ward B'),
+//                   (4, 'Operating Room 1'),
+//                   (4, 'Operating Room 2')");
+// }
 
 // Insert default system settings if not exists
 $settings = [

@@ -1,11 +1,10 @@
 <?php
-// Add output buffering at the very top to prevent header warnings
+
 ob_start();
 
 /**
  * PPE Equipment Page (Admin)
- * Complete PPE management system with all inventory fields
- * Supports multiple barcode generation for quantity > 1
+ * With GLOBALLY UNIQUE Last 4 Digits
  */
 
 // Get the absolute path to the root directory
@@ -91,7 +90,6 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_property_preview' && isset($_G
     $sub_type_id = (int)$_GET['sub_type_id'];
     $quantity = (int)($_GET['quantity'] ?? 1);
     
-    // Get type code
     $type_query = $conn->prepare("SELECT code FROM type_of_equipment WHERE id = ?");
     $type_query->bind_param("i", $type_id);
     $type_query->execute();
@@ -99,7 +97,6 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_property_preview' && isset($_G
     $type_code = $type_result->fetch_assoc()['code'] ?? '00';
     $type_query->close();
     
-    // Get sub type code
     $subtype_query = $conn->prepare("SELECT code FROM equipment_sub_type WHERE id = ?");
     $subtype_query->bind_param("i", $sub_type_id);
     $subtype_query->execute();
@@ -108,22 +105,8 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_property_preview' && isset($_G
     $subtype_query->close();
     
     $year = date('Y');
-    $pattern_like = $year . '-' . $type_code . '-' . $subtype_code . '-%';
-    
-    // Get next sequence number
-    $seq_query = $conn->prepare("
-        SELECT MAX(CAST(SUBSTRING_INDEX(property_no, '-', -1) AS UNSIGNED)) as max_seq 
-        FROM inventory 
-        WHERE property_no LIKE ?
-    ");
-    $seq_query->bind_param("s", $pattern_like);
-    $seq_query->execute();
-    $seq_result = $seq_query->get_result();
-    $max_seq = $seq_result->fetch_assoc()['max_seq'] ?? 0;
-    $seq_query->close();
-    
-    $next_seq = $max_seq + 1;
     $base_format = $year . '-' . $type_code . '-' . $subtype_code;
+    $next_seq = getNextGlobalUniqueSequence($conn, $year, null);
     
     $response = [
         'success' => true,
@@ -146,8 +129,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_property_preview' && isset($_G
     exit;
 }
 
-
-// Get multiple items for barcode view
+// Get multiple items for barcode view - GROUP BY ARTICLE NAME
 if (isset($_GET['get_multiple_items'])) {
     header('Content-Type: application/json');
     $property_no = $_GET['property_no'] ?? '';
@@ -157,45 +139,27 @@ if (isset($_GET['get_multiple_items'])) {
         exit;
     }
     
-    // Debug logging
-    error_log("get_multiple_items called with property_no: " . $property_no);
+    $items = [];
+    $article_name = '';
     
-    // Get the base pattern without the sequence number
-    // Property format examples:
-    // - Single: 2026-02-0201-5527 (4 segments, last is 4-digit sequence)
-    // - Multiple: 2026-02-0201-0001, 2026-02-0201-0002, etc.
-    $base_pattern = $property_no;
-    
-    // Check if property has 4 segments (YYYY-TYPE-SUBTYPE-SEQUENCE)
-    // Remove the last 4-digit sequence to get the base pattern
-    if (preg_match('/^(\d{4}-\d{2}-\d{4})-\d{4}$/', $property_no, $matches)) {
-        $base_pattern = $matches[1];
-        error_log("Extracted base pattern: " . $base_pattern);
-    } else {
-        error_log("No pattern match, using original: " . $base_pattern);
-    }
-    
-    // Use LIKE to find all items with the same base pattern
-    $like_pattern = $base_pattern . '-%';
-    error_log("LIKE pattern: " . $like_pattern);
-    
-    // Query items that match the base pattern
     $stmt = $conn->prepare("
         SELECT i.id, i.property_no, i.article_name, i.barcode_data, 
                i.qty_physical_count as quantity, i.uom, i.unit_value,
+               i.description, i.condition_text,
                e.name as equipment_name
         FROM inventory i
         LEFT JOIN equipment e ON i.equipment_id = e.id
-        WHERE i.property_no LIKE ? 
-        ORDER BY i.property_no
+        WHERE i.property_no = ?
+        LIMIT 1
     ");
-    $stmt->bind_param("s", $like_pattern);
+    $stmt->bind_param("s", $property_no);
     $stmt->execute();
     $result = $stmt->get_result();
     
-    $items = [];
-    while ($row = $result->fetch_assoc()) {
-        // Ensure each item has a barcode (use property_no as fallback)
+    if ($result->num_rows > 0) {
+        $row = $result->fetch_assoc();
+        $article_name = $row['article_name'];
+        
         if (empty($row['barcode_data'])) {
             $row['barcode_data'] = $row['property_no'];
         }
@@ -206,20 +170,63 @@ if (isset($_GET['get_multiple_items'])) {
             'barcode_data' => $row['barcode_data'],
             'quantity' => $row['quantity'],
             'uom' => $row['uom'],
-            'unit_value' => $row['unit_value']
+            'unit_value' => $row['unit_value'],
+            'description' => $row['description'] ?? '',
+            'condition_text' => $row['condition_text'] ?? 'Serviceable',
+            'equipment_name' => $row['equipment_name'] ?? ''
         ];
     }
     $stmt->close();
     
-    error_log("Found " . count($items) . " items for pattern: " . $like_pattern);
+    if (!empty($article_name)) {
+        $stmt2 = $conn->prepare("
+            SELECT i.id, i.property_no, i.article_name, i.barcode_data, 
+                   i.qty_physical_count as quantity, i.uom, i.unit_value,
+                   i.description, i.condition_text,
+                   e.name as equipment_name
+            FROM inventory i
+            LEFT JOIN equipment e ON i.equipment_id = e.id
+            WHERE i.article_name = ? AND i.property_no != ?
+            ORDER BY CAST(SUBSTRING_INDEX(i.property_no, '-', -1) AS UNSIGNED)
+        ");
+        $stmt2->bind_param("ss", $article_name, $property_no);
+        $stmt2->execute();
+        $result2 = $stmt2->get_result();
+        
+        while ($row2 = $result2->fetch_assoc()) {
+            if (empty($row2['barcode_data'])) {
+                $row2['barcode_data'] = $row2['property_no'];
+            }
+            $items[] = [
+                'id' => $row2['id'],
+                'property_no' => $row2['property_no'],
+                'article_name' => $row2['article_name'],
+                'barcode_data' => $row2['barcode_data'],
+                'quantity' => $row2['quantity'],
+                'uom' => $row2['uom'],
+                'unit_value' => $row2['unit_value'],
+                'description' => $row2['description'] ?? '',
+                'condition_text' => $row2['condition_text'] ?? 'Serviceable',
+                'equipment_name' => $row2['equipment_name'] ?? ''
+            ];
+        }
+        $stmt2->close();
+    }
+    
+    $base_pattern = '';
+    if (count($items) > 0 && preg_match('/^(.+)-(\d{4})$/', $items[0]['property_no'], $m)) {
+        $base_pattern = $m[1];
+    } elseif (preg_match('/^(.+)-(\d{4})$/', $property_no, $m)) {
+        $base_pattern = $m[1];
+    }
     
     echo json_encode([
         'success' => true,
         'items' => $items,
         'count' => count($items),
         'base_pattern' => $base_pattern,
-        'original_property' => $property_no,
-        'like_pattern' => $like_pattern
+        'article_name' => $article_name,
+        'original_property' => $property_no
     ]);
     exit;
 }
@@ -258,7 +265,6 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_item' && isset($_GET['id'])) {
     $stmt->close();
     
     if ($item) {
-        // Format multi-select values
         if ($item['certified_correct']) {
             $certified_ids = json_decode($item['certified_correct'], true);
             if (is_array($certified_ids)) {
@@ -350,11 +356,10 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_edit_item' && isset($_GET['id'
 }
 
 // ============================================
-// FUNCTION TO GENERATE PROPERTY NUMBER
+// FUNCTION TO GENERATE PROPERTY NUMBER WITH GLOBALLY UNIQUE LAST 4 DIGITS
 // ============================================
 
 function generatePropertyNumber($conn, $type_equipment_id, $equipment_sub_type_id, $sequence_number = null) {
-    // Get equipment type code
     $type_query = $conn->prepare("SELECT code FROM type_of_equipment WHERE id = ?");
     $type_query->bind_param("i", $type_equipment_id);
     $type_query->execute();
@@ -362,7 +367,6 @@ function generatePropertyNumber($conn, $type_equipment_id, $equipment_sub_type_i
     $type_code = $type_result->fetch_assoc()['code'] ?? '00';
     $type_query->close();
     
-    // Get equipment sub type code
     $subtype_query = $conn->prepare("SELECT code FROM equipment_sub_type WHERE id = ?");
     $subtype_query->bind_param("i", $equipment_sub_type_id);
     $subtype_query->execute();
@@ -370,33 +374,68 @@ function generatePropertyNumber($conn, $type_equipment_id, $equipment_sub_type_i
     $subtype_code = $subtype_result->fetch_assoc()['code'] ?? '00';
     $subtype_query->close();
     
-    // Get current year
     $year = date('Y');
-    
-    // Build base property number pattern
     $base_pattern = $year . '-' . $type_code . '-' . $subtype_code;
+    $unique_seq = getNextGlobalUniqueSequence($conn, $year, $sequence_number);
     
-    // If sequence number is provided (for multiple items), use it directly
-    if ($sequence_number !== null) {
-        return $base_pattern . '-' . str_pad($sequence_number, 4, '0', STR_PAD_LEFT);
-    }
+    return $base_pattern . '-' . str_pad($unique_seq, 4, '0', STR_PAD_LEFT);
+}
+
+function getNextGlobalUniqueSequence($conn, $year, $requested_sequence = null) {
+    $global_stmt = $conn->prepare("
+        SELECT MAX(CAST(SUBSTRING_INDEX(property_no, '-', -1) AS UNSIGNED)) as max_seq 
+        FROM inventory 
+        WHERE property_no LIKE '%-%-%-____'
+          AND property_no REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{4}-[0-9]{4}$'
+    ");
+    $global_stmt->execute();
+    $global_result = $global_stmt->get_result();
+    $global_max = $global_result->fetch_assoc()['max_seq'] ?? 0;
+    $global_stmt->close();
     
-    // For single item, get the next sequence number
-    $pattern_like = $year . '-' . $type_code . '-' . $subtype_code . '-%';
-    $seq_query = $conn->prepare("
+    $year_pattern = $year . '-%';
+    $year_stmt = $conn->prepare("
         SELECT MAX(CAST(SUBSTRING_INDEX(property_no, '-', -1) AS UNSIGNED)) as max_seq 
         FROM inventory 
         WHERE property_no LIKE ?
+          AND property_no REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{4}-[0-9]{4}$'
     ");
-    $seq_query->bind_param("s", $pattern_like);
-    $seq_query->execute();
-    $seq_result = $seq_query->get_result();
-    $max_seq = $seq_result->fetch_assoc()['max_seq'] ?? 0;
-    $seq_query->close();
+    $year_stmt->bind_param("s", $year_pattern);
+    $year_stmt->execute();
+    $year_result = $year_stmt->get_result();
+    $year_max = $year_result->fetch_assoc()['max_seq'] ?? 0;
+    $year_stmt->close();
     
-    $next_seq = $max_seq + 1;
+    $starting_point = max($global_max, $year_max);
     
-    return $base_pattern . '-' . str_pad($next_seq, 4, '0', STR_PAD_LEFT);
+    if ($requested_sequence !== null) {
+        $next_seq = max($requested_sequence, $starting_point + 1);
+    } else {
+        $next_seq = $starting_point + 1;
+    }
+    
+    $verify_pattern = '%-' . str_pad($next_seq, 4, '0', STR_PAD_LEFT);
+    $verify_stmt = $conn->prepare("SELECT COUNT(*) as cnt FROM inventory WHERE property_no LIKE ? LIMIT 1");
+    $verify_stmt->bind_param("s", $verify_pattern);
+    $verify_stmt->execute();
+    $verify_result = $verify_stmt->get_result();
+    $exists = $verify_result->fetch_assoc()['cnt'] > 0;
+    $verify_stmt->close();
+    
+    $safety_counter = 0;
+    while ($exists && $safety_counter < 9999) {
+        $next_seq++;
+        $safety_counter++;
+        $verify_pattern = '%-' . str_pad($next_seq, 4, '0', STR_PAD_LEFT);
+        $verify_stmt = $conn->prepare("SELECT COUNT(*) as cnt FROM inventory WHERE property_no LIKE ? LIMIT 1");
+        $verify_stmt->bind_param("s", $verify_pattern);
+        $verify_stmt->execute();
+        $verify_result = $verify_stmt->get_result();
+        $exists = $verify_result->fetch_assoc()['cnt'] > 0;
+        $verify_stmt->close();
+    }
+    
+    return $next_seq;
 }
 
 // ============================================
@@ -417,21 +456,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     $equipment_id = !empty($_POST['equipment_id']) ? (int)$_POST['equipment_id'] : null;
     $category = 'PPE';
     
-    // Get type_equipment_id and equipment_sub_type_id
     $type_equipment_id = !empty($_POST['type_equipment_id']) ? (int)$_POST['type_equipment_id'] : null;
     $equipment_sub_type_id = !empty($_POST['equipment_sub_type_id']) ? (int)$_POST['equipment_sub_type_id'] : null;
     
-    // Fund cluster
-    $fund_cluster = sanitize($_POST['fund_cluster'] ?? '');
-    
-    // Supplier Information
+    $fund_cluster = !empty($_POST['fund_cluster']) ? (int)$_POST['fund_cluster'] : null;
     $supplier = sanitize($_POST['supplier'] ?? '');
     $ref_po_number = sanitize($_POST['ref_po_number'] ?? '');
     $delivery_date = !empty($_POST['delivery_date']) ? sanitize($_POST['delivery_date']) : null;
-    
-    // Set year_acquired
     $year_acquired = date('Y');
-    
     $condition_text = sanitize($_POST['condition_text'] ?? 'Serviceable');
     
     $certified_correct_array = isset($_POST['certified_correct']) && is_array($_POST['certified_correct']) 
@@ -447,7 +479,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     $verified_by = !empty($verified_by_array) ? json_encode(array_values($verified_by_array)) : null;
     
     $remarks = sanitize($_POST['remarks'] ?? '');
-    $barcode_data = sanitize($_POST['barcode_data'] ?? '');
+    $barcode_data_input = sanitize($_POST['barcode_data'] ?? '');
     $created_by = $_SESSION['user_id'];
     $generate_multiple = isset($_POST['generate_multiple_barcodes']) && $_POST['generate_multiple_barcodes'] == '1';
     
@@ -462,49 +494,49 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     if (empty($errors)) {
         $conn->begin_transaction();
         $success_count = 0;
+        $property_numbers = [];
         
         try {
+            $type_code_query = $conn->prepare("SELECT code FROM type_of_equipment WHERE id = ?");
+            $type_code_query->bind_param("i", $type_equipment_id);
+            $type_code_query->execute();
+            $type_code = $type_code_query->get_result()->fetch_assoc()['code'] ?? '00';
+            $type_code_query->close();
+            
+            $subtype_code_query = $conn->prepare("SELECT code FROM equipment_sub_type WHERE id = ?");
+            $subtype_code_query->bind_param("i", $equipment_sub_type_id);
+            $subtype_code_query->execute();
+            $subtype_code = $subtype_code_query->get_result()->fetch_assoc()['code'] ?? '00';
+            $subtype_code_query->close();
+            
+            $year = date('Y');
+            $date_str = date('Ymd');
+            
             if ($generate_multiple && $quantity > 1 && floor($quantity) == $quantity) {
-                // For multiple items, generate sequential property numbers
-                $type_query = $conn->prepare("SELECT code FROM type_of_equipment WHERE id = ?");
-                $type_query->bind_param("i", $type_equipment_id);
-                $type_query->execute();
-                $type_result = $type_query->get_result();
-                $type_code = $type_result->fetch_assoc()['code'] ?? '00';
-                $type_query->close();
+                $start_seq = getNextGlobalUniqueSequence($conn, $year, null);
                 
-                $subtype_query = $conn->prepare("SELECT code FROM equipment_sub_type WHERE id = ?");
-                $subtype_query->bind_param("i", $equipment_sub_type_id);
-                $subtype_query->execute();
-                $subtype_result = $subtype_query->get_result();
-                $subtype_code = $subtype_result->fetch_assoc()['code'] ?? '00';
-                $subtype_query->close();
-                
-                $year = date('Y');
-                $pattern_like = $year . '-' . $type_code . '-' . $subtype_code . '-%';
-                $seq_query = $conn->prepare("
-                    SELECT MAX(CAST(SUBSTRING_INDEX(property_no, '-', -1) AS UNSIGNED)) as max_seq 
-                    FROM inventory 
-                    WHERE property_no LIKE ?
-                ");
-                $seq_query->bind_param("s", $pattern_like);
-                $seq_query->execute();
-                $seq_result = $seq_query->get_result();
-                $start_seq = ($seq_result->fetch_assoc()['max_seq'] ?? 0) + 1;
-                $seq_query->close();
-                
-                $base_barcode = $barcode_data ?: $type_code . '-' . $subtype_code . '-' . date('Ymd');
-                
-                for ($i = 1; $i <= $quantity; $i++) {
-                    $property_no = $year . '-' . $type_code . '-' . $subtype_code . '-' . str_pad($start_seq + $i - 1, 4, '0', STR_PAD_LEFT);
-                    $sequential_barcode = $base_barcode . '-' . str_pad($i, 3, '0', STR_PAD_LEFT);
+                for ($i = 0; $i < $quantity; $i++) {
+                    $unique_seq = $start_seq + $i;
+                    $property_no = $year . '-' . $type_code . '-' . $subtype_code . '-' . str_pad($unique_seq, 4, '0', STR_PAD_LEFT);
+                    
+                    // Generate UNIQUE barcode using globally unique sequence
+                    $sequential_barcode = $type_code . '-' . $subtype_code . '-' . $date_str . '-' . str_pad($unique_seq, 4, '0', STR_PAD_LEFT);
+                    
+                    // Check uniqueness
+                    $checkStmt = $conn->prepare("SELECT id FROM inventory WHERE barcode_data = ? LIMIT 1");
+                    $checkStmt->bind_param("s", $sequential_barcode);
+                    $checkStmt->execute();
+                    if ($checkStmt->get_result()->num_rows > 0) {
+                        $sequential_barcode .= '-' . rand(100, 999);
+                    }
+                    $checkStmt->close();
                     
                     $stmt = $conn->prepare("
                         INSERT INTO inventory (
                             article_name, description, property_no, uom, 
                             qty_property_card, qty_physical_count, unit_value,
                             equipment_id, category, type_equipment_id, equipment_sub_type_id, condition_text,
-                            fund_cluster, certified_correct, approved_by, verified_by,
+                          fund_cluster_id, certified_correct, approved_by, verified_by,
                             supplier, ref_po_number, delivery_date,
                             remarks, barcode_data, created_by, year_acquired
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -525,21 +557,42 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                     
                     if ($stmt->execute()) {
                         $success_count++;
+                        $property_numbers[] = $property_no;
+                    } else {
+                        throw new Exception("Failed to insert item $i: " . $stmt->error);
                     }
                     $stmt->close();
                 }
+                
                 $conn->commit();
-                $_SESSION['success'] = "$success_count PPE items added successfully. Property numbers: $year-$type_code-$subtype_code-XXXX";
+                $_SESSION['success'] = "$success_count PPE items added successfully.";
             } else {
-                // For single item
                 $property_no = generatePropertyNumber($conn, $type_equipment_id, $equipment_sub_type_id);
+                $parts = explode('-', $property_no);
+                $last_four = end($parts);
+                
+                // Generate UNIQUE barcode
+                if (!empty($barcode_data_input)) {
+                    $barcode_data = $barcode_data_input . '-' . $last_four;
+                } else {
+                    $barcode_data = $type_code . '-' . $subtype_code . '-' . $date_str . '-' . $last_four;
+                }
+                
+                // Check uniqueness
+                $checkStmt = $conn->prepare("SELECT id FROM inventory WHERE barcode_data = ? LIMIT 1");
+                $checkStmt->bind_param("s", $barcode_data);
+                $checkStmt->execute();
+                if ($checkStmt->get_result()->num_rows > 0) {
+                    $barcode_data .= '-' . rand(100, 999);
+                }
+                $checkStmt->close();
                 
                 $stmt = $conn->prepare("
                     INSERT INTO inventory (
                         article_name, description, property_no, uom, 
                         qty_property_card, qty_physical_count, unit_value,
                         equipment_id, category, type_equipment_id, equipment_sub_type_id, condition_text,
-                        fund_cluster, certified_correct, approved_by, verified_by,
+                        fund_cluster_id, certified_correct, approved_by, verified_by,
                         supplier, ref_po_number, delivery_date,
                         remarks, barcode_data, created_by, year_acquired
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -559,7 +612,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                 );
                 
                 if ($stmt->execute()) {
-                    $inventory_id = $stmt->insert_id;
                     $conn->commit();
                     $_SESSION['success'] = "PPE item added successfully. Property No: $property_no";
                 } else {
@@ -592,19 +644,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     $quantity = floatval($_POST['quantity'] ?? 0);
     $unit_value = floatval($_POST['unit_value'] ?? 0);
     $equipment_id = !empty($_POST['equipment_id']) ? (int)$_POST['equipment_id'] : null;
-    
-    // Get type_equipment_id and equipment_sub_type_id
     $type_equipment_id = !empty($_POST['type_equipment_id']) ? (int)$_POST['type_equipment_id'] : null;
     $equipment_sub_type_id = !empty($_POST['equipment_sub_type_id']) ? (int)$_POST['equipment_sub_type_id'] : null;
-    
-    // Fund cluster
-    $fund_cluster = sanitize($_POST['fund_cluster'] ?? '');
-    
-    // Supplier Information
+    $fund_cluster = !empty($_POST['fund_cluster']) ? (int)$_POST['fund_cluster'] : null;
     $supplier = sanitize($_POST['supplier'] ?? '');
     $ref_po_number = sanitize($_POST['ref_po_number'] ?? '');
     $delivery_date = !empty($_POST['delivery_date']) ? sanitize($_POST['delivery_date']) : null;
-    
     $condition_text = sanitize($_POST['condition_text'] ?? 'Serviceable');
     
     $certified_correct_array = isset($_POST['certified_correct']) && is_array($_POST['certified_correct']) 
@@ -624,34 +669,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     
     $stmt = $conn->prepare("
         UPDATE inventory SET 
-            article_name = ?,
-            description = ?,
-            uom = ?,
-            qty_physical_count = ?,
-            unit_value = ?,
-            equipment_id = ?,
-            type_equipment_id = ?,
-            equipment_sub_type_id = ?,
-            condition_text = ?,
-            fund_cluster = ?,
-            certified_correct = ?,
-            approved_by = ?,
-            verified_by = ?,
-            supplier = ?,
-            ref_po_number = ?,
-            delivery_date = ?,
-            remarks = ?,
-            barcode_data = ?,
-            date_updated = NOW()
+            article_name = ?, description = ?, uom = ?, qty_physical_count = ?,
+            unit_value = ?, equipment_id = ?, type_equipment_id = ?, equipment_sub_type_id = ?,
+            condition_text = ?, fund_cluster = ?, certified_correct = ?, approved_by = ?,
+            verified_by = ?, supplier = ?, ref_po_number = ?, delivery_date = ?,
+            remarks = ?, barcode_data = ?, date_updated = NOW()
         WHERE id = ?
     ");
     
-    if (!$stmt) {
-        die("Prepare failed: " . $conn->error);
-    }
-    
     $stmt->bind_param(
-        "sssddi i i i s s s s s s s s s i",
+        "sssddiiiiissssssssi",
         $article_name, $description, $uom, $quantity, $unit_value,
         $equipment_id, $type_equipment_id, $equipment_sub_type_id, $condition_text,
         $fund_cluster, $certified_correct, $approved_by, $verified_by,
@@ -688,7 +715,6 @@ if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
     } else {
         $stmt = $conn->prepare("DELETE FROM inventory WHERE id = ?");
         $stmt->bind_param("i", $id);
-        
         if ($stmt->execute() && $stmt->affected_rows > 0) {
             $_SESSION['success'] = "PPE item deleted successfully";
         } else {
@@ -760,6 +786,7 @@ $query = "
     LEFT JOIN equipment e ON i.equipment_id = e.id
     LEFT JOIN type_of_equipment toe ON i.type_equipment_id = toe.id
     LEFT JOIN equipment_sub_type est ON i.equipment_sub_type_id = est.id
+    LEFT JOIN fund_cluster fc ON i.fund_cluster_id = fc.id
     LEFT JOIN users ap ON i.approved_by = ap.id
     LEFT JOIN users vr ON i.verified_by = vr.id
     LEFT JOIN users cr ON i.created_by = cr.id
@@ -786,8 +813,7 @@ if (!empty($params)) {
     $stmt->bind_param($types, ...$params);
 }
 $stmt->execute();
-$total_result = $stmt->get_result();
-$total_rows = $total_result->fetch_assoc()['total'];
+$total_rows = $stmt->get_result()->fetch_assoc()['total'];
 $stmt->close();
 
 $offset = ($page - 1) * $per_page;
@@ -809,32 +835,6 @@ while ($row = $result->fetch_assoc()) {
     $ppe_items[] = $row;
 }
 $stmt->close();
-
-$counts = [];
-foreach ($ppe_items as $r) {
-    $base = preg_replace('/-\d+$/', '', $r['property_no']);
-    if (!isset($counts[$base])) {
-        $counts[$base] = 0;
-    }
-    if (!empty($r['is_multiple'])) {
-        $counts[$base] += 1;
-    } else {
-        $counts[$base] += floatval($r['qty_physical_count']);
-    }
-}
-foreach ($ppe_items as &$r) {
-    $base = preg_replace('/-\d+$/', '', $r['property_no']);
-    $r['total_qty'] = $counts[$base] ?? $r['qty_physical_count'];
-}
-unset($r);
-
-$pagination_data = [
-    'data' => $ppe_items,
-    'total_rows' => $total_rows,
-    'per_page' => $per_page,
-    'current_page' => $page,
-    'total_pages' => ceil($total_rows / $per_page)
-];
 
 include INCLUDE_PATH . '/header.php';
 ?>
@@ -1717,31 +1717,25 @@ tr.stock-alert-row:hover {
         <div class="card-icon"><i class="fas fa-shield-alt"></i></div>
         <h3>Total PPE Items</h3>
         <?php
-        $stmt = $conn->prepare("
-            SELECT COUNT(*) as count 
-            FROM inventory i
-            LEFT JOIN type_of_equipment toe ON i.type_equipment_id = toe.id
-            WHERE i.category = 'PPE' OR toe.name LIKE '%PPE%'
-        ");
+        $stmt = $conn->prepare("SELECT COUNT(*) as count FROM inventory");
         $stmt->execute();
         $result = $stmt->get_result();
         $total_ppe = $result->fetch_assoc()['count'];
         $stmt->close();
         ?>
         <div class="card-value"><?php echo $total_ppe; ?></div>
-        <div class="card-label">All PPE equipment</div>
+        <div class="card-label">All equipment</div>
     </div>
     
     <div class="card">
         <div class="card-icon"><i class="fas fa-hand-holding"></i></div>
-        <h3>Issued PPE</h3>
+        <h3>Issued Items</h3>
         <?php
         $stmt = $conn->prepare("
             SELECT COUNT(DISTINCT ei.inventory_id) as count 
             FROM equipment_issuance ei
             JOIN inventory i ON ei.inventory_id = i.id
-            LEFT JOIN type_of_equipment toe ON i.type_equipment_id = toe.id
-            WHERE (i.category = 'PPE' OR toe.name LIKE '%PPE%') AND ei.status = 'issued'
+            WHERE ei.status = 'issued'
         ");
         $stmt->execute();
         $result = $stmt->get_result();
@@ -1754,14 +1748,9 @@ tr.stock-alert-row:hover {
     
     <div class="card">
         <div class="card-icon"><i class="fas fa-exclamation-triangle"></i></div>
-        <h3>Low Stock PPE</h3>
+        <h3>Low Stock</h3>
         <?php
-        $stmt = $conn->prepare("
-            SELECT COUNT(*) as count 
-            FROM inventory i
-            LEFT JOIN type_of_equipment toe ON i.type_equipment_id = toe.id
-            WHERE (i.category = 'PPE' OR toe.name LIKE '%PPE%') AND i.qty_physical_count <= 5
-        ");
+        $stmt = $conn->prepare("SELECT COUNT(*) as count FROM inventory WHERE qty_physical_count <= 5");
         $stmt->execute();
         $result = $stmt->get_result();
         $low_stock_ppe = $result->fetch_assoc()['count'];
@@ -1775,19 +1764,14 @@ tr.stock-alert-row:hover {
         <div class="card-icon"><i class="fas fa-dollar-sign"></i></div>
         <h3>Total Value</h3>
         <?php
-        $stmt = $conn->prepare("
-            SELECT SUM(i.unit_value * i.qty_physical_count) as total 
-            FROM inventory i
-            LEFT JOIN type_of_equipment toe ON i.type_equipment_id = toe.id
-            WHERE i.category = 'PPE' OR toe.name LIKE '%PPE%'
-        ");
+        $stmt = $conn->prepare("SELECT SUM(unit_value * qty_physical_count) as total FROM inventory");
         $stmt->execute();
         $result = $stmt->get_result();
         $total_value = $result->fetch_assoc()['total'] ?? 0;
         $stmt->close();
         ?>
         <div class="card-value"><?php echo formatCurrency($total_value); ?></div>
-        <div class="card-label">PPE inventory value</div>
+        <div class="card-label">Inventory value</div>
     </div>
 </div>
 
@@ -1826,21 +1810,11 @@ tr.stock-alert-row:hover {
 </div>
 
 <!-- PPE Items Table -->
+<!-- PPE Items Table -->
 <div class="table-container">
     <div class="table-header">
         <h2><i class="fas fa-shield-alt"></i> PPE Equipment List</h2>
-        <?php
-            $uniqueCount = 0;
-            $seen = [];
-            foreach ($ppe_items as $it) {
-                $base = preg_replace('/-\d+$/', '', $it['property_no']);
-                if (!isset($seen[$base])) {
-                    $seen[$base] = true;
-                    $uniqueCount++;
-                }
-            }
-        ?>
-        <p>Showing <?php echo $uniqueCount; ?> of <?php echo $total_rows; ?> items</p>
+        <p>Showing <?php echo count($ppe_items); ?> of <?php echo $total_rows; ?> items</p>
     </div>
     
     <div style="overflow-x: auto;">
@@ -1863,13 +1837,7 @@ tr.stock-alert-row:hover {
             </thead>
             <tbody>
                 <?php if (count($ppe_items) > 0): ?>
-                    <?php
-                    $shown = [];
-                    foreach ($ppe_items as $item):
-                        $base = preg_replace('/-\d+$/', '', $item['property_no']);
-                        if (isset($shown[$base])) continue;
-                        $shown[$base] = true;
-                    ?>
+                    <?php foreach ($ppe_items as $item): ?>
                     <tr class="<?php echo $item['qty_physical_count'] <= 5 ? 'stock-alert-row' : ''; ?>">
                         <td style="padding: 15px 10px; vertical-align: top;">
                             <strong><?php echo htmlspecialchars($item['article_name']); ?></strong>
@@ -1877,7 +1845,11 @@ tr.stock-alert-row:hover {
                             <br><small><?php echo htmlspecialchars(substr($item['description'], 0, 50) . (strlen($item['description']) > 50 ? '...' : '')); ?></small>
                             <?php endif; ?>
                         </td>
-                        <td style="padding: 15px 10px; vertical-align: top;"><?php echo htmlspecialchars($item['property_no']); ?></td>
+                        <td style="padding: 15px 10px; vertical-align: top;">
+                            <span style="font-family: monospace; background: #f5f5f5; padding: 3px 8px; border-radius: 3px;">
+                                <?php echo htmlspecialchars($item['property_no']); ?>
+                            </span>
+                        </td>
                         <td style="padding: 15px 10px; vertical-align: top;">
                             <?php 
                             if ($item['type_equipment_name']):
@@ -1890,11 +1862,13 @@ tr.stock-alert-row:hover {
                             endif;
                             ?>
                         </td>
-                        <td style="padding: 15px 10px; vertical-align: top;"><?php echo $item['total_qty'] . ' ' . $item['uom']; ?></td>
+                        <td style="padding: 15px 10px; vertical-align: top;">
+                            <?php echo $item['qty_physical_count'] . ' ' . htmlspecialchars($item['uom']); ?>
+                        </td>
                         <td style="padding: 15px 10px; vertical-align: top;"><?php echo formatCurrency($item['unit_value']); ?></td>
                         <td style="padding: 15px 10px; vertical-align: top;"><?php echo htmlspecialchars($item['supplier'] ?? 'N/A'); ?></td>
                         <td style="padding: 15px 10px; vertical-align: top;"><?php echo htmlspecialchars($item['ref_po_number'] ?? 'N/A'); ?></td>
-                        <td style="padding: 15px 10px; vertical-align: top;"><?php echo htmlspecialchars($item['fund_cluster'] ?? 'N/A'); ?></td>
+                        <td style="padding: 15px 10px; vertical-align: top;"><?php echo htmlspecialchars($item['fund_cluster_name'] ?? 'N/A'); ?></td>
                         <td style="padding: 15px 10px; vertical-align: top;"><?php echo htmlspecialchars($item['condition_text'] ?? 'Good'); ?></td>
                         <td style="padding: 15px 10px; vertical-align: top;">
                             <?php if ($item['is_issued'] > 0): ?>
@@ -1905,29 +1879,27 @@ tr.stock-alert-row:hover {
                         </td>
                         <td style="padding: 15px 10px; vertical-align: top;">
                             <?php if (!empty($item['barcode_data'])): ?>
-                                <button class="btn-xs" onclick="showBarcodeModal('<?php echo htmlspecialchars($item['barcode_data']); ?>', '<?php echo htmlspecialchars($item['article_name']); ?>')">
+                                <button class="btn-xs" onclick="showBarcodeModal('<?php echo htmlspecialchars($item['barcode_data']); ?>', '<?php echo htmlspecialchars($item['article_name']); ?>')" style="margin-bottom: 5px;">
                                     <i class="fas fa-barcode"></i> View
                                 </button>
                             <?php else: ?>
                                 <span class="text-muted">No barcode</span>
                             <?php endif; ?>
-                            
+                            <br>
                             <?php 
-                            // Check if this property has multiple items
-                            $baseProp = preg_replace('/-\d+$/', '', $item['property_no']);
-                            $multipleCheck = $conn->prepare("SELECT COUNT(*) as cnt FROM inventory WHERE property_no LIKE ?");
-                            $likePattern = $baseProp . '-%';
-                            $multipleCheck->bind_param("s", $likePattern);
-                            $multipleCheck->execute();
-                            $multipleResult = $multipleCheck->get_result();
-                            $hasMultiple = $multipleResult->fetch_assoc()['cnt'] > 1;
-                            $multipleCheck->close();
+                            // Check if there are other items with the same article name
+                            $articleNameCheck = $conn->prepare("SELECT COUNT(*) as cnt FROM inventory WHERE article_name = ? AND id != ?");
+                            $articleNameCheck->bind_param("si", $item['article_name'], $item['id']);
+                            $articleNameCheck->execute();
+                            $articleNameResult = $articleNameCheck->get_result();
+                            $hasSameArticle = $articleNameResult->fetch_assoc()['cnt'] > 0;
+                            $articleNameCheck->close();
                             ?>
-                            <?php if ($hasMultiple): ?>
-                                <button class="action-btn" style="background-color: pink;" 
+                            <?php if ($hasSameArticle): ?>
+                                <button class="action-btn" style="background-color: pink; width: auto; padding: 4px 8px; font-size: 11px; white-space: nowrap;" 
                                         onclick="viewAllBarcodes('<?php echo htmlspecialchars($item['property_no']); ?>', '<?php echo htmlspecialchars($item['article_name']); ?>')" 
-                                        title="View all barcodes in this set">
-                                    <i class="fas fa-layer-group"></i>
+                                        title="View all barcodes with same article name">
+                                    <i class="fas fa-layer-group"></i> All Barcodes
                                 </button>
                             <?php endif; ?>
                         </td>
@@ -2071,7 +2043,7 @@ tr.stock-alert-row:hover {
                     
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="uom">Unit of Measurement <span class="text-danger">*</span></label>
+                        <label for="uom">Unit of Measurement <span class="text-danger">*</span></label>
                             <select class="form-control" id="uom" name="uom" required>
                                 <option value="">-- Select UOM --</option>
                                 <option value="smallunit">Small Unit - Per Pieces</option>
@@ -2079,6 +2051,13 @@ tr.stock-alert-row:hover {
                                 <option value="set">Set</option>
                                 <option value="pair">Pair</option>
                             </select>
+
+                        </div>
+                        <div>
+                            <label for="BigUnit">Quantity:</label>
+                            <small class="form-text text-muted">
+                                <p>*</p>
+                            </small>
                         </div>
                         <div class="form-group">
                             <label for="quantity">Quantity <span class="text-danger">*</span></label>
@@ -2117,18 +2096,18 @@ tr.stock-alert-row:hover {
                     
                     <div class="form-group">
                         <label for="fund_cluster">Fund Cluster</label>
-                        <select class="form-control" id="fund_cluster" name="fund_cluster">
-                            <option value="">-- Select Fund Cluster --</option>
-                            <?php 
-                            if ($fund_clusters): 
-                                $fund_clusters->data_seek(0);
-                                while($fund = $fund_clusters->fetch_assoc()): 
-                            ?>
-                            <option value="<?php echo htmlspecialchars($fund['name']); ?>">
-                                <?php echo htmlspecialchars($fund['name']); ?>
-                            </option>
-                            <?php endwhile; endif; ?>
-                        </select>
+                       <select class="form-control" id="fund_cluster" name="fund_cluster">
+    <option value="">-- Select Fund Cluster --</option>
+    <?php 
+    if ($fund_clusters): 
+        $fund_clusters->data_seek(0);
+        while($fund = $fund_clusters->fetch_assoc()): 
+    ?>
+    <option value="<?php echo $fund['id']; ?>">
+        <?php echo htmlspecialchars($fund['code'] . ' - ' . $fund['name']); ?>
+    </option>
+    <?php endwhile; endif; ?>
+</select>
                         <small class="form-text text-muted">Select the appropriate fund cluster for this item</small>
                     </div>
                 </div>
@@ -2995,17 +2974,21 @@ function viewItem(id) {
 
 
  
-// View all barcodes for a multiple set
+// View all barcodes for items with the SAME ARTICLE NAME
 function viewAllBarcodes(propertyNo, itemName) {
-    document.getElementById('allBarcodesModalTitle').innerHTML = 'Barcodes - ' + escapeHtml(itemName);
-    document.getElementById('allBarcodesContent').innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i><br>Loading barcodes...</div>';
+    document.getElementById('allBarcodesModalTitle').innerHTML = 
+        '<i class="fas fa-layer-group"></i> All Barcodes for: ' + escapeHtml(itemName);
+    
+    document.getElementById('allBarcodesContent').innerHTML = 
+        '<div class="loading"><i class="fas fa-spinner fa-spin fa-2x"></i><br><br>Loading barcodes for "' + 
+        escapeHtml(itemName) + '"...</div>';
+    
     document.getElementById('viewAllBarcodesModal').style.display = 'block';
     
-    // Use the property number as-is - the server will handle the pattern extraction
     let timestamp = new Date().getTime();
     let url = '?get_multiple_items=1&property_no=' + encodeURIComponent(propertyNo) + '&t=' + timestamp;
     
-    console.log('Fetching barcodes for property:', propertyNo);
+    console.log('Fetching barcodes for article:', itemName);
     
     fetch(url)
         .then(response => response.json())
@@ -3013,50 +2996,161 @@ function viewAllBarcodes(propertyNo, itemName) {
             console.log('Response:', data);
             
             if (data.error) {
-                document.getElementById('allBarcodesContent').innerHTML = '<div class="alert alert-danger">Error: ' + escapeHtml(data.error) + '</div>';
+                document.getElementById('allBarcodesContent').innerHTML = 
+                    '<div class="alert alert-danger"><i class="fas fa-exclamation-triangle"></i> ' + 
+                    escapeHtml(data.error) + '</div>';
                 return;
             }
             
             if (data.success && data.items && data.items.length > 0) {
+                let totalItems = data.count;
+                let articleName = data.article_name || itemName;
+                let basePattern = data.base_pattern || propertyNo.replace(/-\d{4}$/, '');
+                
                 let html = `
-                    <div style="background: #e8f4f8; padding: 12px; border-radius: 8px; margin-bottom: 20px;">
-                        <i class="fas fa-info-circle" style="color: #2196F3;"></i>
-                        <strong>Base Pattern:</strong> ${escapeHtml(data.base_pattern || propertyNo)}<br>
-                        <strong>Total Items in this set:</strong> ${data.count}
+                    <!-- Summary Header -->
+                    <div style="background: linear-gradient(135deg, #e8f4f8, #d4e8f0); 
+                                padding: 20px; border-radius: 12px; margin-bottom: 25px; 
+                                border-left: 5px solid #6B8CFF; box-shadow: 0 2px 8px rgba(107,140,255,0.1);">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 15px;">
+                            <div style="flex: 1; min-width: 250px;">
+                                <div style="font-size: 16px; color: #6B8CFF; margin-bottom: 12px; font-weight: bold;">
+                                    <i class="fas fa-cube"></i> ${escapeHtml(articleName)}
+                                </div>
+                                <div style="font-size: 12px; color: #555; line-height: 2;">
+                                    <div><strong>Pattern:</strong> 
+                                        <code style="background: #fff; padding: 3px 10px; border-radius: 4px; font-size: 12px;">
+                                            ${escapeHtml(basePattern)}-XXXX
+                                        </code>
+                                    </div>
+                                    <div><strong>Total Items:</strong> 
+                                        <span style="background: #6B8CFF; color: white; padding: 3px 14px; 
+                                                     border-radius: 15px; font-weight: bold; font-size: 13px;">
+                                            ${totalItems}
+                                        </span>
+                                    </div>
+                                    ${totalItems > 1 ? `
+                                    <div><strong>Range:</strong> 
+                                        <span style="font-family: monospace; font-size: 11px;">
+                                            ${escapeHtml(data.items[0].property_no)}
+                                            <span style="color: #999;"> to </span>
+                                            ${escapeHtml(data.items[totalItems-1].property_no)}
+                                        </span>
+                                    </div>` : ''}
+                                </div>
+                            </div>
+                            <div style="text-align: right;">
+                                <button class="btn btn-primary" onclick="printAllBarcodes()" style="margin-bottom: 5px;">
+                                    <i class="fas fa-print"></i> Print All (${totalItems})
+                                </button>
+                                <br>
+                                <small style="color: #999;">Grouped by article name</small>
+                            </div>
+                        </div>
                     </div>
-                    <div class="all-barcodes-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px;">
+                    
+                    <!-- Barcodes Grid -->
+                    <div class="all-barcodes-grid" style="display: grid; 
+                         grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); 
+                         gap: 20px; padding: 10px;">
                 `;
                 
                 data.items.forEach((item, index) => {
-                    // Use the stored barcode_data, or fallback to property_no
                     let barcodeValue = item.barcode_data || item.property_no;
                     
+                    // Extract sequence number for display
+                    let parts = item.property_no.split('-');
+                    let sequenceNum = parts[parts.length - 1];
+                    
                     html += `
-                        <div class="barcode-item-card" style="background: white; border: 1px solid #e0e0e0; border-radius: 12px; padding: 15px; text-align: center; transition: all 0.2s;">
-                            <div style="font-size: 12px; color: #6B8CFF; margin-bottom: 8px;">Item #${index + 1}</div>
-                            <div class="item-property" style="font-weight: bold; font-size: 13px; background: #f5f5f5; padding: 8px; border-radius: 6px; margin-bottom: 10px; word-break: break-all;">
-                                ${escapeHtml(item.property_no)}
+                        <div class="barcode-item-card" style="background: white; 
+                             border: 2px solid #e0e0e0; border-radius: 12px; padding: 20px; 
+                             text-align: center; transition: all 0.3s; position: relative;
+                             box-shadow: 0 2px 4px rgba(0,0,0,0.05);"
+                             onmouseover="this.style.borderColor='#6B8CFF'; this.style.boxShadow='0 4px 12px rgba(107,140,255,0.2)'; this.style.transform='translateY(-2px)';"
+                             onmouseout="this.style.borderColor='#e0e0e0'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.05)'; this.style.transform='translateY(0)';">
+                            
+                            <!-- Item Badge -->
+                            <div style="position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
+                                 background: linear-gradient(135deg, #6B8CFF, #8FB5FF); color: white;
+                                 padding: 5px 15px; border-radius: 20px; font-size: 11px; font-weight: bold;
+                                 box-shadow: 0 2px 8px rgba(107,140,255,0.3); white-space: nowrap; z-index: 1;">
+                                <i class="fas fa-tag"></i> ${escapeHtml(sequenceNum)}
                             </div>
-                            <div class="barcode-image" style="text-align: center; margin: 10px 0; min-height: 80px;">
+                            
+                            <!-- Property Number -->
+                            <div style="margin-top: 10px; background: #f8f9fa; padding: 12px; 
+                                 border-radius: 8px; border: 1px solid #e9ecef; margin-bottom: 12px;">
+                                <div style="font-size: 10px; color: #999; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 1px;">
+                                    Property No.
+                                </div>
+                                <div style="font-weight: bold; font-size: 13px; color: #333; word-break: break-all; font-family: monospace;">
+                                    ${escapeHtml(item.property_no)}
+                                </div>
+                            </div>
+                            
+                            <!-- Article Name -->
+                            <div style="font-size: 12px; color: #666; margin-bottom: 15px; 
+                                 font-style: italic; min-height: 18px; padding: 5px; 
+                                 background: #fffbea; border-radius: 4px; border: 1px solid #f0e6b8;">
+                                ${escapeHtml(item.article_name)}
+                            </div>
+                            
+                            <!-- Barcode Image -->
+                            <div style="text-align: center; margin: 10px 0; 
+                                 background: white; padding: 10px; 
+                                 border-radius: 6px; border: 1px dashed #ddd; min-height: 80px;
+                                 display: flex; align-items: center; justify-content: center;">
                                 <img src="generate_barcodeppe.php?code=${encodeURIComponent(barcodeValue)}&width=250&height=60" 
                                      alt="Barcode" 
-                                     style="max-width: 100%; height: auto; border: 1px solid #ddd; padding: 5px; border-radius: 4px; background: white;"
-                                     onerror="this.style.display='none'; this.parentNode.innerHTML += '<div style=\\'font-family: monospace; padding: 10px; background: #f5f5f5; border-radius: 4px; font-size: 11px; word-break: break-all;\\'>' + escapeHtml('${barcodeValue}') + '</div>';">
+                                     style="max-width: 100%; height: auto;"
+                                     onerror="this.style.display='none'; this.parentNode.innerHTML += 
+                                     '<div style=\\'font-family: monospace; padding: 15px; background: #f5f5f5; border-radius: 4px; font-size: 10px; word-break: break-all;\\'>' + 
+                                     escapeHtml('${barcodeValue}') + '</div>';">
                             </div>
-                            <div class="barcode-value" style="font-family: monospace; font-size: 11px; padding: 6px; background: #f9f9f9; border-radius: 4px; margin: 8px 0; word-break: break-all;">
+                            
+                            <!-- Barcode Value -->
+                            <div style="font-family: 'Courier New', monospace; font-size: 10px; 
+                                 padding: 8px; background: #f8f9fa; border-radius: 4px; 
+                                 margin: 8px 0; word-break: break-all; color: #666;">
                                 ${escapeHtml(barcodeValue)}
                             </div>
-                            <div class="item-details" style="font-size: 11px; color: #666; margin-top: 8px; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap;">
-                                <span><i class="fas fa-box"></i> Qty: ${item.quantity || 1} ${escapeHtml(item.uom || 'pcs')}</span>
-                                ${item.unit_value ? `<span><i class="fas fa-tag"></i> ₱${parseFloat(item.unit_value).toFixed(2)}</span>` : ''}
+                            
+                            <!-- Item Details -->
+                            <div style="font-size: 11px; color: #888; margin-top: 10px; 
+                                 padding-top: 10px; border-top: 1px solid #eee;
+                                 display: flex; justify-content: space-around; flex-wrap: wrap; gap: 8px;">
+                                <span title="Quantity">
+                                    <i class="fas fa-box"></i> ${item.quantity || 1} ${escapeHtml(item.uom || 'pcs')}
+                                </span>
+                                ${item.unit_value ? `
+                                <span title="Unit Value">
+                                    <i class="fas fa-tag"></i> ₱${parseFloat(item.unit_value).toFixed(2)}
+                                </span>` : ''}
+                                ${item.condition_text ? `
+                                <span title="Condition">
+                                    <i class="fas fa-check-circle"></i> ${escapeHtml(item.condition_text)}
+                                </span>` : ''}
                             </div>
-                            <div class="item-actions" style="margin-top: 12px; display: flex; gap: 8px; justify-content: center;">
-                                <button class="btn-xs" style="padding: 5px 10px; background: #6B8CFF; color: white; border: none; border-radius: 4px; cursor: pointer;" 
-                                        onclick="showBarcodeModal('${escapeHtml(barcodeValue)}', '${escapeHtml(item.article_name)} - ${escapeHtml(item.property_no)}')">
+                            
+                            <!-- Actions -->
+                            <div style="margin-top: 15px; display: flex; gap: 8px; justify-content: center;">
+                                <button class="btn-xs" style="padding: 6px 12px; background: #6B8CFF; 
+                                        color: white; border: none; border-radius: 6px; cursor: pointer;
+                                        transition: all 0.2s;"
+                                        onmouseover="this.style.background='#5a7ae6';"
+                                        onmouseout="this.style.background='#6B8CFF';"
+                                        onclick="showBarcodeModal('${escapeHtml(barcodeValue)}', 
+                                        '${escapeHtml(item.article_name)} - ${escapeHtml(item.property_no)}')">
                                     <i class="fas fa-search"></i> View
                                 </button>
-                                <button class="btn-xs" style="padding: 5px 10px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;" 
-                                        onclick="printBarcode('${escapeHtml(barcodeValue)}', '${escapeHtml(item.article_name)} - ${escapeHtml(item.property_no)}')">
+                                <button class="btn-xs" style="padding: 6px 12px; background: #4CAF50; 
+                                        color: white; border: none; border-radius: 6px; cursor: pointer;
+                                        transition: all 0.2s;"
+                                        onmouseover="this.style.background='#45a049';"
+                                        onmouseout="this.style.background='#4CAF50';"
+                                        onclick="printBarcode('${escapeHtml(barcodeValue)}', 
+                                        '${escapeHtml(item.article_name)} - ${escapeHtml(item.property_no)}')">
                                     <i class="fas fa-print"></i> Print
                                 </button>
                             </div>
@@ -3066,16 +3160,18 @@ function viewAllBarcodes(propertyNo, itemName) {
                 
                 html += '</div>';
                 document.getElementById('allBarcodesContent').innerHTML = html;
+                
             } else {
-                // Try a different approach - maybe it's a single item
+                // Single item
                 document.getElementById('allBarcodesContent').innerHTML = `
-                    <div class="alert alert-warning">
-                        <i class="fas fa-exclamation-triangle"></i> No related items found for property: ${escapeHtml(propertyNo)}
-                        <br><br>
-                        <small>Debug info:</small><br>
-                        <small>- Base pattern used: ${escapeHtml(data.base_pattern || propertyNo)}</small><br>
-                        <small>- This is likely a single item, not part of a multiple set.</small>
-                        <br><br>
+                    <div style="text-align: center; padding: 40px 20px;">
+                        <i class="fas fa-barcode" style="font-size: 48px; color: #6B8CFF; margin-bottom: 20px;"></i>
+                        <h3 style="color: #555; margin-bottom: 10px;">Single Item</h3>
+                        <p style="color: #777; margin-bottom: 20px;">
+                            <strong>${escapeHtml(itemName)}</strong><br>
+                            Property: ${escapeHtml(propertyNo)}<br><br>
+                            No other items found with the same article name.
+                        </p>
                         <button class="btn btn-primary" onclick="showBarcodeModal('${escapeHtml(propertyNo)}', '${escapeHtml(itemName)}')">
                             <i class="fas fa-barcode"></i> View Single Barcode
                         </button>
@@ -3085,7 +3181,9 @@ function viewAllBarcodes(propertyNo, itemName) {
         })
         .catch(error => {
             console.error('Error:', error);
-            document.getElementById('allBarcodesContent').innerHTML = '<div class="alert alert-danger">Error loading barcodes: ' + escapeHtml(error.message) + '</div>';
+            document.getElementById('allBarcodesContent').innerHTML = 
+                '<div class="alert alert-danger"><i class="fas fa-exclamation-triangle"></i> ' +
+                'Error loading barcodes: ' + escapeHtml(error.message) + '</div>';
         });
 }
 
@@ -3371,4 +3469,3 @@ function issueItem(id) {
 include INCLUDE_PATH . '/footer.php';
 ob_end_flush();
 ?>
-

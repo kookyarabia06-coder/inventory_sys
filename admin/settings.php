@@ -11,7 +11,7 @@ require_once INCLUDE_PATH . '/functions.php';
 requireRole('admin'|| 'superadmin');
 
 $page_title = 'System Settings';
-$page_description = 'Manage fund clusters, signatories, and system configurations';
+$page_description = 'Manage fund clusters, signatories, suppliers, and system configurations';
 
 $message = '';
 $error = '';
@@ -109,6 +109,112 @@ if (isset($_GET['delete_signatory']) && is_numeric($_GET['delete_signatory'])) {
 }
 
 // ============================================
+// SUPPLIER HANDLERS
+// ============================================
+
+// Add Supplier
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add_supplier') {
+    $supplier_id = trim($_POST['supplier_id']);
+    $supplier_name = trim($_POST['supplier_name']);
+    $business_add = trim($_POST['business_add']);
+    $email = trim($_POST['email']);
+    $website = trim($_POST['website']);
+    $tin = trim($_POST['tin']);
+    $contact_person = trim($_POST['contact_person']);
+    $contact_no = trim($_POST['contact_no']);
+    $address = trim($_POST['address']);
+    $terms = $_POST['terms'];
+    $manufacturer = trim($_POST['manufacturer']);
+    $status = $_POST['status'];
+    $vat_condition = $_POST['vat_condition'];
+    $remarks = trim($_POST['remarks']);
+    
+    if (empty($supplier_id) || empty($supplier_name)) {
+        $error = "Supplier ID and Supplier Name are required.";
+    } else {
+        // Check if supplier_id already exists
+        $check_stmt = $conn->prepare("SELECT id FROM supplier WHERE supplier_id = ?");
+        $check_stmt->bind_param("s", $supplier_id);
+        $check_stmt->execute();
+        $check_result = $check_stmt->get_result();
+        
+        if ($check_result->num_rows > 0) {
+            $error = "Supplier ID already exists. Please use a unique ID.";
+        } else {
+            $stmt = $conn->prepare("INSERT INTO supplier (supplier_id, supplier_name, business_add, email, website, tin, contact_person, contact_no, address, terms, manufacturer, status, vat_condition, remarks, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("ssssssssssssssi", $supplier_id, $supplier_name, $business_add, $email, $website, $tin, $contact_person, $contact_no, $address, $terms, $manufacturer, $status, $vat_condition, $remarks, $_SESSION['user_id']);
+            
+            if ($stmt->execute()) {
+                $message = "Supplier added successfully!";
+            } else {
+                $error = "Failed to add supplier: " . $stmt->error;
+            }
+            $stmt->close();
+        }
+        $check_stmt->close();
+    }
+}
+
+// Edit Supplier
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'edit_supplier') {
+    $id = intval($_POST['id']);
+    $supplier_id = trim($_POST['supplier_id']);
+    $supplier_name = trim($_POST['supplier_name']);
+    $business_add = trim($_POST['business_add']);
+    $email = trim($_POST['email']);
+    $website = trim($_POST['website']);
+    $tin = trim($_POST['tin']);
+    $contact_person = trim($_POST['contact_person']);
+    $contact_no = trim($_POST['contact_no']);
+    $address = trim($_POST['address']);
+    $terms = $_POST['terms'];
+    $manufacturer = trim($_POST['manufacturer']);
+    $status = $_POST['status'];
+    $vat_condition = $_POST['vat_condition'];
+    $remarks = trim($_POST['remarks']);
+    
+    if (empty($supplier_id) || empty($supplier_name)) {
+        $error = "Supplier ID and Supplier Name are required.";
+    } else {
+        $stmt = $conn->prepare("UPDATE supplier SET supplier_id = ?, supplier_name = ?, business_add = ?, email = ?, website = ?, tin = ?, contact_person = ?, contact_no = ?, address = ?, terms = ?, manufacturer = ?, status = ?, vat_condition = ?, remarks = ? WHERE id = ?");
+        $stmt->bind_param("ssssssssssssssi", $supplier_id, $supplier_name, $business_add, $email, $website, $tin, $contact_person, $contact_no, $address, $terms, $manufacturer, $status, $vat_condition, $remarks, $id);
+        
+        if ($stmt->execute()) {
+            $message = "Supplier updated successfully!";
+        } else {
+            $error = "Failed to update supplier: " . $stmt->error;
+        }
+        $stmt->close();
+    }
+}
+
+// Delete Supplier
+if (isset($_GET['delete_supplier']) && is_numeric($_GET['delete_supplier'])) {
+    $id = intval($_GET['delete_supplier']);
+    
+    // Check if supplier is used in semi_ppe table
+    $check_stmt = $conn->prepare("SELECT id FROM semi_ppe WHERE supplier_id = ? LIMIT 1");
+    $check_stmt->bind_param("i", $id);
+    $check_stmt->execute();
+    $check_result = $check_stmt->get_result();
+    
+    if ($check_result->num_rows > 0) {
+        $error = "Cannot delete supplier because it is being used by one or more semi-expendable items.";
+    } else {
+        $stmt = $conn->prepare("DELETE FROM supplier WHERE id = ?");
+        $stmt->bind_param("i", $id);
+        
+        if ($stmt->execute()) {
+            $message = "Supplier deleted successfully!";
+        } else {
+            $error = "Failed to delete supplier.";
+        }
+        $stmt->close();
+    }
+    $check_stmt->close();
+}
+
+// ============================================
 // FUND CLUSTER HANDLERS
 // ============================================
 
@@ -197,6 +303,9 @@ $signatories = $conn->query("
     LEFT JOIN departments d ON e.department_id = d.id
     ORDER BY s.name
 ");
+
+// Get all suppliers
+$suppliers = $conn->query("SELECT * FROM supplier ORDER BY supplier_name");
 
 // Get employees for dropdown
 $employees = $conn->query("
@@ -304,6 +413,8 @@ include INCLUDE_PATH . '/header.php';
 
 .form-group-settings input[type="number"],
 .form-group-settings input[type="text"],
+.form-group-settings input[type="email"],
+.form-group-settings input[type="url"],
 .form-group-settings textarea,
 .form-group-settings select {
     width: 100%;
@@ -497,8 +608,10 @@ include INCLUDE_PATH . '/header.php';
     margin: 5% auto;
     padding: 25px;
     border-radius: 12px;
-    width: 550px;
+    width: 650px;
     max-width: 90%;
+    max-height: 85vh;
+    overflow-y: auto;
     box-shadow: 0 10px 30px rgba(107, 140, 255, 0.2);
     animation: modalSlideIn 0.3s;
 }
@@ -677,6 +790,17 @@ include INCLUDE_PATH . '/header.php';
     max-width: 20px;
 }
 
+.form-row {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.form-row .form-group-settings {
+    flex: 1;
+    margin-bottom: 0;
+}
+
 @media (max-width: 768px) {
     .settings-card {
         padding: 20px;
@@ -713,6 +837,15 @@ include INCLUDE_PATH . '/header.php';
     
     .delete-modal-container {
         width: 95%;
+    }
+    
+    .form-row {
+        flex-direction: column;
+        gap: 0;
+    }
+    
+    .form-row .form-group-settings {
+        margin-bottom: 15px;
     }
 }
 </style>
@@ -762,26 +895,26 @@ include INCLUDE_PATH . '/header.php';
                             <?php if ($signatory['employee_id']): ?>
                             <br><small class="text-muted">ID: <?php echo htmlspecialchars($signatory['employee_id']); ?></small>
                             <?php endif; ?>
-                        </td>
+                         </div>
                         <td>
                             <?php echo htmlspecialchars($signatory['position']); ?>
                             <?php if ($signatory['department_name']): ?>
                             <br><small class="text-muted"><?php echo htmlspecialchars($signatory['department_name']); ?></small>
                             <?php endif; ?>
-                        </td>
+                         </div>
                         <td>
                             <span class="status-badge <?php echo $signatory['is_active'] ? 'status-active' : 'status-inactive'; ?>">
                                 <?php echo $signatory['is_active'] ? 'Active' : 'Inactive'; ?>
                             </span>
-                        </td>
+                         </div>
                         <td>
-                             <button onclick='editSignatory(<?php echo json_encode($signatory); ?>)' class="btn-edit">
+                            <button onclick='editSignatory(<?php echo json_encode($signatory); ?>)' class="btn-edit">
                                 <i class="fas fa-edit"></i> Edit
                             </button>
                             <button onclick="openDeleteSignatoryModal(<?php echo $signatory['id']; ?>, '<?php echo htmlspecialchars(addslashes($signatory['name'])); ?>', '<?php echo htmlspecialchars(addslashes($signatory['position'])); ?>')" class="btn-delete">
                                 <i class="fas fa-trash"></i> Delete
                             </button>
-                        </td>
+                         </div>
                     </tr>
                     <?php endwhile; ?>
                 </tbody>
@@ -791,6 +924,77 @@ include INCLUDE_PATH . '/header.php';
         <div class="empty-state">
             <i class="fas fa-signature"></i>
             <p>No signatories found. Click the "Add Signatory" button to add one.</p>
+        </div>
+        <?php endif; ?>
+    </div>
+
+    <!-- Suppliers Card -->
+    <div class="settings-card">
+        <div class="card-header">
+            <h2><i class="fas fa-truck"></i> Suppliers</h2>
+            <button type="button" onclick="openSupplierModal()" class="btn-open-modal">
+                <i class="fas fa-plus"></i> Add Supplier
+            </button>
+        </div>
+        <p>Manage suppliers for semi-expendable items and inventory.</p>
+        
+        <?php if ($suppliers && $suppliers->num_rows > 0): ?>
+        <div class="table-wrapper-settings">
+            <table class="settings-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Supplier ID</th>
+                        <th>Supplier Name</th>
+                        <th>Contact Person</th>
+                        <th>Contact No.</th>
+                        <th>Terms</th>
+                        <th>VAT</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php while ($supplier = $suppliers->fetch_assoc()): ?>
+                    <tr>
+                        <td><?php echo htmlspecialchars($supplier['id']); ?></div>
+                        <td><strong><?php echo htmlspecialchars($supplier['supplier_id']); ?></strong></div>
+                        <td>
+                            <?php echo htmlspecialchars($supplier['supplier_name']); ?>
+                            <?php if ($supplier['business_add']): ?>
+                            <br><small class="text-muted"><?php echo htmlspecialchars(substr($supplier['business_add'], 0, 30)) . (strlen($supplier['business_add']) > 30 ? '...' : ''); ?></small>
+                            <?php endif; ?>
+                         </div>
+                        <td><?php echo htmlspecialchars($supplier['contact_person'] ?? 'N/A'); ?></div>
+                        <td><?php echo htmlspecialchars($supplier['contact_no'] ?? 'N/A'); ?></div>
+                        <td><?php echo htmlspecialchars($supplier['terms'] ?? 'N/A'); ?></div>
+                        <td>
+                            <span class="status-badge <?php echo $supplier['vat_condition'] == 'vatable' ? 'status-active' : 'status-inactive'; ?>">
+                                <?php echo ucfirst(htmlspecialchars($supplier['vat_condition'] ?? 'N/A')); ?>
+                            </span>
+                         </div>
+                        <td>
+                            <span class="status-badge <?php echo $supplier['status'] == 'active' ? 'status-active' : 'status-inactive'; ?>">
+                                <?php echo ucfirst(htmlspecialchars($supplier['status'])); ?>
+                            </span>
+                         </div>
+                        <td>
+                            <button onclick='editSupplier(<?php echo json_encode($supplier); ?>)' class="btn-edit">
+                                <i class="fas fa-edit"></i> Edit
+                            </button>
+                            <button onclick="openDeleteSupplierModal(<?php echo $supplier['id']; ?>, '<?php echo htmlspecialchars(addslashes($supplier['supplier_name'])); ?>', '<?php echo htmlspecialchars(addslashes($supplier['supplier_id'])); ?>')" class="btn-delete">
+                                <i class="fas fa-trash"></i> Delete
+                            </button>
+                         </div>
+                    </tr>
+                    <?php endwhile; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php else: ?>
+        <div class="empty-state">
+            <i class="fas fa-truck"></i>
+            <p>No suppliers found. Click the "Add Supplier" button to add one.</p>
         </div>
         <?php endif; ?>
     </div>
@@ -824,69 +1028,58 @@ include INCLUDE_PATH . '/header.php';
     </div>
 
     <!-- Fund Clusters List Card with Add Button -->
-    <div class="settings-card">
-        <div class="card-header">
-            <h2><i class="fas fa-list"></i> Fund Clusters List</h2>
-            <button type="button" onclick="openAddModal()" class="btn-open-modal">
-                <i class="fas fa-plus"></i> Add Fund Cluster
-            </button>
-        </div>
-        
-        <?php if ($fund_clusters && $fund_clusters->num_rows > 0): ?>
-        <div class="table-wrapper-settings">
-            <table class="settings-table">
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Code</th>
-                        <th>Name</th>
-                        <th>Description</th>
-                        <th>Status</th>
-                        <th>Created</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php while ($fund = $fund_clusters->fetch_assoc()): ?>
-                    <tr>
-                        <td><?php echo htmlspecialchars($fund['id']); ?></td>
-                        <td><strong><?php echo htmlspecialchars($fund['code']); ?></strong></td>
-                        <td><?php echo htmlspecialchars($fund['name']); ?></td>
-                        <td><?php echo htmlspecialchars($fund['description']); ?></td>
-                        <td>
-                            <span class="status-badge <?php echo $fund['status'] == 'active' ? 'status-active' : 'status-inactive'; ?>">
-                                <?php echo ucfirst(htmlspecialchars($fund['status'])); ?>
-                            </span>
-                        </td>
-                        <td>
-                            <?php 
-                            if (!empty($fund['date_created']) && $fund['date_created'] != '0000-00-00 00:00:00') {
-                                echo date('Y-m-d', strtotime($fund['date_created']));
-                            } else {
-                                echo '—';
-                            }
-                            ?>
-                        </td>
-                        <td>
-                             <button onclick='editFund(<?php echo json_encode($fund); ?>)' class="btn-edit">
-                                <i class="fas fa-edit"></i> Edit
-                            </button>
-                            <button onclick="openDeleteFundModal(<?php echo $fund['id']; ?>, '<?php echo htmlspecialchars(addslashes($fund['code'])); ?>', '<?php echo htmlspecialchars(addslashes($fund['name'])); ?>')" class="btn-delete">
-                                <i class="fas fa-trash"></i> Delete
-                            </button>
-                        </td>
-                    </tr>
-                    <?php endwhile; ?>
-                </tbody>
-            </table>
-        </div>
-        <?php else: ?>
-        <div class="empty-state">
-            <i class="fas fa-folder-open"></i>
-            <p>No fund clusters found. Click the "Add Fund Cluster" button to create one.</p>
-        </div>
-        <?php endif; ?>
+<div class="settings-card">
+    <div class="card-header">
+        <h2><i class="fas fa-list"></i> Fund Clusters List</h2>
+        <button type="button" onclick="openAddModal()" class="btn-open-modal">
+            <i class="fas fa-plus"></i> Add Fund Cluster
+        </button>
     </div>
+    
+    <?php if ($fund_clusters && $fund_clusters->num_rows > 0): ?>
+    <div class="table-wrapper-settings">
+        <table class="settings-table">
+            <thead>
+                <tr>
+                    <th style="width: 5%">ID</th>
+                    <th style="width: 15%">Code</th>
+                    <th style="width: 25%">Name</th>
+                    <th style="width: 30%">Description</th>
+                    <th style="width: 10%">Status</th>
+                    <th style="width: 15%">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php while ($fund = $fund_clusters->fetch_assoc()): ?>
+                <tr>
+                    <td><?php echo htmlspecialchars($fund['id']); ?></td>
+                    <td><strong><?php echo htmlspecialchars($fund['code']); ?></strong></td>
+                    <td><?php echo htmlspecialchars($fund['name']); ?></td>
+                    <td><?php echo htmlspecialchars($fund['description'] ?? '—'); ?></td>
+                    <td>
+                        <span class="status-badge <?php echo $fund['status'] == 'active' ? 'status-active' : 'status-inactive'; ?>">
+                            <?php echo ucfirst(htmlspecialchars($fund['status'])); ?>
+                        </span>
+                    </td>
+                    <td>
+                        <button onclick='editFund(<?php echo json_encode($fund); ?>)' class="btn-edit">
+                            <i class="fas fa-edit"></i> Edit
+                        </button>
+                        <button onclick="openDeleteFundModal(<?php echo $fund['id']; ?>, '<?php echo htmlspecialchars(addslashes($fund['code'])); ?>', '<?php echo htmlspecialchars(addslashes($fund['name'])); ?>')" class="btn-delete">
+                            <i class="fas fa-trash"></i> Delete
+                        </button>
+                    </td>
+                </tr>
+                <?php endwhile; ?>
+            </tbody>
+        </table>
+    </div>
+    <?php else: ?>
+    <div class="empty-state">
+        <i class="fas fa-folder-open"></i>
+        <p>No fund clusters found. Click the "Add Fund Cluster" button to create one.</p>
+    </div>
+    <?php endif; ?>
 </div>
 
 <!-- Delete Signatory Confirmation Modal -->
@@ -910,6 +1103,31 @@ include INCLUDE_PATH . '/header.php';
         <div class="delete-modal-footer">
             <button type="button" class="btn-cancel-modal" onclick="closeDeleteSignatoryModal()">Cancel</button>
             <a href="#" id="confirmDeleteSignatoryBtn" class="btn-confirm-delete">Delete Signatory</a>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Supplier Confirmation Modal -->
+<div id="deleteSupplierModal" class="delete-modal-overlay">
+    <div class="delete-modal-container">
+        <div class="delete-modal-header">
+            <h3><i class="fas fa-exclamation-triangle"></i> Delete Supplier</h3>
+        </div>
+        <div class="delete-modal-body">
+            <div class="delete-warning">
+                <i class="fas fa-trash-alt"></i>
+                <p><strong>Are you absolutely sure?</strong></p>
+                <p class="warning-text">This action cannot be undone.</p>
+            </div>
+            <div class="delete-item-details">
+                <div class="detail-label">SUPPLIER TO DELETE</div>
+                <div class="detail-name" id="deleteSupplierName"></div>
+                <div class="detail-extra" id="deleteSupplierId"></div>
+            </div>
+        </div>
+        <div class="delete-modal-footer">
+            <button type="button" class="btn-cancel-modal" onclick="closeDeleteSupplierModal()">Cancel</button>
+            <a href="#" id="confirmDeleteSupplierBtn" class="btn-confirm-delete">Delete Supplier</a>
         </div>
     </div>
 </div>
@@ -981,11 +1199,132 @@ include INCLUDE_PATH . '/header.php';
             </div>
             
             <div class="modal-footer">
-                <button type="button" onclick="closeSignatoryModal()" class="btn-cancel">
+                <button type="button" onclick="closeSignatoryModal()" class="btn-cancel-modal">
                     <i class="fas fa-times"></i> Cancel
                 </button>
                 <button type="submit" class="btn-save">
                     <i class="fas fa-save"></i> Save Signatory
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Add/Edit Supplier Modal -->
+<div id="supplierModal" class="modal-overlay">
+    <div class="modal-container">
+        <div class="modal-header-settings">
+            <h3 id="supplierModalTitle"><i class="fas fa-truck"></i> Add Supplier</h3>
+            <span class="modal-close" onclick="closeSupplierModal()">&times;</span>
+        </div>
+        
+        <form method="POST" action="" id="supplierForm">
+            <input type="hidden" name="action" id="supplier_action" value="add_supplier">
+            <input type="hidden" name="id" id="supplier_id">
+            
+            <div class="form-row">
+                <div class="form-group-settings">
+                    <label for="supplier_id_field">Supplier ID: <span style="color: var(--danger);">*</span></label>
+                    <input type="text" name="supplier_id" id="supplier_id_field" required placeholder="e.g., SUP-001">
+                    <small>Unique identifier for this supplier</small>
+                </div>
+                <div class="form-group-settings">
+                    <label for="supplier_name">Supplier Name: <span style="color: var(--danger);">*</span></label>
+                    <input type="text" name="supplier_name" id="supplier_name" required placeholder="Enter supplier name">
+                </div>
+            </div>
+            
+            <div class="form-group-settings">
+                <label for="business_add">Business Address:</label>
+                <textarea name="business_add" id="business_add" rows="2" placeholder="Complete business address"></textarea>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group-settings">
+                    <label for="email">Email Address:</label>
+                    <input type="email" name="email" id="email" placeholder="supplier@company.com">
+                </div>
+                <div class="form-group-settings">
+                    <label for="website">Website:</label>
+                    <input type="url" name="website" id="website" placeholder="https://www.example.com">
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group-settings">
+                    <label for="tin">TIN Number:</label>
+                    <input type="text" name="tin" id="tin" placeholder="Tax Identification Number">
+                </div>
+                <div class="form-group-settings">
+                    <label for="contact_person">Contact Person:</label>
+                    <input type="text" name="contact_person" id="contact_person" placeholder="Name of contact person">
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group-settings">
+                    <label for="contact_no">Contact Number:</label>
+                    <input type="text" name="contact_no" id="contact_no" placeholder="e.g., 09123456789">
+                </div>
+                <div class="form-group-settings">
+                    <label for="address">Address:</label>
+                    <input type="text" name="address" id="address" placeholder="Full address (if different from business address)">
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group-settings">
+                    <label for="terms">Payment Terms:</label>
+                    <select name="terms" id="terms">
+                        <option value="">-- Select Terms --</option>
+                        <option value="CBD">CBD (Cash Before Delivery)</option>
+                        <option value="COD">COD (Cash On Delivery)</option>
+                        <option value="PDC 7">PDC (7 days)</option>
+                        <option value="PDC 30">PDC (30 days)</option>
+                        <option value="PDC 45">PDC (45 days)</option>
+                        <option value="PDC 60">PDC (60 days)</option>
+                        <option value="7 days">7 days</option>
+                        <option value="15 days">15 days</option>
+                        <option value="30 days">30 days</option>
+                        <option value="45 days">45 days</option>
+                        <option value="See remarks">See remarks</option>
+                    </select>
+                </div>
+                <div class="form-group-settings">
+                    <label for="manufacturer">Manufacturer:</label>
+                    <input type="text" name="manufacturer" id="manufacturer" placeholder="Manufacturer name (if applicable)">
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group-settings">
+                    <label for="status">Status:</label>
+                    <select name="status" id="status">
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                    </select>
+                </div>
+                <div class="form-group-settings">
+                    <label for="vat_condition">VAT Condition:</label>
+                    <select name="vat_condition" id="vat_condition">
+                        <option value="">-- Select VAT Condition --</option>
+                        <option value="vatable">Vatable</option>
+                        <option value="non-vatable">Non-Vatable</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="form-group-settings">
+                <label for="supplier_remarks">Remarks:</label>
+                <textarea name="remarks" id="supplier_remarks" rows="2" placeholder="Additional notes about this supplier"></textarea>
+            </div>
+            
+            <div class="modal-footer">
+                <button type="button" onclick="closeSupplierModal()" class="btn-cancel-modal">
+                    <i class="fas fa-times"></i> Cancel
+                </button>
+                <button type="submit" class="btn-save">
+                    <i class="fas fa-save"></i> Save Supplier
                 </button>
             </div>
         </form>
@@ -1030,7 +1369,7 @@ include INCLUDE_PATH . '/header.php';
             </div>
             
             <div class="modal-footer">
-                <button type="button" onclick="closeAddModal()" class="btn-cancel">
+                <button type="button" onclick="closeAddModal()" class="btn-cancel-modal">
                     <i class="fas fa-times"></i> Cancel
                 </button>
                 <button type="submit" class="btn-save">
@@ -1077,7 +1416,7 @@ include INCLUDE_PATH . '/header.php';
             </div>
             
             <div class="modal-footer">
-                <button type="button" onclick="closeEditModal()" class="btn-cancel">
+                <button type="button" onclick="closeEditModal()" class="btn-cancel-modal">
                     <i class="fas fa-times"></i> Cancel
                 </button>
                 <button type="submit" class="btn-save">
@@ -1103,6 +1442,22 @@ function openDeleteSignatoryModal(id, name, position) {
 function closeDeleteSignatoryModal() {
     document.getElementById('deleteSignatoryModal').style.display = 'none';
     deleteSignatoryId = null;
+}
+
+// Delete Supplier Modal Functions
+let deleteSupplierId = null;
+
+function openDeleteSupplierModal(id, name, supplierId) {
+    deleteSupplierId = id;
+    document.getElementById('deleteSupplierName').innerText = name;
+    document.getElementById('deleteSupplierId').innerText = 'Supplier ID: ' + supplierId;
+    document.getElementById('deleteSupplierModal').style.display = 'flex';
+    document.getElementById('confirmDeleteSupplierBtn').href = '?delete_supplier=' + id;
+}
+
+function closeDeleteSupplierModal() {
+    document.getElementById('deleteSupplierModal').style.display = 'none';
+    deleteSupplierId = null;
 }
 
 // Delete Fund Modal Functions
@@ -1166,6 +1521,40 @@ function fillEmployeeDetails() {
     }
 }
 
+// Supplier Functions
+function openSupplierModal() {
+    document.getElementById('supplierModalTitle').innerHTML = '<i class="fas fa-truck"></i> Add Supplier';
+    document.getElementById('supplier_action').value = 'add_supplier';
+    document.getElementById('supplier_id').value = '';
+    document.getElementById('supplierForm').reset();
+    document.getElementById('supplierModal').style.display = 'block';
+}
+
+function editSupplier(supplier) {
+    document.getElementById('supplierModalTitle').innerHTML = '<i class="fas fa-edit"></i> Edit Supplier';
+    document.getElementById('supplier_action').value = 'edit_supplier';
+    document.getElementById('supplier_id').value = supplier.id;
+    document.getElementById('supplier_id_field').value = supplier.supplier_id;
+    document.getElementById('supplier_name').value = supplier.supplier_name;
+    document.getElementById('business_add').value = supplier.business_add || '';
+    document.getElementById('email').value = supplier.email || '';
+    document.getElementById('website').value = supplier.website || '';
+    document.getElementById('tin').value = supplier.tin || '';
+    document.getElementById('contact_person').value = supplier.contact_person || '';
+    document.getElementById('contact_no').value = supplier.contact_no || '';
+    document.getElementById('address').value = supplier.address || '';
+    document.getElementById('terms').value = supplier.terms || '';
+    document.getElementById('manufacturer').value = supplier.manufacturer || '';
+    document.getElementById('status').value = supplier.status || 'active';
+    document.getElementById('vat_condition').value = supplier.vat_condition || '';
+    document.getElementById('supplier_remarks').value = supplier.remarks || '';
+    document.getElementById('supplierModal').style.display = 'block';
+}
+
+function closeSupplierModal() {
+    document.getElementById('supplierModal').style.display = 'none';
+}
+
 // Fund Cluster Functions
 function openAddModal() {
     document.getElementById('addModal').style.display = 'block';
@@ -1195,13 +1584,18 @@ function closeEditModal() {
 // Close modals when clicking outside
 window.onclick = function(event) {
     var signatoryModal = document.getElementById('signatoryModal');
+    var supplierModal = document.getElementById('supplierModal');
     var addModal = document.getElementById('addModal');
     var editModal = document.getElementById('editModal');
     var deleteSignatoryModal = document.getElementById('deleteSignatoryModal');
+    var deleteSupplierModal = document.getElementById('deleteSupplierModal');
     var deleteFundModal = document.getElementById('deleteFundModal');
     
     if (event.target == signatoryModal) {
         signatoryModal.style.display = 'none';
+    }
+    if (event.target == supplierModal) {
+        supplierModal.style.display = 'none';
     }
     if (event.target == addModal) {
         addModal.style.display = 'none';
@@ -1211,6 +1605,9 @@ window.onclick = function(event) {
     }
     if (event.target == deleteSignatoryModal) {
         deleteSignatoryModal.style.display = 'none';
+    }
+    if (event.target == deleteSupplierModal) {
+        deleteSupplierModal.style.display = 'none';
     }
     if (event.target == deleteFundModal) {
         deleteFundModal.style.display = 'none';
