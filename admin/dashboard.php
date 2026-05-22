@@ -1,6 +1,6 @@
 <?php
 /**
- * Admin Dashboard
+ * Admin Dashboard - Original Layout with Forms
  */
 
 // Get the absolute path to the root directory
@@ -230,7 +230,7 @@ body {
     color: var(--success) !important;
 }
 
-/* Stats Grid */
+/* Stats Grid - Original Left/Right Layout */
 .stats-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
@@ -432,13 +432,55 @@ body {
 }
 
 .action-btn.view { background-color: var(--primary); }
+.action-btn.edit { background-color: var(--warning); }
+.action-btn.delete { background-color: var(--danger); }
 
 .action-btn:hover {
     transform: translateY(-2px);
     filter: brightness(0.95);
 }
 
-/* Button Styles */
+/* Form Styles for Low Stock Panel */
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 13px;
+}
+
+.form-group label i {
+    margin-right: 8px;
+    color: var(--primary);
+}
+
+.form-control {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    font-size: 14px;
+    transition: all 0.2s;
+    background: var(--white);
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.1);
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+}
+
+/* Buttons */
 .btn {
     display: inline-flex;
     align-items: center;
@@ -533,7 +575,7 @@ body {
     }
 }
 
-.modal-header-settings {
+.modal-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -541,13 +583,13 @@ body {
     border-bottom: 2px solid var(--accent-light);
 }
 
-.modal-header-settings h3 {
+.modal-header h3 {
     color: var(--primary);
     margin: 0;
     font-size: 20px;
 }
 
-.modal-header-settings h3 i {
+.modal-header h3 i {
     color: var(--accent);
     margin-right: 10px;
 }
@@ -674,43 +716,37 @@ body {
     color: #059669;
 }
 
-/* Modal Buttons */
-.btn-modal {
-    padding: 8px 20px;
-    border: none;
-    border-radius: 8px;
-    font-size: 14px;
-    font-weight: 500;
+/* Search Result Item */
+.search-result-item {
+    padding: 12px;
+    border-bottom: 1px solid var(--border-light);
     cursor: pointer;
-    transition: all 0.3s;
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
+    transition: background 0.2s;
 }
 
-.btn-modal-secondary {
-    background-color: #6c757d;
-    color: var(--text-light);
-}
-
-.btn-modal-secondary:hover {
-    background-color: #5a6268;
-    transform: translateY(-2px);
-}
-
-/* Scrollbar Styling */
-.modal-body-scroll::-webkit-scrollbar {
-    width: 6px;
-}
-
-.modal-body-scroll::-webkit-scrollbar-track {
+.search-result-item:hover {
     background: var(--light);
-    border-radius: 3px;
 }
 
-.modal-body-scroll::-webkit-scrollbar-thumb {
-    background: var(--primary);
-    border-radius: 3px;
+.search-result-item:last-child {
+    border-bottom: none;
+}
+
+.search-result-name {
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.search-result-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+/* Helper function to format unit display */
+.unit-display {
+    font-size: 11px;
+    color: var(--text-muted);
 }
 
 /* Text Utilities */
@@ -785,6 +821,17 @@ body {
         grid-template-columns: 1fr;
         gap: 8px;
     }
+    
+    .form-row {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Helper function to format units */
+.format-units {
+    display: inline-flex;
+    flex-direction: column;
+    font-size: 11px;
 }
 </style>
 
@@ -833,61 +880,61 @@ body {
     </div>
 </div>
 
+<!-- Stats Grid - Left/Right Layout (Original Style) -->
 <div class="stats-grid">
-    <!-- Low Stock Alerts -->
+    <!-- Low Stock Alerts Panel (Left Side) -->
     <div class="stat-chart">
-        <h3><i class="fas fa-exclamation-triangle text-warning"></i> Low Stock Alerts (Threshold: <?php echo $threshold; ?> units)</h3>
-        <?php if ($low_stock_items && $low_stock_items->num_rows > 0): ?>
-            <div style="overflow-x: auto;">
-                <table style="min-width: 600px;">
-                    <thead>
-                        <tr>
-                            <th>Item Name</th>
-                            <th>Property No.</th>
-                            <th>Current Qty</th>
-                            <th>Location</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php while($item = $low_stock_items->fetch_assoc()): ?>
-                        <tr>
-                            <td data-label="Item Name">
-                                <strong><?php echo htmlspecialchars($item['article_name']); ?></strong>
-                                <br><small class="text-muted"><?php echo htmlspecialchars($item['category'] ?? 'Uncategorized'); ?></small>
-                            </td>
-                            <td data-label="Property No" class="property-no"><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></td>
-                            <td data-label="Current Qty">
-                                <span class="badge <?php echo $item['qty_physical_count'] <= 2 ? 'badge-danger' : 'badge-warning'; ?>">
-                                    <?php echo $item['qty_physical_count']; ?> <?php echo htmlspecialchars($item['uom']); ?>
-                                </span>
-                            </td>
-                            <td data-label="Location"><?php echo htmlspecialchars($item['section_name'] ?? 'N/A'); ?></td>
-                            <td data-label="Action">
-                                <div class="action-buttons">
-                                    <button onclick="viewItem(<?php echo $item['id']; ?>)" class="action-btn view" title="View">
-                                        <i class="fas fa-eye"></i>
-                                    </button>
-                                </div>
-                            </td>
-                        </tr>
-                        <?php endwhile; ?>
-                    </tbody>
-                </table>
+        <h3><i class="fas fa-exclamation-triangle text-warning"></i> Low Stock Alert Settings</h3>
+        <form id="lowStockForm" method="GET" action="<?php echo SITE_URL; ?>/admin/all_inventory.php">
+            <div class="form-group">
+                <label><i class="fas fa-sliders-h"></i> Stock Threshold Value</label>
+                <div class="form-row">
+                    <input type="number" class="form-control" name="threshold" value="<?php echo $threshold; ?>" min="1" step="1">
+                    <button type="submit" class="btn btn-primary">Apply Threshold</button>
+                </div>
+                <small class="text-muted">Items with quantity below this value will appear as low stock alerts</small>
             </div>
-            <div class="text-center mt-3">
-                <a href="<?php echo SITE_URL; ?>/admin/all_inventory.php?low_stock=1" class="btn btn-secondary btn-sm">
-                    View All Low Stock Items (<?php echo $stats['low_stock']; ?>) →
-                </a>
+        </form>
+        
+        <div style="margin-top: 20px;">
+            <label><i class="fas fa-list"></i> Current Low Stock Items (<?php echo $stats['low_stock']; ?>)</label>
+            <div style="max-height: 300px; overflow-y: auto; border: 1px solid var(--border-light); border-radius: 10px; margin-top: 10px;">
+                <?php if ($low_stock_items && $low_stock_items->num_rows > 0): ?>
+                    <?php while($item = $low_stock_items->fetch_assoc()): ?>
+                    <div class="search-result-item" onclick="viewItem(<?php echo $item['id']; ?>)">
+                        <div class="search-result-name">
+                            <?php echo htmlspecialchars($item['article_name']); ?>
+                            <span class="badge <?php echo $item['qty_physical_count'] <= 2 ? 'badge-danger' : 'badge-warning'; ?>" style="float: right;">
+                                Qty: <?php echo $item['qty_physical_count']; ?>
+                            </span>
+                        </div>
+                        <div class="search-result-meta">
+                            <?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?> | 
+                            <?php echo htmlspecialchars($item['section_name'] ?? 'N/A'); ?> | 
+                            <?php echo htmlspecialchars($item['category'] ?? 'Uncategorized'); ?>
+                            <?php if (!empty($item['big_unit']) || !empty($item['small_unit'])): ?>
+                            <br><small class="unit-display">
+                                Unit: <?php echo htmlspecialchars($item['big_unit'] ?? ''); ?><?php echo (!empty($item['big_unit']) && !empty($item['small_unit'])) ? ' / ' : ''; ?><?php echo htmlspecialchars($item['small_unit'] ?? ''); ?>
+                            </small>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                    <?php endwhile; ?>
+                    <?php if ($stats['low_stock'] > 10): ?>
+                    <div class="text-center" style="padding: 10px;">
+                        <a href="<?php echo SITE_URL; ?>/admin/all_inventory.php?low_stock=1" class="btn btn-secondary btn-sm">View All <?php echo $stats['low_stock']; ?> Items →</a>
+                    </div>
+                    <?php endif; ?>
+                <?php else: ?>
+                    <div class="text-center text-success" style="padding: 20px;">
+                        <i class="fas fa-check-circle"></i> All items have sufficient stock (above <?php echo $threshold; ?> units)
+                    </div>
+                <?php endif; ?>
             </div>
-        <?php else: ?>
-            <p class="text-center text-success">
-                <i class="fas fa-check-circle"></i> All items have sufficient stock (above <?php echo $threshold; ?> units)
-            </p>
-        <?php endif; ?>
+        </div>
     </div>
     
-    <!-- Recent Inventory Additions - GROUPED BY BATCH -->
+    <!-- Recent Inventory Additions - Grouped by Batch (Right Side) -->
     <div class="stat-chart">
         <h3><i class="fas fa-plus-circle"></i> Recent Inventory Additions (By Batch)</h3>
         <?php if (!empty($batch_items)): ?>
@@ -907,7 +954,7 @@ body {
                                 <tr>
                                     <th>Item Name</th>
                                     <th>Property No.</th>
-                                    <th>Qty</th>
+                                    <th>Qty & Unit</th>
                                     <th>Location</th>
                                     <th>Condition</th>
                                     <th>Action</th>
@@ -922,6 +969,16 @@ body {
                                     elseif ($condition == 'fair') $condition_class = 'condition-fair';
                                     elseif ($condition == 'poor') $condition_class = 'condition-poor';
                                     elseif ($condition == 'serviceable' || $condition == 'servicable') $condition_class = 'condition-serviceable';
+                                    
+                                    // Format unit display
+                                    $unit_display = '';
+                                    if (!empty($item['big_unit']) && !empty($item['small_unit'])) {
+                                        $unit_display = '<small class="unit-display">(' . htmlspecialchars($item['big_unit']) . ' / ' . htmlspecialchars($item['small_unit']) . ')</small>';
+                                    } elseif (!empty($item['big_unit'])) {
+                                        $unit_display = '<small class="unit-display">(' . htmlspecialchars($item['big_unit']) . ')</small>';
+                                    } elseif (!empty($item['small_unit'])) {
+                                        $unit_display = '<small class="unit-display">(' . htmlspecialchars($item['small_unit']) . ')</small>';
+                                    }
                                 ?>
                                 <tr>
                                     <td data-label="Item Name">
@@ -929,7 +986,10 @@ body {
                                         <br><small class="text-muted"><?php echo htmlspecialchars($item['category'] ?? 'Uncategorized'); ?></small>
                                     </td>
                                     <td data-label="Property No" class="property-no"><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></td>
-                                    <td data-label="Qty"><?php echo number_format($item['qty_physical_count']); ?> <?php echo htmlspecialchars($item['uom']); ?></td>
+                                    <td data-label="Qty">
+                                        <?php echo number_format($item['qty_physical_count']); ?> 
+                                        <?php echo $unit_display; ?>
+                                    </td>
                                     <td data-label="Location"><?php echo htmlspecialchars($item['section_name'] ?? 'N/A'); ?></td>
                                     <td data-label="Condition">
                                         <span class="condition-badge <?php echo $condition_class; ?>">
@@ -972,7 +1032,7 @@ body {
 <!-- View Item Modal -->
 <div id="viewModal" class="modal-overlay">
     <div class="modal-container" style="max-width: 800px;">
-        <div class="modal-header-settings">
+        <div class="modal-header">
             <h3><i class="fas fa-info-circle"></i> Item Details</h3>
             <span class="modal-close" onclick="closeModal('viewModal')">&times;</span>
         </div>
@@ -1016,6 +1076,18 @@ function viewItem(id) {
                 if (qty <= critical) quantityClass = 'quantity-critical';
                 else if (qty <= threshold) quantityClass = 'quantity-warning';
                 
+                // Format unit display
+                let unitDisplay = '';
+                if (item.big_unit && item.small_unit) {
+                    unitDisplay = item.big_unit + ' / ' + item.small_unit;
+                } else if (item.big_unit) {
+                    unitDisplay = item.big_unit;
+                } else if (item.small_unit) {
+                    unitDisplay = item.small_unit;
+                } else {
+                    unitDisplay = 'N/A';
+                }
+                
                 let html = `
                     <div class="detail-section"><div class="detail-header"><i class="fas fa-info-circle"></i> Basic Information</div><div class="detail-content"><div class="detail-grid">
                         <div class="detail-item"><div class="detail-label">Article Name</div><div class="detail-value"><strong>${escapeHtml(item.article_name)}</strong></div></div>
@@ -1031,7 +1103,7 @@ function viewItem(id) {
                         <div class="detail-item"><div class="detail-label">Condition</div><div class="detail-value"><span class="condition-badge ${conditionClass}">${escapeHtml(conditionText)}</span></div></div>
                     </div></div></div>
                     <div class="detail-section"><div class="detail-header"><i class="fas fa-calculator"></i> Quantity and Value</div><div class="detail-content"><div class="detail-grid">
-                        <div class="detail-item"><div class="detail-label">Quantity</div><div class="detail-value"><span class="quantity-badge ${quantityClass}">${item.qty_physical_count} ${escapeHtml(item.uom)}</span></div></div>
+                        <div class="detail-item"><div class="detail-label">Quantity</div><div class="detail-value"><span class="quantity-badge ${quantityClass}">${item.qty_physical_count}</span> <small class="text-muted">(${escapeHtml(unitDisplay)})</small></div></div>
                         <div class="detail-item"><div class="detail-label">Unit Value</div><div class="detail-value">₱${parseFloat(item.unit_value).toFixed(2)}</div></div>
                         <div class="detail-item"><div class="detail-label">Total Value</div><div class="detail-value">₱${(item.qty_physical_count * item.unit_value).toFixed(2)}</div></div>
                         <div class="detail-item"><div class="detail-label">Fund Cluster</div><div class="detail-value">${escapeHtml(item.fund_cluster || 'N/A')}</div></div>

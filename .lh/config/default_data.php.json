@@ -3,11 +3,15 @@
     "activeCommit": 0,
     "commits": [
         {
-            "activePatchIndex": 0,
+            "activePatchIndex": 1,
             "patches": [
                 {
                     "date": 1778744283414,
                     "content": "Index: \n===================================================================\n--- \n+++ \n"
+                },
+                {
+                    "date": 1779334425269,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -30,29 +30,29 @@\n                       VALUES ('$u[0]', '$u[1]', '$u[2]', '$u[3]', '$u[4]', '$hash', 'active')\");\n     }\n }\n \n-// Insert sample buildings if not exists\n-$check = $conn->query(\"SELECT * FROM buildings LIMIT 1\");\n-if ($check->num_rows == 0) {\n-    $conn->query(\"INSERT INTO buildings (name, floor) VALUES \n-                  ('Main Building', 3),\n-                  ('Ward Building', 2),\n-                  ('Annex Building', 1),\n-                  ('Warehouse', 1)\");\n-}\n+// // Insert sample buildings if not exists\n+// $check = $conn->query(\"SELECT * FROM buildings LIMIT 1\");\n+// if ($check->num_rows == 0) {\n+//     $conn->query(\"INSERT INTO buildings (name, floor) VALUES \n+//                   ('Main Building', 3),\n+//                   ('Ward Building', 2),\n+//                   ('Annex Building', 1),\n+//                   ('Warehouse', 1)\");\n+// }\n \n-// Insert sample departments if not exists\n-$check = $conn->query(\"SELECT * FROM departments LIMIT 1\");\n-if ($check->num_rows == 0) {\n-    $conn->query(\"INSERT INTO departments (building_id, name) VALUES \n-                  (1, 'Emergency Department'),\n-                  (1, 'Pharmacy'),\n-                  (2, 'ICU'),\n-                  (2, 'Surgery'),\n-                  (3, 'Administration'),\n-                  (4, 'Storage')\");\n-}\n+// // Insert sample departments if not exists\n+// $check = $conn->query(\"SELECT * FROM departments LIMIT 1\");\n+// if ($check->num_rows == 0) {\n+//     $conn->query(\"INSERT INTO departments (building_id, name) VALUES \n+//                   (1, 'Emergency Department'),\n+//                   (1, 'Pharmacy'),\n+//                   (2, 'ICU'),\n+//                   (2, 'Surgery'),\n+//                   (3, 'Administration'),\n+//                   (4, 'Storage')\");\n+// }\n \n // Insert sample sections if not exists\n // $check = $conn->query(\"SELECT * FROM sections LIMIT 1\");\n // if ($check->num_rows == 0) {\n"
                 }
             ],
             "date": 1778744283414,

@@ -1,0 +1,22 @@
+{
+    "sourceFile": "admin/fix_property_numbers.php",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 1,
+            "patches": [
+                {
+                    "date": 1779064821750,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                },
+                {
+                    "date": 1779064870749,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n@@ -2,11 +2,8 @@\n require_once '../config.php';\r\n require_once INCLUDE_PATH . '/auth.php';\r\n \r\n // Only allow admin to run this\r\n-if (!in_array($_SESSION['user_role'] ?? '', ['admin', 'superadmin'])) {\r\n-    die('Access denied. Admin only.');\r\n-}\r\n \r\n echo \"<h1>Fixing Property Numbers</h1>\";\r\n \r\n // Get all records with old format\r\n"
+                }
+            ],
+            "date": 1779064821750,
+            "name": "Commit-0",
+            "content": "<?php\r\nrequire_once '../config.php';\r\nrequire_once INCLUDE_PATH . '/auth.php';\r\n\r\n// Only allow admin to run this\r\nif (!in_array($_SESSION['user_role'] ?? '', ['admin', 'superadmin'])) {\r\n    die('Access denied. Admin only.');\r\n}\r\n\r\necho \"<h1>Fixing Property Numbers</h1>\";\r\n\r\n// Get all records with old format\r\n$query = \"SELECT id, property_no, barcode_data FROM semi_ppe WHERE property_no REGEXP '^[0-9]{8}-[0-9]+$'\";\r\n$result = $conn->query($query);\r\n\r\nif ($result->num_rows === 0) {\r\n    echo \"<p>No records need updating.</p>\";\r\n    exit;\r\n}\r\n\r\necho \"<p>Found \" . $result->num_rows . \" records to update...</p>\";\r\n\r\n$updated = 0;\r\nwhile ($row = $result->fetch_assoc()) {\r\n    $old_property = $row['property_no'];\r\n    \r\n    // Convert YYYYMMDD-XXX to YYYY-MM-DD-XXXX\r\n    $year = substr($old_property, 0, 4);\r\n    $month = substr($old_property, 4, 2);\r\n    $day = substr($old_property, 6, 2);\r\n    $seq = substr($old_property, 9);\r\n    \r\n    $new_property = $year . '-' . $month . '-' . $day . '-' . str_pad($seq, 4, '0', STR_PAD_LEFT);\r\n    \r\n    // Update the record\r\n    $stmt = $conn->prepare(\"UPDATE semi_ppe SET property_no = ? WHERE id = ?\");\r\n    $stmt->bind_param(\"si\", $new_property, $row['id']);\r\n    \r\n    if ($stmt->execute()) {\r\n        $updated++;\r\n        echo \"<p>Updated: {$old_property} → {$new_property}</p>\";\r\n    }\r\n    $stmt->close();\r\n}\r\n\r\necho \"<p><strong>Complete! Updated {$updated} records.</strong></p>\";\r\necho \"<p><a href='semi_expendable.php'>Go back to Semi-Expendable page</a></p>\";\r\n?>"
+        }
+    ]
+}

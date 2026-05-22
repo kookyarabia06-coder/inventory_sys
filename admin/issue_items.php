@@ -2,7 +2,7 @@
 ob_start();
 /**
  * Issue Items Page (Admin)
- * Handle item issuance to employees
+ * Handle item issuance and reissuance to employees
  */
 
 // Get the absolute path to the root directory
@@ -19,633 +19,451 @@ requireRole('admin');
 $page_title = 'Issue Items';
 $page_description = 'Issue inventory items to employees';
 
-// ========== HANDLE PAR PRINT ==========
-if (isset($_GET['print_par']) && is_numeric($_GET['print_par'])) {
-    $issuance_id = (int)$_GET['print_par'];
-    $user_query = $conn->query("SELECT issued_to FROM equipment_issuance WHERE id = $issuance_id");
-    if (!$user_query || $user_query->num_rows == 0) {
-        $_SESSION['error'] = 'Issuance record not found.';
-        header('Location: ' . SITE_URL . '/admin/issue_items.php');
-        exit;
-    }
-    $employee_id = $user_query->fetch_assoc()['issued_to'];
-    
-    $par_query = $conn->query("
-        SELECT ei.*, i.id as inventory_item_id, i.article_name, i.description,
-               i.property_no, i.uom as unit_of_measure, i.unit_value, i.fund_cluster,
-               i.category, i.type_equipment, i.condition_text, i.date_added as date_acquired,
-               e.name as equipment_name,
-               CONCAT(emp.firstname, ' ', emp.lastname) as issued_to_name,
-               CONCAT(issuer.firstname, ' ', issuer.lastname) as issued_by_name,
-               sig.name as signatory_name,
-               sig.position as signatory_position,
-               s.name as section_name, d.name as department_name, b.name as building_name,
-               emp.position,
-               CONCAT(
-                   LPAD(COALESCE(b.id, 0), 2, '0'),
-                   LPAD(COALESCE(d.id, 0), 2, '0'),
-                   LPAD(COALESCE(s.id, 0), 2, '0')
-               ) as location_code
-        FROM equipment_issuance ei
-        JOIN inventory i ON ei.inventory_id = i.id
-        LEFT JOIN equipment e ON i.equipment_id = e.id
-        JOIN employees emp ON ei.issued_to = emp.id
-        JOIN users issuer ON ei.issued_by = issuer.id
-        LEFT JOIN signatories sig ON ei.signatory_id = sig.id
-        LEFT JOIN sections s ON i.section_id = s.id
-        LEFT JOIN departments d ON s.department_id = d.id
-        LEFT JOIN buildings b ON d.building_id = b.id
-        WHERE ei.issued_to = $employee_id AND ei.status = 'issued'
-        ORDER BY i.property_no
-    ");
-    
-    if ($par_query && $par_query->num_rows > 0) {
-        $items = $par_query->fetch_all(MYSQLI_ASSOC);
-        $first_item = $items[0];
-        $par_items = [];
-        $total_amount = 0;
-        foreach ($items as $item) {
-            $par_items[] = [
-                'article_name' => $item['article_name'],
-                'description' => $item['description'],
-                'property_no' => $item['property_no'],
-                'unit_of_measure' => $item['unit_of_measure'],
-                'unit_value' => $item['unit_value'],
-                'quantity' => $item['quantity_issued'],
-                'date_acquired' => $item['date_acquired'] ?? $item['issued_date'],
-                'amount' => $item['unit_value'] * $item['quantity_issued']
-            ];
-            $total_amount += $item['unit_value'] * $item['quantity_issued'];
-        }
-        
-        $par_no = "PAR No.: " . date('Y-m-') . sprintf('%03d', $employee_id);
-        $entity_name = "'AMANG' RODRIGUEZ MEMORIAL MEDICAL CENTER";
-        $fund_cluster = $first_item['fund_cluster'] ?? "RAF";
-        $location_code = $first_item['location_code'] ?? '';
-        
-        header('Content-Type: text/html; charset=utf-8');
-        ?>
-        <!DOCTYPE html><html><head><title>PAR <?php echo $par_no; ?></title>
-        <style>
-            *{margin:0;padding:0;box-sizing:border-box}
-            body{font-family:'Times New Roman',serif;background:#fff;padding:20px;font-size:12px}
-            .par-container{max-width:1100px;margin:0 auto;padding:20px}
-            @media print{body{padding:0}.par-container{padding:.5in}.no-print{display:none}}
-            .header{text-align:center;margin-bottom:20px}
-            .entity-name{font-size:14px;font-weight:bold;text-transform:uppercase}
-            .title{text-align:center;font-size:16px;font-weight:bold;text-decoration:underline;margin:20px 0 10px}
-            .par-header{display:flex;justify-content:space-between;margin:15px 0;font-weight:bold}
-            .items-table{width:100%;border-collapse:collapse;margin:15px 0;font-size:11px}
-            .items-table th,.items-table td{border:1px solid #000;padding:8px 5px}
-            .items-table th{background:#f0f0f0;font-weight:bold;text-align:center}
-            .items-table td.amount,.items-table th.amount{text-align:right}
-            .total-row{font-weight:bold;background:#f9f9f9}
-            .signature-section{margin-top:30px;display:flex;justify-content:space-between}
-            .signature-box{width:30%;text-align:center}
-            .signature-line{margin-top:40px;border-top:1px solid #000;width:100%;padding-top:5px}
-            .signature-name{font-weight:bold;font-size:12px}
-            .signature-title{font-size:10px;margin-top:5px}
-            .footer-note{margin-top:30px;font-size:9px;text-align:center;border-top:1px solid #ccc;padding-top:10px}
-            .print-button{text-align:center;margin-bottom:20px}
-            .btn-print{background:#2c3e50;color:white;border:none;padding:10px 20px;font-size:14px;cursor:pointer;border-radius:5px;margin:0 5px}
-        </style>
-        </head><body>
-        <div class="print-button no-print">
-            <button onclick="window.print()" class="btn-print">🖨️ Print</button>
-            <button onclick="window.close()" class="btn-print" style="background:#6c757d">Close</button>
-        </div>
-        <div class="par-container">
-            <div class="header"><div class="entity-name"><?php echo htmlspecialchars($entity_name); ?></div></div>
-            <div class="title">PROPERTY ACKNOWLEDGMENT RECEIPT</div>
-            <div class="par-header"><span>Fund Cluster: <?php echo htmlspecialchars($fund_cluster); ?></span><span><?php echo $par_no; ?></span></div>
-            <?php if(!empty($location_code) && $location_code != '000000'): ?>
-            <div class="par-header" style="margin-top:-10px;font-size:11px"><span>Location Code: <?php echo htmlspecialchars($location_code); ?></span></div>
-            <?php endif; ?>
-            <table class="items-table">
-                <thead><tr><th width="8%">Qty</th><th width="10%">Unit</th><th width="35%">Description</th><th width="20%">Property No.</th><th width="12%">Date Acquired</th><th width="15%" class="amount">Amount</th></tr></thead>
-                <tbody>
-                    <?php foreach ($par_items as $item): ?>
-                    <tr>
-                        <td style="text-align:center"><?php echo $item['quantity']; ?></td>
-                        <td style="text-align:center"><?php echo htmlspecialchars($item['unit_of_measure'] ?? 'pcs'); ?></td>
-                        <td><strong><?php echo htmlspecialchars($item['article_name']); ?></strong><?php if(!empty($item['description'])) echo '<br><small>'.htmlspecialchars($item['description']).'</small>'; ?></td>
-                        <td style="text-align:center"><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></td>
-                        <td style="text-align:center"><?php echo date('m/d/y', strtotime($item['date_acquired'])); ?></td>
-                        <td class="amount"><?php echo number_format($item['amount'], 2); ?></td>
-                    </tr>
-                    <?php endforeach; ?>
-                    <tr class="total-row"><td colspan="5" style="text-align:right"><strong>TOTAL</strong></td><td class="amount"><strong><?php echo number_format($total_amount, 2); ?></strong></td></tr>
-                </tbody>
-            </table>
-            <div class="signature-section">
-                <div class="signature-box">
-                    <div class="signature-line">
-                        <?php if(!empty($first_item['signatory_name'])): ?>
-                            <div class="signature-name"><?php echo htmlspecialchars($first_item['signatory_name']); ?></div>
-                        <?php endif; ?>
-                    </div>
-                    <div class="signature-title">Received from</div>
-                    <?php if(!empty($first_item['signatory_position'])): ?>
-                    <div style="font-size:10px"><?php echo htmlspecialchars($first_item['signatory_position']); ?></div>
-                    <?php endif; ?>
-                </div>
-                <div class="signature-box">
-                    <div class="signature-line"><div class="signature-name"><?php echo htmlspecialchars($first_item['issued_to_name']); ?></div></div>
-                    <div class="signature-title">End-User</div>
-                </div>
-                <div class="signature-box">
-                    <div class="signature-line"><div class="signature-name"><?php echo htmlspecialchars($first_item['issued_by_name']); ?></div></div>
-                    <div class="signature-title">Supply Officer</div>
-                </div>
-            </div>
-            <div class="footer-note">Generated on <?php echo date('F d, Y h:i A'); ?></div>
-        </div>
-        </body></html>
-        <?php
-        exit;
-    } else {
-        $_SESSION['error'] = 'Issuance record not found.';
-        header('Location: ' . SITE_URL . '/admin/issue_items.php');
-        exit;
-    }
-}
+// ============================================
+// DATABASE MIGRATIONS
+// ============================================
 
-// Handle printing all issued items for an employee (Bulk PAR)
-if (isset($_GET['print_user_par']) && is_numeric($_GET['print_user_par'])) {
-    $employee_id = (int)$_GET['print_user_par'];
-    $par_query = $conn->query("
-        SELECT ei.*, i.article_name, i.description, i.property_no, i.uom as unit_of_measure,
-               i.unit_value, i.date_added as date_acquired, i.category, e.name as equipment_name,
-               CONCAT(emp.firstname, ' ', emp.lastname) as issued_to_name,
-               CONCAT(issuer.firstname, ' ', issuer.lastname) as issued_by_name,
-               sig.name as signatory_name,
-               sig.position as signatory_position,
-               CONCAT(
-                   LPAD(COALESCE(b.id, 0), 2, '0'),
-                   LPAD(COALESCE(d.id, 0), 2, '0'),
-                   LPAD(COALESCE(s.id, 0), 2, '0')
-               ) as location_code
-        FROM equipment_issuance ei
-        JOIN inventory i ON ei.inventory_id = i.id
-        LEFT JOIN equipment e ON i.equipment_id = e.id
-        JOIN employees emp ON ei.issued_to = emp.id
+$conn->query("ALTER TABLE equipment_issuance MODIFY COLUMN status ENUM('issued', 'returned', 'reissued') DEFAULT 'issued'");
+$conn->query("ALTER TABLE equipment_issuance ADD COLUMN IF NOT EXISTS reissued_from_id INT NULL");
+$conn->query("ALTER TABLE equipment_issuance ADD COLUMN IF NOT EXISTS reissued_to_id INT NULL");
+$conn->query("ALTER TABLE equipment_issuance ADD COLUMN IF NOT EXISTS reissue_date DATETIME NULL");
+$conn->query("ALTER TABLE equipment_issuance ADD COLUMN IF NOT EXISTS original_issuance_barcode VARCHAR(100) NULL");
+$conn->query("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS big_unit VARCHAR(50) NULL");
+$conn->query("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS small_unit VARCHAR(50) NULL");
+$conn->query("ALTER TABLE equipment_issuance DROP COLUMN IF EXISTS purpose");
+
+// ============================================
+// AJAX HANDLER FOR VIEW MODAL
+// ============================================
+if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_issuance') {
+    $issuance_id = (int)$_GET['id'];
+    $result = $conn->query("
+        SELECT 
+            ei.*, 
+            i.article_name, 
+            i.description,
+            i.property_no,
+            i.big_unit,
+            i.small_unit,
+            i.unit_value,
+            CONCAT(e.firstname, ' ', e.lastname) as issued_to_name,
+            e.position as issued_to_position,
+            CONCAT(issuer.firstname, ' ', issuer.lastname) as issued_by_name,
+            sig.name as signatory_name,
+            CONCAT(original_emp.firstname, ' ', original_emp.lastname) as reissued_from_name,
+            CONCAT(reissued_emp.firstname, ' ', reissued_emp.lastname) as reissued_to_name
+        FROM equipment_issuance ei 
+        JOIN inventory i ON ei.inventory_id = i.id 
+        JOIN employees e ON ei.issued_to = e.id
         JOIN users issuer ON ei.issued_by = issuer.id
         LEFT JOIN signatories sig ON ei.signatory_id = sig.id
-        LEFT JOIN sections s ON e.section_id = s.id
-        LEFT JOIN departments d ON s.department_id = d.id
-        LEFT JOIN buildings b ON d.building_id = b.id
-        WHERE ei.issued_to = $employee_id AND ei.status = 'issued'
-        ORDER BY ei.issued_date DESC
+        LEFT JOIN equipment_issuance original_iss ON ei.reissued_from_id = original_iss.id
+        LEFT JOIN employees original_emp ON original_iss.issued_to = original_emp.id
+        LEFT JOIN employees reissued_emp ON ei.reissued_to_id = reissued_emp.id
+        WHERE ei.id = $issuance_id
     ");
     
-    if ($par_query && $par_query->num_rows > 0) {
-        $items = $par_query->fetch_all(MYSQLI_ASSOC);
-        $first_item = $items[0];
-        $total_amount = 0;
-        foreach ($items as $item) $total_amount += $item['unit_value'] * $item['quantity_issued'];
-        $location_code = $first_item['location_code'] ?? '';
-        
-        header('Content-Type: text/html; charset=utf-8');
-        ?><!DOCTYPE html><html><head><title>PAR</title>
-        <style>
-            *{margin:0;padding:0}body{font-family:'Times New Roman',serif;padding:20px;font-size:12px}
-            .par-container{max-width:900px;margin:0 auto;padding:20px}
-            @media print{body{padding:0}.par-container{padding:.5in}.no-print{display:none}}
-            .entity-name{font-size:14px;font-weight:bold;text-transform:uppercase;text-align:center}
-            .title{text-align:center;font-size:16px;font-weight:bold;text-decoration:underline;margin:20px 0}
-            .par-header{display:flex;justify-content:space-between;margin:15px 0;font-weight:bold}
-            .items-table{width:100%;border-collapse:collapse;margin:15px 0;font-size:11px}
-            .items-table th,.items-table td{border:1px solid #000;padding:8px 5px}
-            .items-table th{background:#f0f0f0;text-align:center}
-            .items-table td.amount{text-align:right}.total-row{font-weight:bold;background:#f9f9f9}
-            .signature-section{margin-top:30px;display:flex;justify-content:space-between}
-            .signature-box{width:30%;text-align:center}.signature-line{margin-top:40px;border-top:1px solid #000;padding-top:5px}
-            .signature-name{font-weight:bold;font-size:12px}.signature-title{font-size:10px;margin-top:5px}
-            .footer-note{margin-top:30px;font-size:9px;text-align:center;border-top:1px solid #ccc;padding-top:10px}
-            .btn-print{background:#2c3e50;color:white;border:none;padding:10px 20px;cursor:pointer;border-radius:5px}
-        </style></head><body>
-        <div class="no-print" style="text-align:center;margin-bottom:20px">
-            <button onclick="window.print()" class="btn-print">🖨️ Print</button>
-            <button onclick="window.close()" class="btn-print" style="background:#6c757d">Close</button>
-        </div>
-        <div class="par-container">
-            <div class="entity-name">'AMANG' RODRIGUEZ MEMORIAL MEDICAL CENTER</div>
-            <div class="title">PROPERTY ACKNOWLEDGMENT RECEIPT</div>
-            <div class="par-header"><span>Fund Cluster: RAF</span><span>PAR No.: <?php echo date('Y-m-').sprintf('%03d',$employee_id); ?></span></div>
-            <?php if(!empty($location_code) && $location_code != '000000'): ?>
-            <div class="par-header" style="margin-top:-10px;font-size:11px"><span>Location Code: <?php echo htmlspecialchars($location_code); ?></span></div>
-            <?php endif; ?>
-            <table class="items-table">
-                <thead><tr><th>Qty</th><th>Unit</th><th>Description</th><th>Property No.</th><th>Date</th><th class="amount">Amount</th></tr></thead>
-                <tbody>
-                    <?php foreach($items as $item): ?>
-                    <tr><td style="text-align:center"><?php echo number_format($item['quantity_issued'],0); ?></td>
-                        <td style="text-align:center"><?php echo htmlspecialchars($item['unit_of_measure']??'LOT'); ?></td>
-                        <td><strong><?php echo htmlspecialchars($item['article_name']); ?></strong><?php if(!empty($item['description'])) echo '<br><small>'.htmlspecialchars($item['description']).'</small>'; ?></td>
-                        <td style="text-align:center"><?php echo htmlspecialchars($item['property_no']??'N/A'); ?></td>
-                        <td style="text-align:center"><?php echo date('m/d/y',strtotime($item['issued_date'])); ?></td>
-                        <td class="amount"><?php echo number_format($item['unit_value']*$item['quantity_issued'],2); ?></td>
-                    </tr>
-                    <?php endforeach; ?>
-                    <tr class="total-row"><td colspan="5" style="text-align:right"><strong>TOTAL</strong></td><td class="amount"><strong><?php echo number_format($total_amount,2); ?></strong></td></tr>
-                </tbody>
-            </table>
-            <div class="signature-section">
-                <div class="signature-box">
-                    <div class="signature-line">
-                        <?php if(!empty($first_item['signatory_name'])): ?>
-                            <div class="signature-name"><?php echo htmlspecialchars($first_item['signatory_name']); ?></div>
-                        <?php endif; ?>
-                    </div>
-                    <div class="signature-title">Received from</div>
-                    <?php if(!empty($first_item['signatory_position'])): ?>
-                    <div style="font-size:10px"><?php echo htmlspecialchars($first_item['signatory_position']); ?></div>
-                    <?php endif; ?>
-                </div>
-                <div class="signature-box">
-                    <div class="signature-line"><div class="signature-name"><?php echo htmlspecialchars($first_item['issued_to_name']); ?></div></div>
-                    <div class="signature-title">End-User</div>
-                </div>
-                <div class="signature-box">
-                    <div class="signature-line"><div class="signature-name"><?php echo htmlspecialchars($first_item['issued_by_name']); ?></div></div>
-                    <div class="signature-title">Supply Officer</div>
-                </div>
-            </div>
-            <div class="footer-note">Generated on <?php echo date('F d, Y h:i A'); ?></div>
-        </div></body></html>
-        <?php
-        exit;
+    if ($result && $result->num_rows > 0) {
+        $item = $result->fetch_assoc();
+        echo json_encode(['success' => true, 'data' => $item]);
     } else {
-        $_SESSION['error'] = 'No active issued items found.';
-        header('Location: ' . SITE_URL . '/admin/issue_items.php');
-        exit;
+        echo json_encode(['success' => false, 'message' => 'Issuance not found']);
     }
+    exit();
 }
 
 // ============================================
-// FUNCTION TO GENERATE PROPERTY NUMBER WITH DEPARTMENT CODE
+// HELPER FUNCTIONS
 // ============================================
 
-function generatePropertyNumberWithDeptCode($conn, $inventory_id, $employee_id, $table = 'inventory') {
-    // Get item details from the appropriate table
-    if ($table == 'inventory') {
-        $inv_query = $conn->query("SELECT property_no, article_name FROM inventory WHERE id = $inventory_id");
-    } else {
-        // For semi_ppe table
-        $inv_query = $conn->query("SELECT property_no, article_name FROM semi_ppe WHERE id = $inventory_id");
-    }
-    $item = $inv_query->fetch_assoc();
-    $original_property_no = $item['property_no'];
-    
-    // Get employee department code
+function getDepartmentCode($conn, $employee_id) {
     $emp_query = $conn->query("
         SELECT d.code as department_code 
         FROM employees e
         LEFT JOIN sections s ON e.section_id = s.id
         LEFT JOIN departments d ON s.department_id = d.id
-        WHERE e.id = $employee_id
-    ");
-    $employee = $emp_query->fetch_assoc();
-    $dept_code = $employee['department_code'] ?? '00';
+        WHERE e.id = " . intval($employee_id)
+    );
     
-    // Check if property number already has a department code
-    if (strpos($original_property_no, '-') !== false) {
-        $parts = explode('-', $original_property_no);
-        $last_part = end($parts);
-        // If the last part looks like a department code (2 digits), replace it
-        if (strlen($last_part) == 2 && ctype_digit($last_part)) {
-            array_pop($parts);
-            $new_property_no = implode('-', $parts) . '-' . $dept_code;
-        } else {
-            $new_property_no = $original_property_no . '-' . $dept_code;
+    if ($emp_query && $emp_query->num_rows > 0) {
+        $employee = $emp_query->fetch_assoc();
+        if (!empty($employee['department_code'])) {
+            return $employee['department_code'];
         }
-    } else {
-        $new_property_no = $original_property_no . '-' . $dept_code;
+    }
+    return '000';
+}
+
+function removeDepartmentCodeFromPropertyNo($property_no) {
+    if (empty($property_no)) return $property_no;
+    $parts = explode('-', $property_no);
+    $last_part = end($parts);
+    if (strlen($last_part) == 3 && ctype_digit($last_part)) {
+        array_pop($parts);
+        return implode('-', $parts);
+    }
+    return $property_no;
+}
+
+function generatePropertyNumberWithDeptCode($conn, $inventory_id, $employee_id) {
+    $inv_query = $conn->query("SELECT property_no FROM inventory WHERE id = " . intval($inventory_id));
+    
+    if (!$inv_query || $inv_query->num_rows == 0) {
+        $date_prefix = date('Y-m-d');
+        $random_num = str_pad(rand(1, 9999), 4, '0', STR_PAD_LEFT);
+        $dept_code = getDepartmentCode($conn, $employee_id);
+        return $date_prefix . '-' . $random_num . '-' . $dept_code;
     }
     
-    return $new_property_no;
+    $item = $inv_query->fetch_assoc();
+    $original_property_no = $item['property_no'];
+    $dept_code = getDepartmentCode($conn, $employee_id);
+    
+    if (!empty($original_property_no)) {
+        $parts = explode('-', $original_property_no);
+        $last_part = end($parts);
+        if (strlen($last_part) == 3 && ctype_digit($last_part)) {
+            array_pop($parts);
+            return implode('-', $parts) . '-' . $dept_code;
+        } else {
+            return $original_property_no . '-' . $dept_code;
+        }
+    } else {
+        $date_prefix = date('Y-m-d');
+        $random_num = str_pad(rand(1, 9999), 4, '0', STR_PAD_LEFT);
+        return $date_prefix . '-' . $random_num . '-' . $dept_code;
+    }
 }
 
 // ============================================
-// HANDLE ISSUANCE FORM SUBMISSION
+// FORM HANDLERS
 // ============================================
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $is_reissue = isset($_POST['is_reissue']) && $_POST['is_reissue'] == '1';
-    $original_issuance_id = $is_reissue ? (int)$_POST['original_issuance_id'] : null;
+
+// New Issuance
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] == 'new_issue') {
     $inventory_ids = isset($_POST['inventory_ids']) ? $_POST['inventory_ids'] : [];
     $quantities = isset($_POST['quantities']) ? $_POST['quantities'] : [];
     $issued_to = (int)$_POST['issued_to'];
-    $purpose = sanitize($_POST['purpose']);
     $condition = sanitize($_POST['condition']);
     $remarks = sanitize($_POST['remarks'] ?? '');
     $signatory_id = !empty($_POST['signatory_id']) ? (int)$_POST['signatory_id'] : NULL;
-    $category = isset($_POST['category']) ? sanitize($_POST['category']) : 'inventory';
+    
+    $valid_conditions = ['Serviceable', 'Non-Serviceable', 'For Condemn', 'Under Repair'];
+    if (!in_array($condition, $valid_conditions)) {
+        $_SESSION['error'] = "Invalid condition selected.";
+        header('Location: ' . SITE_URL . '/admin/issue_items.php');
+        exit();
+    }
     
     $conn->begin_transaction();
     try {
-        // For reissue - handle single item reissue
-        if ($is_reissue && $original_issuance_id) {
-            $original_issuance = $conn->query("
-                SELECT ei.*, i.qty_physical_count, i.article_name, i.property_no, i.uom 
-                FROM equipment_issuance ei 
-                JOIN inventory i ON ei.inventory_id = i.id 
-                WHERE ei.id = $original_issuance_id
-            ")->fetch_assoc();
+        $success_count = 0;
+        foreach ($inventory_ids as $index => $inventory_id) {
+            $inventory_id = (int)$inventory_id;
+            $requested_qty = isset($quantities[$index]) ? floatval($quantities[$index]) : 1;
             
-            if (!$original_issuance) throw new Exception("Original issuance not found");
-            if ($original_issuance['status'] !== 'issued') throw new Exception("Item already returned, cannot reissue.");
+            $selected_item = $conn->query("SELECT * FROM inventory WHERE id=$inventory_id")->fetch_assoc();
+            if (!$selected_item) throw new Exception("Item not found");
             
-            // Update old issuance as returned
-            $conn->query("UPDATE equipment_issuance SET status='returned', actual_return=NOW(), condition_on_return='Good' WHERE id=$original_issuance_id");
+            if ($selected_item['qty_physical_count'] < $requested_qty) {
+                throw new Exception("Insufficient quantity for: " . $selected_item['article_name']);
+            }
             
-            // Generate new property number with department code
-            $new_property_no = generatePropertyNumberWithDeptCode($conn, $original_issuance['inventory_id'], $issued_to, 'inventory');
+            $new_property_no = generatePropertyNumberWithDeptCode($conn, $inventory_id, $issued_to);
+            $new_quantity = $selected_item['qty_physical_count'] - $requested_qty;
+            $conn->query("UPDATE inventory SET qty_physical_count=$new_quantity, current_holder=$issued_to, property_no='$new_property_no', condition_text='$condition' WHERE id=$inventory_id");
             
-            // Update inventory property number
-            $conn->query("UPDATE inventory SET property_no = '$new_property_no' WHERE id = {$original_issuance['inventory_id']}");
+            $issuance_barcode = $new_property_no;
             
-            // Also update semi_ppe if the item came from there
-            $conn->query("UPDATE semi_ppe SET property_no = '$new_property_no' WHERE property_no = '{$original_issuance['property_no']}'");
-            
-            // Create new issuance
             $stmt = $conn->prepare("
                 INSERT INTO equipment_issuance (
-                    inventory_id, issued_to, issued_by, signatory_id, quantity_issued, purpose, 
-                    condition_on_issue, remarks, status, issued_date
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'issued', NOW())
+                    inventory_id, issued_to, issued_by, signatory_id, quantity_issued, 
+                    condition_on_issue, remarks, status, issued_date, issuance_barcode
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'issued', NOW(), ?)
             ");
+            
             $stmt->bind_param("iiiidsss", 
-                $original_issuance['inventory_id'], 
+                $inventory_id, 
                 $issued_to, 
                 $_SESSION['user_id'],
                 $signatory_id, 
-                $original_issuance['quantity_issued'], 
-                $purpose, 
+                $requested_qty, 
                 $condition, 
-                $remarks
+                $remarks,
+                $issuance_barcode
             );
             $stmt->execute();
             $stmt->close();
             
-            // Update inventory current holder
-            $conn->query("UPDATE inventory SET current_holder=$issued_to WHERE id={$original_issuance['inventory_id']}");
-            
-            $success_count = 1;
-            
-        } 
-        // For new issuance - handle multiple items
-        elseif (count($inventory_ids) > 0) {
-            $success_count = 0;
-            foreach ($inventory_ids as $index => $inventory_id) {
-                $inventory_id = (int)$inventory_id;
-                $requested_qty = isset($quantities[$index]) ? floatval($quantities[$index]) : 1;
-                
-                // Get inventory item details
-                $selected_item = $conn->query("SELECT * FROM inventory WHERE id=$inventory_id")->fetch_assoc();
-                if (!$selected_item) throw new Exception("Item not found");
-                
-                // Check available quantity
-                if ($selected_item['qty_physical_count'] < $requested_qty) {
-                    throw new Exception("Insufficient quantity for: " . $selected_item['article_name']);
-                }
-                
-                // Generate new property number with department code
-                $new_property_no = generatePropertyNumberWithDeptCode($conn, $inventory_id, $issued_to, 'inventory');
-                
-                // Update inventory quantity AND property number
-                $new_quantity = $selected_item['qty_physical_count'] - $requested_qty;
-                $conn->query("UPDATE inventory SET qty_physical_count=$new_quantity, current_holder=$issued_to, property_no='$new_property_no' WHERE id=$inventory_id");
-                
-                // Also update semi_ppe if the item came from there (by property number)
-                $conn->query("UPDATE semi_ppe SET property_no = '$new_property_no' WHERE property_no = '{$selected_item['property_no']}'");
-                
-                // Insert into equipment_issuance
-                $stmt = $conn->prepare("
-                    INSERT INTO equipment_issuance (
-                        inventory_id, issued_to, issued_by, signatory_id, quantity_issued, purpose, 
-                        condition_on_issue, remarks, status, issued_date
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'issued', NOW())
-                ");
-                $stmt->bind_param("iiiidsss", 
-                    $inventory_id, 
-                    $issued_to, 
-                    $_SESSION['user_id'],
-                    $signatory_id, 
-                    $requested_qty, 
-                    $purpose, 
-                    $condition, 
-                    $remarks
-                );
-                $stmt->execute();
-                $stmt->close();
-                
-                $success_count++;
-            }
-        } else {
-            throw new Exception("No items selected");
+            $success_count++;
         }
         
         $conn->commit();
-        $_SESSION['success'] = $is_reissue ? "Item reissued successfully with department code added to property number" : "$success_count item(s) issued successfully with department codes added to property numbers";
+        $_SESSION['success'] = "$success_count item(s) issued successfully.";
         
     } catch (Exception $e) {
         $conn->rollback();
         $_SESSION['error'] = "Error: " . $e->getMessage();
     }
     
-    unset($_SESSION['reissue_from']);
     header('Location: ' . SITE_URL . '/admin/issue_items.php');
     exit();
 }
 
-// ============================================
-// HANDLE RETURN
-// ============================================
-if (isset($_GET['return']) && is_numeric($_GET['return'])) {
-    $issuance_id = (int)$_GET['return'];
+// Reissue from returned item
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] == 'reissue') {
+    $original_issuance_id = (int)$_POST['original_issuance_id'];
+    $reissue_to = (int)$_POST['reissue_to'];
+    $condition = sanitize($_POST['condition']);
+    $remarks = sanitize($_POST['remarks'] ?? '');
+    $signatory_id = !empty($_POST['signatory_id']) ? (int)$_POST['signatory_id'] : NULL;
+    
+    $valid_conditions = ['Serviceable', 'Non-Serviceable', 'For Condemn', 'Under Repair'];
+    if (!in_array($condition, $valid_conditions)) {
+        $_SESSION['error'] = "Invalid condition selected.";
+        header('Location: ' . SITE_URL . '/admin/issue_items.php');
+        exit();
+    }
+    
+    $conn->begin_transaction();
+    try {
+        $original_issuance = $conn->query("
+            SELECT ei.*, i.qty_physical_count, i.article_name, i.property_no 
+            FROM equipment_issuance ei 
+            JOIN inventory i ON ei.inventory_id = i.id 
+            WHERE ei.id = $original_issuance_id AND ei.status = 'returned'
+        ")->fetch_assoc();
+        
+        if (!$original_issuance) throw new Exception("Original issuance not found or not returned.");
+        
+        $new_property_no = generatePropertyNumberWithDeptCode($conn, $original_issuance['inventory_id'], $reissue_to);
+        $conn->query("UPDATE inventory SET property_no = '$new_property_no', current_holder=$reissue_to, condition_text='$condition' WHERE id = {$original_issuance['inventory_id']}");
+        
+        $issuance_barcode = $new_property_no;
+        
+        $stmt = $conn->prepare("
+            INSERT INTO equipment_issuance (
+                inventory_id, issued_to, issued_by, signatory_id, quantity_issued, 
+                condition_on_issue, remarks, status, issued_date, issuance_barcode,
+                reissued_from_id, original_issuance_barcode
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'issued', NOW(), ?, ?, ?)
+        ");
+        
+        $stmt->bind_param("iiiidssssi", 
+            $original_issuance['inventory_id'], 
+            $reissue_to, 
+            $_SESSION['user_id'],
+            $signatory_id, 
+            $original_issuance['quantity_issued'], 
+            $condition, 
+            $remarks,
+            $issuance_barcode,
+            $original_issuance_id,
+            $original_issuance['issuance_barcode']
+        );
+        $stmt->execute();
+        $stmt->close();
+        
+        $conn->query("UPDATE equipment_issuance SET status='reissued', reissued_to_id=$reissue_to, reissue_date=NOW() WHERE id=$original_issuance_id");
+        
+        $conn->commit();
+        $_SESSION['success'] = "Item reissued successfully.";
+        
+    } catch (Exception $e) {
+        $conn->rollback();
+        $_SESSION['error'] = "Error: " . $e->getMessage();
+    }
+    
+    unset($_SESSION['reissue_from_returned']);
+    header('Location: ' . SITE_URL . '/admin/issue_items.php');
+    exit();
+}
+
+// Return item with condition
+if (isset($_POST['action']) && $_POST['action'] == 'return_item') {
+    $issuance_id = (int)$_POST['issuance_id'];
+    $condition_on_return = sanitize($_POST['condition_on_return']);
+    
+    $valid_conditions = ['Serviceable', 'Non-Serviceable', 'For Condemn', 'Under Repair'];
+    if (!in_array($condition_on_return, $valid_conditions)) {
+        echo json_encode(['success' => false, 'message' => 'Invalid condition selected.']);
+        exit();
+    }
+    
     $issuance = $conn->query("
-        SELECT ei.*, i.qty_physical_count, i.article_name, i.property_no, i.uom
+        SELECT ei.*, i.qty_physical_count, i.property_no
         FROM equipment_issuance ei 
         JOIN inventory i ON ei.inventory_id = i.id 
-        WHERE ei.id=$issuance_id
+        WHERE ei.id=$issuance_id AND ei.status = 'issued'
     ")->fetch_assoc();
     
     if ($issuance) {
         $conn->begin_transaction();
         try {
-            // Update issuance as returned
-            $conn->query("
-                UPDATE equipment_issuance 
-                SET status='returned', actual_return=NOW(), condition_on_return='Good' 
-                WHERE id=$issuance_id
-            ");
-            
-            // Add quantity back to inventory
+            $conn->query("UPDATE equipment_issuance SET status='returned', actual_return=NOW(), condition_on_return='$condition_on_return' WHERE id=$issuance_id");
             $new_quantity = $issuance['qty_physical_count'] + $issuance['quantity_issued'];
-            $conn->query("UPDATE inventory SET qty_physical_count=$new_quantity WHERE id={$issuance['inventory_id']}");
-            
+            $property_no_without_dept = removeDepartmentCodeFromPropertyNo($issuance['property_no']);
+            $conn->query("UPDATE inventory SET qty_physical_count=$new_quantity, current_holder=NULL, property_no='$property_no_without_dept' WHERE id={$issuance['inventory_id']}");
             $conn->commit();
-            $_SESSION['success'] = "Item returned successfully";
-            
+            echo json_encode(['success' => true, 'message' => 'Item returned successfully. Department code removed from property number.']);
         } catch (Exception $e) {
             $conn->rollback();
-            $_SESSION['error'] = "Error: " . $e->getMessage();
+            echo json_encode(['success' => false, 'message' => 'Error: ' . $e->getMessage()]);
         }
+    } else {
+        echo json_encode(['success' => false, 'message' => 'Issuance not found or already returned.']);
     }
+    exit();
+}
+
+// Reissue from returned item in history
+if (isset($_GET['reissue_returned']) && is_numeric($_GET['reissue_returned'])) {
+    $original_issuance_id = (int)$_GET['reissue_returned'];
+    $check = $conn->query("SELECT status FROM equipment_issuance WHERE id=$original_issuance_id")->fetch_assoc();
+    
+    if (!$check) {
+        $_SESSION['error'] = 'Issuance not found.';
+    } elseif ($check['status'] !== 'returned') {
+        $_SESSION['error'] = 'Only returned items can be reissued.';
+    } else {
+        $_SESSION['reissue_from_returned'] = $original_issuance_id;
+    }
+    
     header('Location: ' . SITE_URL . '/admin/issue_items.php');
     exit();
 }
 
-// ============================================
-// CANCEL REISSUE
-// ============================================
+// Cancel reissue
 if (isset($_GET['cancel_reissue'])) {
-    unset($_SESSION['reissue_from']);
+    unset($_SESSION['reissue_from_returned']);
     header('Location: ' . SITE_URL . '/admin/issue_items.php');
     exit();
 }
 
-// ============================================
-// HANDLE REISSUE
-// ============================================
-if (isset($_GET['reissue']) && is_numeric($_GET['reissue'])) {
-    $original_issuance_id = (int)$_GET['reissue'];
-    $issuance_check = $conn->query("SELECT status FROM equipment_issuance WHERE id=$original_issuance_id")->fetch_assoc();
-    if (!$issuance_check) { 
-        $_SESSION['error']='Issuance not found.'; 
-        header('Location: '.SITE_URL.'/admin/issue_items.php'); 
-        exit(); 
+// Print PAR
+if (isset($_GET['print_par']) && is_numeric($_GET['print_par'])) {
+    $issuance_id = (int)$_GET['print_par'];
+    $par_query = $conn->query("
+        SELECT ei.*, i.article_name, i.description, i.property_no, i.big_unit, i.small_unit, i.unit_value,
+               CONCAT(e.firstname, ' ', e.lastname) as issued_to_name,
+               CONCAT(issuer.firstname, ' ', issuer.lastname) as issued_by_name,
+               sig.name as signatory_name
+        FROM equipment_issuance ei
+        JOIN inventory i ON ei.inventory_id = i.id
+        JOIN employees e ON ei.issued_to = e.id
+        JOIN users issuer ON ei.issued_by = issuer.id
+        LEFT JOIN signatories sig ON ei.signatory_id = sig.id
+        WHERE ei.id = $issuance_id
+    ");
+    
+    if ($par_query && $par_query->num_rows > 0) {
+        $item = $par_query->fetch_assoc();
+        $unit_display = !empty($item['big_unit']) ? $item['big_unit'] : ($item['small_unit'] ?? 'pcs');
+        $total_amount = $item['unit_value'] * $item['quantity_issued'];
+        ?>
+        <!DOCTYPE html><html><head><title>PAR</title><style>body{font-family:'Times New Roman',serif;padding:20px}.par-container{max-width:800px;margin:0 auto}.items-table{width:100%;border-collapse:collapse}.items-table th,.items-table td{border:1px solid #000;padding:8px;text-align:left}</style></head><body><div class="par-container"><h2 style="text-align:center">PROPERTY ACKNOWLEDGMENT RECEIPT</h2><p><strong>Item:</strong> <?php echo htmlspecialchars($item['article_name']); ?></p><p><strong>Property No.:</strong> <?php echo htmlspecialchars($item['property_no']); ?></p><p><strong>Quantity:</strong> <?php echo $item['quantity_issued'] . ' ' . $unit_display; ?></p><p><strong>Issued To:</strong> <?php echo htmlspecialchars($item['issued_to_name']); ?></p><p><strong>Issued By:</strong> <?php echo htmlspecialchars($item['issued_by_name']); ?></p><p><strong>Signatory:</strong> <?php echo htmlspecialchars($item['signatory_name'] ?? 'N/A'); ?></p><p><strong>Date:</strong> <?php echo date('F d, Y', strtotime($item['issued_date'])); ?></p><p><strong>Total Amount:</strong> ₱<?php echo number_format($total_amount, 2); ?></p></div></body></html>
+        <?php
+        exit;
+    } else {
+        $_SESSION['error'] = 'Issuance record not found.';
+        header('Location: ' . SITE_URL . '/admin/issue_items.php');
+        exit;
     }
-    if ($issuance_check['status']!=='issued') { 
-        $_SESSION['error']='Item already returned.'; 
-        header('Location: '.SITE_URL.'/admin/issue_items.php'); 
-        exit(); 
-    }
-    $_SESSION['reissue_from'] = $original_issuance_id;
-    header('Location: ' . SITE_URL . '/admin/issue_items.php');
-    exit();
 }
 
 // ============================================
 // GET DATA
 // ============================================
 
-// Get departments for filter
 $departments_list = $conn->query("SELECT id, name, code FROM departments ORDER BY code, name");
-
-// Get sections for filter
 $sections_list = $conn->query("SELECT s.id, s.name, d.name as department_name FROM sections s LEFT JOIN departments d ON s.department_id = d.id ORDER BY d.name, s.name");
-
-// Get positions for filter
 $positions_list = $conn->query("SELECT DISTINCT position FROM employees WHERE position IS NOT NULL AND position != '' ORDER BY position");
 
-// Get employees list with department codes
-$employees_list = $conn->query("
-    SELECT e.*, d.name as department_name, d.code as department_code, s.name as section_name, b.name as building_name,
-           CONCAT(
-               LPAD(COALESCE(b.id, 0), 2, '0'),
-               LPAD(COALESCE(d.id, 0), 2, '0'),
-               LPAD(COALESCE(s.id, 0), 2, '0')
-           ) as location_code
+// Get all employees for search - FIXED to include department
+$all_employees = [];
+$emp_result = $conn->query("
+    SELECT e.id, e.firstname, e.lastname, e.position, 
+           d.name as department_name, 
+           d.code as department_code,
+           s.name as section_name
     FROM employees e
     LEFT JOIN sections s ON e.section_id = s.id
     LEFT JOIN departments d ON s.department_id = d.id
-    LEFT JOIN buildings b ON d.building_id = b.id
     WHERE e.status = 'Active'
     ORDER BY e.lastname, e.firstname
 ");
+if ($emp_result) {
+    while ($emp = $emp_result->fetch_assoc()) {
+        $all_employees[] = $emp;
+    }
+}
 
-// Get current issuances
-$issuances = $conn->query("
-    SELECT 
-        ei.*, 
-        i.article_name, 
-        i.property_no, 
-        i.uom,
-        CONCAT(e.firstname, ' ', e.lastname) as issued_to_name,
-        e.id as employee_id,
-        e.position,
-        s.name as section_name,
-        d.name as department_name,
-        d.code as department_code,
-        b.name as building_name,
-        CONCAT(
-            LPAD(COALESCE(b.id, 0), 2, '0'),
-            LPAD(COALESCE(d.id, 0), 2, '0'),
-            LPAD(COALESCE(s.id, 0), 2, '0')
-        ) as location_code
+$current_issuances = $conn->query("
+    SELECT ei.id, ei.inventory_id, ei.quantity_issued, ei.condition_on_issue,
+           ei.remarks, ei.issued_date, ei.status, ei.issuance_barcode,
+           i.article_name, i.property_no, i.big_unit, i.small_unit,
+           CONCAT(e.firstname, ' ', e.lastname) as issued_to_name
     FROM equipment_issuance ei 
-    JOIN inventory i ON ei.inventory_id = i.id 
-    JOIN employees e ON ei.issued_to = e.id
-    LEFT JOIN sections s ON e.section_id = s.id
-    LEFT JOIN departments d ON s.department_id = d.id
-    LEFT JOIN buildings b ON d.building_id = b.id
-    WHERE ei.status = 'issued' 
-    ORDER BY e.lastname, e.firstname, ei.issued_date DESC
+    INNER JOIN inventory i ON ei.inventory_id = i.id 
+    INNER JOIN employees e ON ei.issued_to = e.id
+    WHERE ei.status = 'issued'
+    ORDER BY ei.issued_date DESC
 ");
 
-// Group issuances by employee
-$employee_issuances = [];
-if ($issuances && $issuances->num_rows > 0) {
-    while($issue = $issuances->fetch_assoc()) {
-        $eid = $issue['employee_id'];
-        if (!isset($employee_issuances[$eid])) {
-            $location_parts = [];
-            if (!empty($issue['building_name'])) $location_parts[] = $issue['building_name'];
-            if (!empty($issue['department_name'])) $location_parts[] = $issue['department_name'];
-            if (!empty($issue['section_name'])) $location_parts[] = $issue['section_name'];
-            $location_string = !empty($location_parts) ? implode(' → ', $location_parts) : '';
-            
-            $employee_issuances[$eid] = [
-                'employee_name' => $issue['issued_to_name'], 
-                'position' => $issue['position'],
-                'department_code' => $issue['department_code'],
-                'location_code' => $issue['location_code'],
-                'location_string' => $location_string,
-                'items' => []
-            ];
-        }
-        $employee_issuances[$eid]['items'][] = $issue;
+$inventory_items = [];
+$inv_result = $conn->query("SELECT * FROM inventory WHERE qty_physical_count > 0 ORDER BY article_name");
+if ($inv_result) {
+    while ($item = $inv_result->fetch_assoc()) {
+        $inventory_items[] = $item;
     }
 }
 
-// Get inventory items
-$inventory_query = "SELECT * FROM inventory WHERE qty_physical_count > 0 ORDER BY article_name";
-$inventory_items_result = $conn->query($inventory_query);
-$inventory_data = [];
-if ($inventory_items_result) {
-    while ($item = $inventory_items_result->fetch_assoc()) {
-        $inventory_data[$item['id']] = $item;
-    }
-}
+$signatories = $conn->query("SELECT * FROM signatories WHERE is_active = 1 ORDER BY name ASC");
 
-// Reissue details
 $reissue_item = null; 
 $reissue_from_id = null;
-if (isset($_SESSION['reissue_from'])) {
-    $reissue_from_id = (int)$_SESSION['reissue_from'];
+if (isset($_SESSION['reissue_from_returned'])) {
+    $reissue_from_id = (int)$_SESSION['reissue_from_returned'];
     $reissue_item = $conn->query("
-        SELECT ei.*, i.article_name, i.property_no, i.uom, i.qty_physical_count as available_stock, 
-               CONCAT(e.firstname, ' ', e.lastname) as issued_to_name, 
-               e.id as original_employee_id,
-               e.position as original_position,
-               s.name as original_section,
-               d.name as original_department,
-               d.code as original_department_code
+        SELECT ei.*, i.article_name, i.property_no, i.big_unit, i.small_unit, i.qty_physical_count as available_stock,
+               CONCAT(e.firstname, ' ', e.lastname) as issued_to_name
         FROM equipment_issuance ei 
         JOIN inventory i ON ei.inventory_id=i.id 
-        JOIN employees e ON ei.issued_to = e.id        LEFT JOIN sections s ON e.section_id = s.id
-        LEFT JOIN departments d ON s.department_id = d.id
-        WHERE ei.id=$reissue_from_id
+        JOIN employees e ON ei.issued_to = e.id        
+        WHERE ei.id=$reissue_from_id AND ei.status = 'returned'
     ")->fetch_assoc();
-    if (!$reissue_item) unset($_SESSION['reissue_from']);
+    if (!$reissue_item) unset($_SESSION['reissue_from_returned']);
 }
 
 include INCLUDE_PATH . '/header.php';
 ?>
 
 <style>
-/* Add this CSS for property number search */
+:root {
+    --primary: #6B8CFF;
+    --secondary: #8FB5FF;
+    --accent: #F8B0C0;
+    --accent-light: #FFD8E0;
+    --success-light: #C5E8C5;
+    --light: #F8F9FA;
+    --white: #FFFFFF;
+    --border-light: #E0E0E0;
+    --text-primary: #2C3E50;
+    --text-secondary: #6B6B6B;
+    --text-muted: #9E9E9E;
+    --success: #4CAF50;
+    --danger: #f44336;
+    --warning: #FF9800;
+    --info: #2196F3;
+}
+
+body {
+    background: var(--light);
+    color: var(--text-primary);
+    font-family: 'Segoe UI', Arial, sans-serif;
+}
+
+/* Property Search Section */
 .property-search-section {
     background: #fff;
     border-radius: 12px;
@@ -653,36 +471,47 @@ include INCLUDE_PATH . '/header.php';
     margin-bottom: 20px;
     border: 1px solid var(--border-light);
 }
+
 .property-search-box {
     display: flex;
     gap: 10px;
     align-items: center;
+    flex-wrap: wrap;
 }
+
 .property-search-box input {
     flex: 1;
-    padding: 10px 15px;
+    padding: 12px 15px;
     border: 1px solid var(--border-light);
     border-radius: 8px;
     font-size: 14px;
+    min-width: 200px;
 }
+
 .property-search-box button {
     background: var(--primary);
     color: white;
     border: none;
-    padding: 10px 20px;
+    padding: 12px 20px;
     border-radius: 8px;
     cursor: pointer;
 }
+
 .property-search-box button:hover {
     background: #5a7ae6;
 }
+
 .property-search-result {
     margin-top: 15px;
     display: none;
+    max-height: 400px;
+    overflow-y: auto;
 }
+
 .property-search-result.show {
     display: block;
 }
+
 .result-property-card {
     background: var(--light);
     border-radius: 8px;
@@ -693,16 +522,20 @@ include INCLUDE_PATH . '/header.php';
     align-items: center;
     flex-wrap: wrap;
     gap: 10px;
+    border: 1px solid var(--border-light);
 }
+
 .result-property-info h5 {
     margin: 0 0 5px;
     color: var(--primary);
 }
+
 .result-property-info p {
     margin: 0;
     font-size: 12px;
     color: var(--text-muted);
 }
+
 .btn-add-property {
     background: var(--success);
     color: white;
@@ -711,109 +544,392 @@ include INCLUDE_PATH . '/header.php';
     border-radius: 6px;
     cursor: pointer;
 }
+
 .btn-add-property:hover {
     background: #45a049;
 }
 
-/* Department code badge in property number */
-.property-dept-code {
-    font-size: 10px;
-    background: var(--accent-light);
-    padding: 2px 6px;
+/* Barcode Scanner Section */
+.barcode-search-section {
+    background: linear-gradient(135deg, #6B8CFF, #8FB5FF);
     border-radius: 12px;
-    margin-left: 5px;
+    padding: 20px;
+    margin-bottom: 25px;
+    color: #fff;
+}
+
+.barcode-search-section h4 {
+    margin: 0 0 10px;
+    font-size: 16px;
+}
+
+.barcode-search-box {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    background: #fff;
+    border-radius: 50px;
+    padding: 5px 5px 5px 20px;
+}
+
+.barcode-search-box input {
+    flex: 1;
+    border: none;
+    padding: 12px 0;
+    font-size: 16px;
+    outline: none;
+    background: transparent;
+}
+
+.barcode-search-box button {
+    background: var(--accent);
+    border: none;
+    padding: 10px 25px;
+    border-radius: 50px;
+    color: var(--text-primary);
+    font-weight: 500;
+    cursor: pointer;
+}
+
+.barcode-search-result {
+    background: rgba(255,255,255,.15);
+    border-radius: 10px;
+    padding: 15px;
+    margin-top: 15px;
+    display: none;
+}
+
+.barcode-search-result.show {
+    display: block;
+}
+
+.result-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 15px;
+    background: rgba(255,255,255,.1);
+    padding: 12px;
+    border-radius: 8px;
+    margin-bottom: 10px;
+}
+
+.result-info h5 {
+    margin: 0 0 5px;
+    font-size: 16px;
+}
+
+.result-info p {
+    margin: 0;
+    font-size: 13px;
+    opacity: .9;
+}
+
+.btn-add-item {
+    background: #fff;
+    color: var(--primary);
+    border: none;
+    padding: 8px 20px;
+    border-radius: 6px;
+    font-weight: 500;
+    cursor: pointer;
+}
+
+/* Selected Items */
+.selected-items-grid {
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    background: var(--white);
+}
+
+.selected-item-card {
+    background: #fff;
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.selected-item-info {
+    flex: 2;
+}
+
+.item-name {
+    font-weight: 600;
+    color: var(--primary);
+}
+
+.item-property {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: monospace;
+}
+
+.selected-item-qty {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.selected-item-qty input {
+    width: 80px;
+    padding: 6px 10px;
+    border: 1px solid var(--border-light);
+    border-radius: 6px;
+    text-align: center;
+}
+
+.btn-remove-item {
+    background: var(--danger);
+    color: #fff;
+    border: none;
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.empty-cart {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-muted);
+}
+
+.empty-cart i {
+    font-size: 48px;
+    margin-bottom: 15px;
+    opacity: .5;
+}
+
+.cart-summary {
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 2px solid var(--accent-light);
+    text-align: right;
+    font-weight: bold;
+    color: var(--primary);
+}
+
+/* Action Buttons */
+.action-buttons {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+}
+
+.action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    border: none;
+    color: #fff;
+    text-decoration: none;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.action-btn.view {
+    background: #6B8CFF;
+}
+
+.action-btn.print {
+    background: #2c3e50;
+}
+
+.return-btn {
+    background: #FF9800;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 11px;
+}
+
+.reissue-btn {
+    background: linear-gradient(135deg, #6B8CFF, #8FB5FF);
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 11px;
+    text-decoration: none;
+    display: inline-block;
+}
+
+/* Form Elements */
+.issue-form-container {
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 25px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.08);
+}
+
+.issue-form-container h3 {
+    margin: 0 0 20px 0;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--accent-light);
+    color: var(--primary);
+    font-size: 18px;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
     color: var(--text-primary);
 }
 
-:root{--primary:#6B8CFF;--secondary:#8FB5FF;--accent:#F8B0C0;--accent-light:#FFD8E0;--success-light:#C5E8C5;--light:#F0F0F0;--white:#FFF;--border-light:#E0E0E0;--text-primary:#3A3A3A;--text-secondary:#6B6B6B;--text-muted:#9E9E9E;--success:#4CAF50;--danger:#f44336;--warning:#FF9800;--info:#2196F3}
-body{background:var(--light);color:var(--text-primary)}
-.barcode-search-section{background:linear-gradient(135deg,#6B8CFF,#8FB5FF);border-radius:12px;padding:20px;margin-bottom:25px;color:#fff}
-.barcode-search-section h4{margin:0 0 10px;font-size:16px}
-.barcode-search-box{display:flex;gap:10px;align-items:center;background:#fff;border-radius:50px;padding:5px 5px 5px 20px}
-.barcode-search-box input{flex:1;border:none;padding:12px 0;font-size:16px;outline:none;background:transparent}
-.barcode-search-box button{background:var(--accent);border:none;padding:10px 25px;border-radius:50px;color:var(--text-primary);font-weight:500;cursor:pointer;transition:all .2s}
-.barcode-search-box button:hover{background:#e69eb0;transform:scale(1.02)}
-.barcode-search-result{background:rgba(255,255,255,.15);border-radius:10px;padding:15px;margin-top:15px;display:none}
-.barcode-search-result.show{display:block;animation:fadeIn .3s}
-@keyframes fadeIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
-.result-item{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:15px}
-.result-info h5{margin:0 0 5px;font-size:16px}.result-info p{margin:0;font-size:13px;opacity:.9}
-.result-actions{display:flex;gap:10px}
-.btn-add-item{background:#fff;color:var(--primary);border:none;padding:8px 20px;border-radius:6px;font-weight:500;cursor:pointer}
-.selected-items-grid{max-height:400px;overflow-y:auto}
-.selected-item-card{background:#fff;border:1px solid var(--border-light);border-radius:10px;padding:12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}
-.selected-item-info{flex:2}.item-name{font-weight:600}.item-property{font-size:11px;color:var(--text-muted);font-family:monospace}
-.selected-item-qty{display:flex;align-items:center;gap:10px}
-.selected-item-qty input{width:80px;padding:6px 10px;border:1px solid var(--border-light);border-radius:6px;text-align:center}
-.btn-remove-item{background:var(--danger);color:#fff;border:none;width:32px;height:32px;border-radius:6px;cursor:pointer}
-.empty-cart{text-align:center;padding:40px;color:var(--text-muted)}.empty-cart i{font-size:48px;margin-bottom:15px;opacity:.5}
-.cart-summary{margin-top:15px;padding-top:15px;border-top:2px solid var(--accent-light);text-align:right;font-weight:bold;color:var(--primary)}
-.action-buttons{display:flex;gap:5px;flex-wrap:wrap}
-.action-btn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:6px;border:none;color:#fff;text-decoration:none;cursor:pointer;font-size:14px}
-.action-btn.edit{background:#8FB5FF}.action-btn.view{background:#6B8CFF}.action-btn.success{background:#4CAF50}
-.action-btn:hover{transform:translateY(-2px);box-shadow:0 4px 8px rgba(0,0,0,.15)}
-.badge-warning{background:#8FB5FF;color:#3A3A3A;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:600;display:inline-block}
-.badge-success{background:#C5E8C5;color:#4CAF50;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:600;display:inline-block}
-.btn-primary{background:var(--accent);color:var(--text-primary);border:none;padding:8px 16px;border-radius:6px;cursor:pointer}
-.btn-secondary{background:var(--secondary);color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;text-decoration:none;display:inline-block}
-.form-group{margin-bottom:20px}.form-group label{display:block;margin-bottom:8px;font-weight:500}
-.form-control{width:100%;padding:10px 12px;border:1px solid var(--border-light);border-radius:8px;font-size:14px;box-sizing:border-box}
-.stat-chart{background:#fff;border-radius:12px;padding:20px;margin-bottom:25px;box-shadow:0 2px 8px rgba(0,0,0,.08)}
-.table-container{background:#fff;border-radius:12px;padding:20px;margin-bottom:25px;box-shadow:0 2px 8px rgba(0,0,0,.08);overflow-x:auto}
-.table-header{margin-bottom:20px;padding-bottom:10px;border-bottom:2px solid var(--accent-light)}
-table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:left;border-bottom:1px solid var(--border-light)}th{background:#F0F0F0;font-weight:600}
-.text-center{text-align:center}
-.alert-warning{background:#FFF3E0;border-left:4px solid #FF9800;padding:15px;margin-bottom:20px}
-.scanner-modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.6);z-index:1500;align-items:center;justify-content:center}
-.scanner-modal.show{display:flex}
-.scanner-modal-content{background:#fff;border-radius:12px;width:90%;max-width:500px;box-shadow:0 5px 30px rgba(0,0,0,.3)}
-.scanner-modal-header{display:flex;justify-content:space-between;align-items:center;padding:20px;background:#6B8CFF;color:#fff;border-radius:12px 12px 0 0}
-.close-modal-btn{background:rgba(255,255,255,.2);border:none;color:#fff;font-size:24px;cursor:pointer;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center}
-.scanner-modal-body{padding:25px}.scanner-input-section{margin-bottom:20px}
-.scanner-input-section input{width:100%;padding:14px;border:2px solid var(--border-light);border-radius:8px;font-size:16px;box-sizing:border-box}
-.scanner-result-box{min-height:100px;padding:15px;background:#F8F9FA;border-radius:8px;text-align:center;color:var(--text-muted)}
-.scanner-modal-footer{padding:15px 25px;border-top:1px solid var(--border-light);text-align:right}
-.hardware-scanner-modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.8);z-index:3000;align-items:center;justify-content:center}
-.hardware-scanner-modal.show{display:flex}
-.hardware-scanner-content{background:#fff;border-radius:15px;width:90%;max-width:600px;max-height:90vh;overflow-y:auto;box-shadow:0 10px 50px rgba(0,0,0,.3);display:flex;flex-direction:column}
-.hardware-scanner-header{background:#6B8CFF;color:#fff;padding:25px;border-radius:15px 15px 0 0;display:flex;justify-content:space-between;align-items:center}
-.hardware-scanner-header h2{margin:0;font-size:20px}
-.hardware-scanner-header .close-btn{background:rgba(255,255,255,.2);border:none;color:#fff;font-size:28px;cursor:pointer;width:40px;height:40px;border-radius:50%}
-.hardware-scanner-body{padding:25px;flex:1;overflow-y:auto}
-.scanner-instructions{background:#E3F2FD;border-left:4px solid #2196F3;padding:15px;border-radius:8px;margin-bottom:20px;font-size:14px;color:#0D47A1}
-.scanner-input-wrapper{position:relative;display:flex;align-items:center}
-.scanner-input-wrapper i{position:absolute;left:12px;color:#2196F3;font-size:18px;z-index:1}
-.hardware-scanner-input{width:100%;padding:15px 15px 15px 45px;border:2px solid #2196F3;border-radius:10px;font-size:16px;font-weight:bold;background:#F5F9FF;box-shadow:0 2px 8px rgba(33,150,243,.1);box-sizing:border-box}
-.hardware-scanner-input:focus{outline:none;border-color:#1976D2}
-.scanned-items-list{margin-top:20px;flex:1;overflow-y:auto}
-.scanned-item-card{background:#F5F5F5;border:1px solid #E0E0E0;border-radius:10px;padding:12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
-.scanned-item-card.success{background:#E8F5E9;border-color:#4CAF50}
-.scanned-item-info{flex:1}.scanned-item-name{font-weight:bold;font-size:14px;color:#333}.scanned-item-details{font-size:12px;color:#666}
-.scanned-item-qty-controls{display:flex;align-items:center;gap:8px;margin-left:10px}
-.qty-btn{background:#6B8CFF;color:#fff;border:none;width:28px;height:28px;border-radius:50%;cursor:pointer;font-weight:bold}
-.qty-btn:hover{background:#5a7ae6}
-.qty-input{width:50px;text-align:center;padding:5px;border:1px solid #E0E0E0;border-radius:5px;font-weight:bold;font-size:13px}
-.remove-scanned-item{background:#f44336;color:#fff;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;font-size:12px;margin-left:8px}
-.empty-scan-state{text-align:center;padding:40px 20px;color:#999}.empty-scan-state i{font-size:48px;margin-bottom:15px;color:#CCC}
-.hardware-scanner-footer{padding:15px 25px;border-top:1px solid #E0E0E0;display:flex;gap:10px;justify-content:flex-end}
-.btn-add-all-to-cart{background:#4CAF50;color:#fff;border:none;padding:12px 25px;border-radius:8px;cursor:pointer;font-weight:bold}
-.btn-add-all-to-cart:hover{background:#388E3C}
-.btn-add-all-to-cart:disabled{opacity:.5;cursor:not-allowed}
-.btn-clear-scans{background:#6B8CFF;color:#fff;border:none;padding:12px 25px;border-radius:8px;cursor:pointer;font-weight:bold}
-.btn-clear-scans:hover{background:#5a7ae6}
-.btn-close-hardware-scanner{background:#757575;color:#fff;border:none;padding:12px 25px;border-radius:8px;cursor:pointer;font-weight:bold}
-.btn-close-hardware-scanner:hover{background:#616161}
-.user-location-badge{background:#E8F5E9;color:#2E7D32;padding:4px 10px;border-radius:20px;font-size:11px;margin-left:8px}
-.user-department-badge{background:#E3F2FD;color:#1565C0;padding:4px 10px;border-radius:20px;font-size:11px;margin-left:8px}
-@media(max-width:768px){.stats-grid{grid-template-columns:1fr}}
+.form-control {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    font-size: 14px;
+    box-sizing: border-box;
+}
 
-/* Employee Search Table Styles */
+.form-control:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.1);
+}
+
+select.form-control {
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236B6B6B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+}
+
+textarea.form-control {
+    resize: vertical;
+    min-height: 80px;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+}
+
+.btn-primary {
+    background: var(--accent);
+    color: var(--text-primary);
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.btn-primary:hover {
+    background: #e69eb0;
+    transform: translateY(-1px);
+}
+
+.btn-secondary {
+    background: #6c757d;
+    color: white;
+    border: none;
+    padding: 8px 15px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.alert-warning {
+    background: #FFF3E0;
+    border-left: 4px solid #FF9800;
+    padding: 15px;
+    margin-bottom: 20px;
+    border-radius: 8px;
+}
+
+/* Table Styles */
+.table-container {
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 25px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.08);
+    overflow-x: auto;
+}
+
+.table-header {
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--accent-light);
+}
+
+.table-header h2 {
+    color: var(--primary);
+    font-size: 18px;
+    margin: 0;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th, td {
+    padding: 12px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-light);
+}
+
+th {
+    background: #F0F0F0;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.text-center {
+    text-align: center;
+}
+
+.text-muted {
+    color: var(--text-muted);
+}
+
+/* Barcode Image */
+.barcode-img {
+    max-width: 100px;
+    height: auto;
+    border: 1px solid var(--border-light);
+    padding: 5px;
+    border-radius: 6px;
+    background: var(--white);
+    cursor: pointer;
+}
+
+/* Employee Search */
 .employee-search-section {
     border: 1px solid var(--border-light);
     border-radius: 8px;
     background: #fff;
     overflow: hidden;
 }
+
 .employee-search-bar {
     display: flex;
     gap: 10px;
@@ -823,10 +939,12 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
     flex-wrap: wrap;
     align-items: flex-end;
 }
+
 .search-group {
     flex: 1;
     min-width: 150px;
 }
+
 .search-group label {
     display: block;
     font-size: 11px;
@@ -834,18 +952,18 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
     color: var(--text-muted);
     margin-bottom: 5px;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
 }
-.search-group input, .search-group select {
+
+.search-group input,
+.search-group select {
     width: 100%;
     padding: 8px 10px;
     border: 1px solid var(--border-light);
     border-radius: 6px;
     font-size: 13px;
+    box-sizing: border-box;
 }
-.search-group select {
-    background: #fff;
-}
+
 .btn-search-employee {
     background: var(--primary);
     color: white;
@@ -853,31 +971,22 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
     padding: 8px 20px;
     border-radius: 6px;
     cursor: pointer;
-    font-weight: 500;
-    display: flex;
-    align-items: center;
-    gap: 5px;
 }
-.btn-search-employee:hover {
-    background: #5a7ae6;
-}
+
 .btn-clear-employee {
     background: #f5f5f5;
     border: 1px solid var(--border-light);
     padding: 8px 15px;
     border-radius: 6px;
     cursor: pointer;
-    font-size: 12px;
-    font-weight: 500;
 }
-.btn-clear-employee:hover {
-    background: #e0e0e0;
-}
+
 .employee-results-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 13px;
 }
+
 .employee-results-table th {
     background: var(--light);
     padding: 10px 12px;
@@ -885,36 +994,27 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
     font-weight: 600;
     color: var(--primary);
     font-size: 11px;
-    text-transform: uppercase;
     border-bottom: 2px solid var(--accent-light);
 }
+
 .employee-results-table td {
     padding: 10px 12px;
     border-bottom: 1px solid var(--border-light);
-    vertical-align: middle;
 }
+
 .employee-result-row {
     cursor: pointer;
     transition: background 0.2s;
 }
+
 .employee-result-row:hover {
     background-color: var(--light);
 }
+
 .employee-result-row.selected {
     background-color: var(--accent-light);
 }
-.employee-name-result {
-    font-weight: 600;
-    color: var(--text-primary);
-}
-.employee-position-result {
-    font-size: 12px;
-    color: var(--text-secondary);
-}
-.employee-dept-result {
-    font-size: 12px;
-    color: var(--text-muted);
-}
+
 .select-employee-btn {
     background: var(--success);
     color: white;
@@ -924,9 +1024,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
     cursor: pointer;
     font-size: 11px;
 }
-.select-employee-btn:hover {
-    background: #45a049;
-}
+
 .selected-employee-info {
     margin-top: 10px;
     padding: 12px 15px;
@@ -936,25 +1034,304 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
     align-items: center;
     gap: 10px;
 }
-.selected-employee-info i {
-    color: var(--success);
-    font-size: 18px;
-}
-.selected-employee-info strong {
-    color: var(--success);
-}
+
 .no-results {
     text-align: center;
     padding: 40px;
     color: var(--text-muted);
 }
+
 .no-results i {
     font-size: 48px;
     margin-bottom: 10px;
     display: block;
 }
 
-/* Custom Confirmation Modal */
+/* Status/Condition Badge */
+.condition-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.condition-Serviceable {
+    background: #C8E6C9;
+    color: #2E7D32;
+}
+
+.condition-Non-Serviceable {
+    background: #FFCDD2;
+    color: #C62828;
+}
+
+.condition-For-Condemn {
+    background: #FFF3E0;
+    color: #E65100;
+}
+
+.condition-Under-RePair {
+    background: #BBDEFB;
+    color: #1565C0;
+}
+
+.issue-status-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.issue-status-issued {
+    background: #FFF3E0;
+    color: #FF9800;
+}
+
+.issue-status-reissued {
+    background: #E3F2FD;
+    color: #2196F3;
+}
+
+.issue-status-returned {
+    background: #E8F5E9;
+    color: #4CAF50;
+}
+
+.property-dept-code {
+    font-size: 10px;
+    background: var(--accent-light);
+    padding: 2px 6px;
+    border-radius: 12px;
+    margin-left: 5px;
+}
+
+/* Reissue Form */
+.reissue-form-container {
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 25px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.08);
+    border: 2px solid var(--primary);
+}
+
+.reissue-form-container h3 {
+    color: var(--primary);
+    margin: 0 0 15px 0;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--accent-light);
+}
+
+.reissue-item-details {
+    background: var(--light);
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+.reissue-item-details p {
+    margin: 5px 0;
+}
+
+/* Return Modal */
+.return-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    z-index: 10000;
+    justify-content: center;
+    align-items: center;
+}
+
+.return-modal.show {
+    display: flex;
+}
+
+.return-modal-content {
+    background: white;
+    border-radius: 16px;
+    width: 450px;
+    max-width: 90%;
+    padding: 25px;
+}
+
+.return-modal-header {
+    border-bottom: 2px solid var(--accent-light);
+    padding-bottom: 15px;
+    margin-bottom: 20px;
+}
+
+.return-modal-header h3 {
+    color: var(--primary);
+    margin: 0;
+}
+
+.return-modal-body {
+    margin-bottom: 20px;
+}
+
+.return-modal-footer {
+    display: flex;
+    gap: 15px;
+    justify-content: flex-end;
+    border-top: 1px solid var(--border-light);
+    padding-top: 20px;
+}
+
+.return-condition-select {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    font-size: 14px;
+    margin-top: 10px;
+}
+
+/* View Modal */
+.view-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    z-index: 10002;
+    justify-content: center;
+    align-items: center;
+}
+
+.view-modal.show {
+    display: flex;
+}
+
+.view-modal-content {
+    background: white;
+    border-radius: 16px;
+    width: 600px;
+    max-width: 90%;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.view-modal-header {
+    border-bottom: 2px solid var(--accent-light);
+    padding: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.view-modal-header h3 {
+    color: var(--primary);
+    margin: 0;
+}
+
+.view-modal-close {
+    cursor: pointer;
+    font-size: 24px;
+    color: var(--text-muted);
+}
+
+.view-modal-body {
+    padding: 20px;
+}
+
+.view-detail-row {
+    display: flex;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--border-light);
+    padding-bottom: 8px;
+}
+
+.view-detail-label {
+    width: 35%;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.view-detail-value {
+    width: 65%;
+    color: var(--text-primary);
+}
+
+/* Barcode Modal */
+.barcode-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    z-index: 10003;
+    justify-content: center;
+    align-items: center;
+}
+
+.barcode-modal.show {
+    display: flex;
+}
+
+.barcode-modal-content {
+    background: white;
+    border-radius: 16px;
+    width: 500px;
+    max-width: 90%;
+    text-align: center;
+}
+
+.barcode-modal-header {
+    border-bottom: 2px solid var(--accent-light);
+    padding: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.barcode-modal-header h3 {
+    color: var(--primary);
+    margin: 0;
+}
+
+.barcode-modal-close {
+    cursor: pointer;
+    font-size: 24px;
+    color: var(--text-muted);
+}
+
+.barcode-modal-body {
+    padding: 30px;
+}
+
+.barcode-image {
+    margin-bottom: 20px;
+}
+
+.barcode-value {
+    font-family: monospace;
+    font-size: 14px;
+    background: var(--light);
+    padding: 10px;
+    border-radius: 8px;
+    word-break: break-all;
+}
+
+.barcode-modal-footer {
+    padding: 20px;
+    border-top: 1px solid var(--border-light);
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+}
+
+/* Confirm Modal */
 .confirm-modal {
     display: none;
     position: fixed;
@@ -967,9 +1344,11 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
     justify-content: center;
     align-items: center;
 }
+
 .confirm-modal.show {
     display: flex;
 }
+
 .confirm-modal-content {
     background: white;
     border-radius: 16px;
@@ -977,186 +1356,312 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
     max-width: 90%;
     padding: 25px;
     text-align: center;
-    animation: modalBounce 0.3s ease;
-    box-shadow: 0 20px 40px rgba(0,0,0,0.3);
 }
-@keyframes modalBounce {
-    0% { opacity: 0; transform: scale(0.8); }
-    100% { opacity: 1; transform: scale(1); }
-}
+
 .confirm-modal-icon {
     font-size: 60px;
     margin-bottom: 15px;
     color: #FF9800;
 }
+
 .confirm-modal h3 {
     color: #3A3A3A;
     font-size: 20px;
     margin-bottom: 10px;
 }
+
 .confirm-modal p {
     color: #6B6B6B;
     font-size: 14px;
     margin-bottom: 25px;
-    line-height: 1.5;
 }
+
 .confirm-modal-buttons {
     display: flex;
     gap: 15px;
     justify-content: center;
 }
+
 .confirm-btn-cancel {
     background: #f5f5f5;
-    color: #3A3A3A;
     border: none;
     padding: 10px 25px;
     border-radius: 40px;
-    font-size: 14px;
-    font-weight: 600;
     cursor: pointer;
-    transition: all 0.3s;
 }
-.confirm-btn-cancel:hover {
-    background: #E0E0E0;
-    transform: translateY(-2px);
-}
+
 .confirm-btn-confirm {
     background: linear-gradient(135deg, #6B8CFF 0%, #8FB5FF 100%);
     color: white;
     border: none;
     padding: 10px 25px;
     border-radius: 40px;
-    font-size: 14px;
-    font-weight: 600;
     cursor: pointer;
-    transition: all 0.3s;
-}
-.confirm-btn-confirm:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 5px 15px rgba(107,140,255,0.3);
 }
 
-/* New style for Issue Form Container */
-.issue-form-container {
-    background: #fff;
-    border-radius: 12px;
-    padding: 20px;
-    margin-bottom: 25px;
-    box-shadow: 0 2px 8px rgba(0,0,0,.08);
+/* Sticky Scan Button */
+.sticky-scan-button-container {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    z-index: 1000;
 }
-.issue-form-container h3 {
-    margin: 0 0 20px 0;
-    padding-bottom: 10px;
-    border-bottom: 2px solid var(--accent-light);
-    color: var(--primary);
-    font-size: 18px;
+
+.sticky-scan-button {
+    padding: 16px 32px;
+    background: linear-gradient(135deg, var(--accent) 0%, #e69eb0 100%);
+    color: var(--text-primary);
+    font-weight: bold;
+    font-size: 16px;
+    border-radius: 60px;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 10px 30px rgba(248,176,192,0.6);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-decoration: none;
+}
+
+.sticky-scan-button i {
+    font-size: 20px;
+}
+
+.sticky-scan-button:hover {
+    transform: translateY(-5px) scale(1.05);
+    box-shadow: 0 20px 40px rgba(248,176,192,0.8);
+}
+
+/* Alert Messages */
+.alert-success {
+    background: #ECFDF5;
+    color: #059669;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    border-left: 4px solid #10B981;
+}
+
+.alert-danger {
+    background: #FEF2F2;
+    color: #DC2626;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    border-left: 4px solid #EF4444;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .employee-search-bar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .search-group {
+        width: 100%;
+    }
+    
+    .property-search-box {
+        flex-direction: column;
+    }
+    
+    .property-search-box input {
+        width: 100%;
+    }
+    
+    .form-row {
+        grid-template-columns: 1fr;
+    }
+    
+    .barcode-search-box {
+        flex-direction: column;
+        border-radius: 12px;
+        padding: 15px;
+    }
+    
+    .barcode-search-box input {
+        width: 100%;
+        border: 1px solid #ddd;
+        padding: 10px;
+        border-radius: 8px;
+    }
+    
+    .selected-item-card {
+        flex-direction: column;
+        text-align: center;
+    }
+    
+    .selected-item-qty {
+        justify-content: center;
+    }
+    
+    .sticky-scan-button-container {
+        bottom: 20px;
+        right: 20px;
+    }
+    
+    .sticky-scan-button {
+        padding: 12px 24px;
+        font-size: 14px;
+    }
+    
+    .sticky-scan-button i {
+        font-size: 16px;
+    }
 }
 </style>
 
-<!-- Issue New Item Form Container (Moved outside stat-chart) -->
-<div class="issue-form-container">
-    <h3><i class="fas fa-hand-holding"></i> <?php echo $reissue_item ? 'Reissue Item' : 'Issue New Item'; ?></h3>
-    
-    <?php if ($reissue_item): ?>
-    <div class="alert-warning"><strong>Important:</strong> Reissuing from <strong><?php echo htmlspecialchars($reissue_item['issued_to_name']); ?></strong>
-    <?php if(!empty($reissue_item['original_position'])) echo ' - ' . htmlspecialchars($reissue_item['original_position']); ?>
-    <?php if(!empty($reissue_item['original_department'])) echo ' (' . htmlspecialchars($reissue_item['original_department']) . ')'; ?>
+<!-- Display Messages -->
+<?php if (isset($_SESSION['success'])): ?>
+    <div class="alert alert-success"><?php echo $_SESSION['success']; unset($_SESSION['success']); ?></div>
+<?php endif; ?>
+
+<?php if (isset($_SESSION['error'])): ?>
+    <div class="alert alert-danger"><?php echo $_SESSION['error']; unset($_SESSION['error']); ?></div>
+<?php endif; ?>
+
+<!-- ============================================ -->
+<!-- REISSUE FORM -->
+<!-- ============================================ -->
+<?php if ($reissue_item): ?>
+<div class="reissue-form-container">
+    <h3><i class="fas fa-redo-alt"></i> Reissue Returned Item</h3>
+    <div class="reissue-item-details">
+        <p><strong>Item:</strong> <?php echo htmlspecialchars($reissue_item['article_name']); ?></p>
+        <p><strong>Property No.:</strong> <?php echo htmlspecialchars($reissue_item['property_no']); ?></p>
+        <p><strong>Previous Holder:</strong> <?php echo htmlspecialchars($reissue_item['issued_to_name']); ?></p>
+        <p><strong>Quantity:</strong> <?php echo $reissue_item['quantity_issued']; ?></p>
     </div>
-    <?php endif; ?>
+    <form method="POST" action="" id="reissueForm">
+        <input type="hidden" name="action" value="reissue">
+        <input type="hidden" name="original_issuance_id" value="<?php echo $reissue_from_id; ?>">
+        
+        <div class="form-group">
+            <label>Reissue To: <span class="text-danger">*</span></label>
+            <div class="employee-search-section">
+                <div class="employee-search-bar">
+                    <div class="search-group"><label>NAME</label><input type="text" id="reissue_search_employee_name" placeholder="Search by name..." onkeyup="searchReissueEmployees()"></div>
+                    <div class="search-group"><label>DEPARTMENT</label><select id="reissue_search_department" onchange="searchReissueEmployees()"><option value="">All</option><?php if($departments_list) while($dept = $departments_list->fetch_assoc()) echo '<option value="'.htmlspecialchars($dept['name']).'">'.htmlspecialchars($dept['code'].' - '.$dept['name']).'</option>'; ?></select></div>
+                    <div class="search-group"><label>SECTION</label><select id="reissue_search_section" onchange="searchReissueEmployees()"><option value="">All</option><?php if($sections_list) while($sec = $sections_list->fetch_assoc()) echo '<option value="'.htmlspecialchars($sec['name']).'">'.htmlspecialchars($sec['name']).'</option>'; ?></select></div>
+                    <div class="search-group"><label>POSITION</label><select id="reissue_search_position" onchange="searchReissueEmployees()"><option value="">All</option><?php if($positions_list) while($pos = $positions_list->fetch_assoc()) echo '<option value="'.htmlspecialchars($pos['position']).'">'.htmlspecialchars($pos['position']).'</option>'; ?></select></div>
+                    <div class="search-group" style="flex:0.3;"><label>&nbsp;</label><button type="button" class="btn-clear-employee" onclick="clearReissueEmployeeSearch()">Clear</button></div>
+                </div>
+                <div id="reissue_employee_results_container" style="max-height:300px;overflow-y:auto"><table class="employee-results-table"><thead><tr><th>Name</th><th>Position</th><th>Department</th><th>Action</th></tr></thead><tbody id="reissue_employee_results_body"><tr><td colspan="4" class="no-results">Type to search</div></div></tbody>}</div>
+            </div>
+            <div id="selected_reissue_employee_display" style="display:none;margin-top:10px;padding:12px;background:var(--success-light);border-radius:8px"><i class="fas fa-user-check"></i> Selected: <strong id="selected_reissue_employee_name"></strong></div>
+            <input type="hidden" id="selected_reissue_employee_id" name="reissue_to" value="">
+        </div>
+        
+        <div class="form-group">
+            <label>Condition <span class="text-danger">*</span></label>
+            <select name="condition" id="reissue_condition" class="form-control" required>
+                <option value="">-- Select --</option>
+                <option value="Serviceable">Serviceable</option>
+                <option value="Non-Serviceable">Non-Serviceable</option>
+                <option value="For Condemn">For Condemn</option>
+                <option value="Under Repair">Under Repair</option>
+            </select>
+        </div>
+        
+        <div class="form-group">
+            <label>Signatory</label>
+            <select name="signatory_id" id="reissue_signatory_id" class="form-control">
+                <option value="">-- Optional --</option>
+                <?php if($signatories) while($sig = $signatories->fetch_assoc()) echo '<option value="'.$sig['id'].'">'.htmlspecialchars($sig['name']).'</option>'; ?>
+            </select>
+        </div>
+        
+        <div class="form-group">
+            <label>Remarks</label>
+            <textarea name="remarks" id="reissue_remarks" class="form-control" rows="2"></textarea>
+        </div>
+        
+        <div class="form-group">
+            <button type="button" class="btn-primary" onclick="confirmReissueSubmit()">Confirm Reissue</button>
+            <a href="?cancel_reissue=1" class="btn-secondary" style="display:inline-block;padding:12px 24px;background:#6c757d;color:white;text-decoration:none;border-radius:8px;margin-left:10px">Cancel</a>
+        </div>
+    </form>
+</div>
+<?php endif; ?>
+
+<!-- ============================================ -->
+<!-- NEW ISSUANCE FORM -->
+<!-- ============================================ -->
+<div class="issue-form-container">
+    <h3><i class="fas fa-hand-holding"></i> Issue New Item</h3>
     
-    <!-- SEARCH SECTIONS MOVED INSIDE THE FORM -->
-    <!-- Property Number Search Section -->
+    <!-- Property Search Section -->
     <div class="property-search-section">
-        <h4><i class="fas fa-search"></i> Search Items by Property Number</h4>
+        <h4>Search Items by Property Number or Article Name</h4>
         <div class="property-search-box">
-            <input type="text" id="property_search_input" placeholder="Enter property number, article name, or barcode..." autocomplete="off">
-            <button type="button" onclick="searchByProperty()"><i class="fas fa-search"></i> Search</button>
-            <button type="button" onclick="clearPropertySearch()" style="background:#6c757d"><i class="fas fa-times"></i> Clear</button>
+            <input type="text" id="property_search_input" placeholder="Property number or article name...">
+            <button type="button" onclick="searchByProperty()">Search</button>
+            <button type="button" onclick="clearPropertySearch()" style="background:#6c757d">Clear</button>
         </div>
         <div id="property_search_result" class="property-search-result"></div>
     </div>
 
-    <!-- Barcode Scanner Section -->
     <div class="barcode-search-section">
-        <h4><i class="fas fa-barcode"></i> Physical Barcode Scanner</h4>
-        <div style="display:flex;gap:10px;margin-bottom:15px">
-            <button type="button" onclick="openHardwareScannerModal()" class="btn-primary" style="flex:1;padding:12px;background:linear-gradient(135deg,#F8B0C0,#e69eb0);border:none;color:#fff"><i class="fas fa-barcode"></i> <strong>Open Hardware Scanner</strong></button>
-            <button type="button" onclick="openScannerModal()" class="btn-primary" style="flex:1;padding:12px;background:linear-gradient(135deg,#6B8CFF,#8FB5FF);border:none;color:#fff"><i class="fas fa-camera"></i> Webcam / Manual</button>
-            <div style="background:rgba(255,255,255,.2);padding:10px 15px;border-radius:8px;font-size:13px"><i class="fas fa-check-circle"></i> Scanner Ready</div>
-        </div>
+        <h4>Search by Barcode</h4>
         <div class="barcode-search-box">
             <i class="fas fa-search"></i>
-            <input type="text" id="barcode_input" placeholder="Place cursor here and scan barcode..." autocomplete="off" spellcheck="false">
-            <button type="button" onclick="searchBarcode()"><i class="fas fa-barcode"></i> Search</button>
+            <input type="text" id="barcode_input" placeholder="Enter property number or barcode..." autocomplete="off">
+            <button type="button" onclick="searchBarcode()">Search</button>
         </div>
         <div id="barcode_result" class="barcode-search-result"></div>
     </div>
     
     <form method="POST" action="" id="issueForm">
-        <?php if ($reissue_item): ?>
-        <input type="hidden" name="is_reissue" value="1">
-        <input type="hidden" name="original_issuance_id" value="<?php echo $reissue_from_id; ?>">
-        <?php endif; ?>
+        <input type="hidden" name="action" value="new_issue">
         
-        <!-- SELECTED ITEMS SECTION -->
         <div class="form-group">
-            <label><i class="fas fa-boxes"></i> Selected Items</label>
-            <div class="selected-items-grid" id="selectedItemsContainer">
-                <div class="empty-cart" id="emptyCartMessage">
-                    <i class="fas fa-barcode"></i>
-                    <p>No items selected. Scan barcodes or search by property number above.</p>
-                </div>
+            <label>Selected Items</label>
+            <div class="selected-items-grid">
+                <div class="empty-cart" id="emptyCartMessage"><i class="fas fa-box"></i><p>No items selected. Search above to add items.</p></div>
                 <div id="selectedItemsList"></div>
                 <div id="cartSummary" class="cart-summary" style="display:none"></div>
             </div>
         </div>
         
-
-        
-        <!-- ISSUE TO SECTION - SEARCH WITH BUTTON -->
+        <!-- ISSUE TO SECTION -->
         <div class="form-group">
-            <label><i class="fas fa-user-tie"></i> Issue To:</label>
+            <label><i class="fas fa-user-tie"></i> Issue To: <span class="text-danger">*</span></label>
             
             <div class="employee-search-section">
                 <div class="employee-search-bar">
                     <div class="search-group">
                         <label>NAME</label>
-                        <input type="text" id="search_employee_name" placeholder="Search by name...">
+                        <input type="text" id="search_employee_name" placeholder="Search by name..." onkeyup="searchEmployees()">
                     </div>
                     <div class="search-group">
                         <label>DEPARTMENT</label>
-                        <select id="search_department">
+                        <select id="search_department" onchange="searchEmployees()">
                             <option value="">All Departments</option>
-                            <?php if($departments_list && $departments_list->num_rows > 0): 
-                                $departments_list->data_seek(0);
-                                while($dept = $departments_list->fetch_assoc()): ?>
-                                <option value="<?php echo htmlspecialchars($dept['name']); ?>"><?php echo htmlspecialchars($dept['code'] . ' - ' . $dept['name']); ?></option>
-                            <?php endwhile; endif; ?>
+                            <?php if($departments_list) while($dept = $departments_list->fetch_assoc()): ?>
+                            <option value="<?php echo htmlspecialchars($dept['name']); ?>"><?php echo htmlspecialchars($dept['code'] . ' - ' . $dept['name']); ?></option>
+                            <?php endwhile; ?>
                         </select>
                     </div>
                     <div class="search-group">
                         <label>SECTION</label>
-                        <select id="search_section">
+                        <select id="search_section" onchange="searchEmployees()">
                             <option value="">All Sections</option>
-                            <?php if($sections_list && $sections_list->num_rows > 0): 
-                                $sections_list->data_seek(0);
-                                while($sec = $sections_list->fetch_assoc()): ?>
-                                <option value="<?php echo htmlspecialchars($sec['name']); ?>"><?php echo htmlspecialchars($sec['name']); ?></option>
-                            <?php endwhile; endif; ?>
+                            <?php if($sections_list) while($sec = $sections_list->fetch_assoc()): ?>
+                            <option value="<?php echo htmlspecialchars($sec['name']); ?>"><?php echo htmlspecialchars($sec['name']); ?></option>
+                            <?php endwhile; ?>
                         </select>
                     </div>
                     <div class="search-group">
                         <label>POSITION</label>
-                        <select id="search_position">
+                        <select id="search_position" onchange="searchEmployees()">
                             <option value="">All Positions</option>
-                            <?php if($positions_list && $positions_list->num_rows > 0): 
-                                $positions_list->data_seek(0);
-                                while($pos = $positions_list->fetch_assoc()): ?>
-                                <option value="<?php echo htmlspecialchars($pos['position']); ?>"><?php echo htmlspecialchars($pos['position']); ?></option>
-                            <?php endwhile; endif; ?>
+                            <?php if($positions_list) while($pos = $positions_list->fetch_assoc()): ?>
+                            <option value="<?php echo htmlspecialchars($pos['position']); ?>"><?php echo htmlspecialchars($pos['position']); ?></option>
+                            <?php endwhile; ?>
                         </select>
                     </div>
-                    <div class="search-group" style="flex: 0.5;">
+                    <div class="search-group" style="flex: 0.3;">
                         <label>&nbsp;</label>
                         <button type="button" class="btn-search-employee" onclick="searchEmployees()">
                             <i class="fas fa-search"></i> Search
@@ -1170,7 +1675,6 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
                     </div>
                 </div>
                 
-                <!-- Search Results Table -->
                 <div id="employee_results_container" style="max-height: 300px; overflow-y: auto;">
                     <table class="employee-results-table" style="width: 100%;">
                         <thead>
@@ -1178,172 +1682,120 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
                                 <th>Employee Name</th>
                                 <th>Position</th>
                                 <th>Department</th>
-                                <th>Department Code</th>
                                 <th>Action</th>
                             </tr>
                         </thead>
                         <tbody id="employee_results_body">
                             <tr>
-                                <td colspan="5" class="no-results">
+                                <td colspan="4" class="no-results">
                                     <i class="fas fa-search"></i>
                                     <p>Click "Search" to find employees</p>
-                                </td>
+                                </div>
                             </tr>
                         </tbody>
                     </table>
                 </div>
             </div>
             
-            <!-- Selected Employee Display -->
-            <div id="selected_employee_display" style="display: none; margin-top: 10px; padding: 12px 15px; background: var(--success-light); border-radius: 6px;">
-                <i class="fas fa-user-check" style="color: var(--success); margin-right: 10px;"></i>
-                <span style="color: var(--success);">Selected: <strong id="selected_employee_name"></strong></span>
-                <span id="selected_dept_code_display" style="margin-left: 10px; font-size: 11px; background: var(--accent-light); padding: 2px 8px; border-radius: 12px;"></span>
+            <div id="selected_employee_display" style="display: none; margin-top: 10px; padding: 12px 15px; background: var(--success-light); border-radius: 8px;">
+                <i class="fas fa-user-check"></i> Selected: <strong id="selected_employee_name"></strong>
             </div>
             <input type="hidden" id="selected_employee_id" name="issued_to" value="">
-            <input type="hidden" id="selected_dept_code" name="department_code" value="">
-        </div>
-        
-        <!-- SIGNATORY DROPDOWN -->
-        <div class="form-group">
-            <label for="signatory_id"><i class="fas fa-signature"></i> Signatory <small>(Optional)</small></label>
-            <select name="signatory_id" id="signatory_id" class="form-control">
-                <option value="">-- Select Signatory (Optional) --</option>
-                <?php
-                // Fetch active signatories
-                $signatories_query = $conn->query("
-                    SELECT s.*, 
-                           CASE 
-                               WHEN s.employee_id IS NOT NULL THEN CONCAT(e.firstname, ' ', e.lastname)
-                               ELSE s.name 
-                           END as display_name,
-                           CASE 
-                               WHEN s.employee_id IS NOT NULL THEN e.position
-                               ELSE s.position 
-                           END as display_position
-                    FROM signatories s
-                    LEFT JOIN employees e ON s.employee_id = e.id
-                    WHERE s.is_active = 1
-                    ORDER BY s.name ASC
-                ");
-                
-                if ($signatories_query && $signatories_query->num_rows > 0) {
-                    while ($signatory = $signatories_query->fetch_assoc()) {
-                        $display_text = htmlspecialchars($signatory['display_name']);
-                        if (!empty($signatory['display_position'])) {
-                            $display_text .= ' - ' . htmlspecialchars($signatory['display_position']);
-                        }
-                        echo '<option value="' . $signatory['id'] . '">' . $display_text . '</option>';
-                    }
-                }
-                ?>
-            </select>
-            <small class="text-muted">Select a signatory for the issuance documents</small>
         </div>
         
         <div class="form-group">
-            <label for="purpose"><i class="fas fa-clipboard"></i> Purpose</label>
-            <input type="text" id="purpose" name="purpose" class="form-control" placeholder="Enter purpose of issuance" required>
-        </div>
-        
-        <div class="form-group">
-            <label>Condition</label>
-            <select name="condition" class="form-control">
+            <label>Condition <span class="text-danger">*</span></label>
+            <select name="condition" id="condition" class="form-control" required>
+                <option value="">-- Select --</option>
                 <option value="Serviceable">Serviceable</option>
-                <option value="Good">Good</option>
-                <option value="Fair">Fair</option>
-                <option value="Poor">Poor</option>
+                <option value="Non-Serviceable">Non-Serviceable</option>
+                <option value="For Condemn">For Condemn</option>
+                <option value="Under Repair">Under Repair</option>
+            </select>
+        </div>
+        
+        <div class="form-group">
+            <label>Signatory</label>
+            <select name="signatory_id" id="signatory_id" class="form-control">
+                <option value="">-- Optional --</option>
+                <?php if($signatories) while($sig = $signatories->fetch_assoc()) echo '<option value="'.$sig['id'].'">'.htmlspecialchars($sig['name']).'</option>'; ?>
             </select>
         </div>
         
         <div class="form-group">
             <label>Remarks</label>
-            <textarea name="remarks" class="form-control" rows="2" placeholder="Optional notes"></textarea>
+            <textarea name="remarks" id="remarks" class="form-control" rows="2" placeholder="Optional notes"></textarea>
         </div>
         
         <div class="form-group">
-            <button type="button" class="btn-primary" id="submitBtn" onclick="showConfirmModal()">
-                <i class="fas fa-hand-holding"></i> <?php echo $reissue_item?'Reissue':'Issue Selected Items'; ?> (<span id="selectedCount">0</span>)
-            </button>
+            <button type="button" class="btn-primary" id="submitBtn" onclick="showConfirmModal()">Issue Selected Items (<span id="selectedCount">0</span>)</button>
         </div>
     </form>
 </div>
 
-<!-- Currently Issued Items Section -->
-<div class="stat-chart">
-    <h3><i class="fas fa-clipboard-list"></i> Currently Issued Items</h3>
-    <div style="max-height:500px;overflow-y:auto">
-        <table style="width:100%">
+<!-- ============================================ -->
+<!-- CURRENTLY ISSUED ITEMS -->
+<!-- ============================================ -->
+<div class="table-container">
+    <div class="table-header">
+        <h2><i class="fas fa-clipboard-list"></i> Currently Issued Items</h2>
+    </div>
+    <?php if($current_issuances && $current_issuances->num_rows > 0): ?>
+    <div style="overflow-x: auto;">
+        <table style="width: 100%; min-width: 1200px;">
             <thead>
                 <tr>
-                    <th>Employee</th>
-                    <th>Department / Section</th>
-                    <th>Location Code</th>
-                    <th>Item / Property No.</th>
+                    <th>Barcode</th>
+                    <th>Date</th>
+                    <th>Item Name</th>
+                    <th>Property No.</th>
                     <th>Qty</th>
-                    <th>Issued Date</th>
+                    <th>Unit</th>
+                    <th>Issued To</th>
+                    <th>Condition</th>
                     <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
-                <?php if(!empty($employee_issuances)): foreach($employee_issuances as $eid=>$edata): $ti=0;$tq=0;foreach($edata['items'] as $it){$ti++;$tq+=$it['quantity_issued'];} ?>
-                <tr style="background:#f8f9fa"><td colspan="7" style="padding:15px;border-bottom:2px solid #6B8CFF">
-                    <strong style="color:#6B8CFF;font-size:16px"><i class="fas fa-user"></i> <?php echo htmlspecialchars($edata['employee_name']); ?></strong>
-                    <?php if(!empty($edata['position'])): ?>
-                    <span class="user-department-badge"><i class="fas fa-briefcase"></i> <?php echo htmlspecialchars($edata['position']); ?></span>
-                    <?php endif; ?>
-                    <?php if(!empty($edata['department_code'])): ?>
-                    <span class="user-location-badge"><i class="fas fa-building"></i> Dept Code: <?php echo htmlspecialchars($edata['department_code']); ?></span>
-                    <?php endif; ?>
-                    <?php if(!empty($edata['location_code']) && $edata['location_code'] != '000000'): ?>
-                    <span class="user-location-badge"><i class="fas fa-location-dot"></i> LOC: <?php echo htmlspecialchars($edata['location_code']); ?></span>
-                    <?php endif; ?>
-                    <?php if(!empty($edata['location_string'])): ?>
-                    <span class="user-department-badge"><i class="fas fa-building"></i> <?php echo htmlspecialchars($edata['location_string']); ?></span>
-                    <?php endif; ?>
-                    <span style="float:right;background:#6B8CFF;color:#fff;padding:4px 12px;border-radius:20px;font-size:12px"><?php echo $ti; ?> item(s) • <?php echo $tq; ?> total qty</span>
-                 </div></div>
-                <?php foreach($edata['items'] as $item): ?>
-                <tr style="background:#fafafa">
-                    <td style="padding-left:30px">
-                        <strong><?php echo htmlspecialchars($item['article_name']); ?></strong>
-                        <br><small>Property: <code><?php echo htmlspecialchars($item['property_no']??'N/A'); ?></code></small>
-                        <?php if(strpos($item['property_no']??'', '-') !== false): ?>
-                        <br><small class="property-dept-code">Dept Code: <?php echo substr($item['property_no'], strrpos($item['property_no'], '-') + 1); ?></small>
-                        <?php endif; ?>
-                     </div>
-                    <td class="text-muted" style="font-size:11px">
-                        <?php 
-                        $loc_parts = [];
-                        if(!empty($item['building_name'])) $loc_parts[] = $item['building_name'];
-                        if(!empty($item['department_name'])) $loc_parts[] = $item['department_name'];
-                        if(!empty($item['section_name'])) $loc_parts[] = $item['section_name'];
-                        echo !empty($loc_parts) ? htmlspecialchars(implode(' → ', $loc_parts)) : '-';
-                        ?>
-                     </div>
-                    <td class="text-muted" style="font-size:11px"><?php echo htmlspecialchars($item['location_code'] ?? '-'); ?> </div>
-                    <td><?php echo $item['quantity_issued'].' '.htmlspecialchars($item['uom']??'pcs'); ?> </div>
-                    <td><?php echo date('M d, Y',strtotime($item['issued_date'])); ?> </div>
-                    <td><div class="action-buttons">
-                        <a href="?print_par=<?php echo $item['id']; ?>" class="action-btn" style="background:#2c3e50" target="_blank" title="Print PAR"><i class="fas fa-file-signature"></i></a>
-                        <a href="?return=<?php echo $item['id']; ?>" class="action-btn success" onclick="return confirmReturnItem(event, this)"><i class="fas fa-undo"></i></a>
-                        <?php if($item['status']==='issued'): ?>
-                        <a href="?reissue=<?php echo $item['id']; ?>" class="action-btn edit" title="Reissue"><i class="fas fa-redo"></i></a>
-                        <?php else: ?>
-                        <span class="action-btn" style="background:#ccc;cursor:not-allowed"><i class="fas fa-redo"></i></span>
-                        <?php endif; ?>
-                        <button class="action-btn view" onclick="viewIssuanceDetails(<?php echo $item['id']; ?>)"><i class="fas fa-eye"></i></button>
-                    </div></div>
-                 </tr>
-                <?php endforeach; endforeach; else: ?>
-                <tr><td colspan="7" class="text-center">No items currently issued</td></tr>
-                <?php endif; ?>
+                <?php while($item = $current_issuances->fetch_assoc()): 
+                    $unit_display = !empty($item['big_unit']) ? $item['big_unit'] : ($item['small_unit'] ?? 'pcs');
+                    $condition_class = 'condition-' . str_replace(' ', '', $item['condition_on_issue'] ?? 'Serviceable');
+                    $safe_name = addslashes($item['article_name']);
+                ?>
+                <tr>
+                    <td>
+                        <?php if(!empty($item['issuance_barcode'])): ?>
+                        <img src="<?php echo SITE_URL; ?>/admin/barcode_generator_issued.php?code=<?php echo urlencode($item['issuance_barcode']); ?>&width=150&height=50" class="barcode-img" onclick="showBarcodeModal('<?php echo htmlspecialchars($item['issuance_barcode']); ?>', '<?php echo $safe_name; ?>')">
+                        <br><small><?php echo htmlspecialchars($item['issuance_barcode']); ?></small>
+                        <?php else: ?>—<?php endif; ?>
+                    </div>
+                    <td style="white-space: nowrap;"><?php echo date('M d, Y', strtotime($item['issued_date'])); ?></div>
+                    <td><strong><?php echo htmlspecialchars($item['article_name']); ?></strong></div>
+                    <td><code><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></code></div>
+                    <td><?php echo $item['quantity_issued']; ?></div>
+                    <td><?php echo htmlspecialchars($unit_display); ?></div>
+                    <td><?php echo htmlspecialchars($item['issued_to_name']); ?></div>
+                    <td><span class="condition-badge <?php echo $condition_class; ?>"><?php echo htmlspecialchars($item['condition_on_issue'] ?? 'Serviceable'); ?></span></div>
+                    <td>
+                        <div class="action-buttons">
+                            <a href="?print_par=<?php echo $item['id']; ?>" class="action-btn print" target="_blank"><i class="fas fa-print"></i></a>
+                            <button class="return-btn" onclick="openReturnModal(<?php echo $item['id']; ?>, '<?php echo $safe_name; ?>')"><i class="fas fa-undo"></i> Return</button>
+                            <button class="action-btn view" onclick="viewIssuanceDetails(<?php echo $item['id']; ?>)"><i class="fas fa-eye"></i></button>
+                        </div>
+                    </div>
+                </tr>
+                <?php endwhile; ?>
             </tbody>
         </table>
     </div>
+    <?php else: ?>
+    <div style="text-align:center;padding:60px"><i class="fas fa-inbox" style="font-size:64px;color:#ccc"></i><p>No items currently issued</p></div>
+    <?php endif; ?>
 </div>
 
-<!-- Issuance History Table -->
+<!-- ============================================ -->
+<!-- ISSUANCE HISTORY -->
+<!-- ============================================ -->
 <div class="table-container">
     <div class="table-header">
         <h2><i class="fas fa-history"></i> Issuance History</h2>
@@ -1353,156 +1805,340 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px 10px;text-align:lef
         SELECT 
             ei.*, 
             i.article_name, 
-            i.property_no,
+            i.property_no, 
+            i.big_unit, 
+            i.small_unit,
             CONCAT(e.firstname, ' ', e.lastname) as issued_to_name,
             CONCAT(ub.firstname, ' ', ub.lastname) as issued_by_name,
-            e.position,
-            s.name as section_name,
-            d.name as department_name,
-            d.code as department_code
+            CONCAT(original_emp.firstname, ' ', original_emp.lastname) as reissued_from_name,
+            CONCAT(reissued_to_emp.firstname, ' ', reissued_to_emp.lastname) as reissued_to_name
         FROM equipment_issuance ei 
         JOIN inventory i ON ei.inventory_id = i.id 
         JOIN employees e ON ei.issued_to = e.id
-        LEFT JOIN sections s ON e.section_id = s.id
-        LEFT JOIN departments d ON s.department_id = d.id
         JOIN users ub ON ei.issued_by = ub.id 
-        ORDER BY ei.issued_date DESC 
-        LIMIT 50
+        LEFT JOIN equipment_issuance original_iss ON ei.reissued_from_id = original_iss.id
+        LEFT JOIN employees original_emp ON original_iss.issued_to = original_emp.id
+        LEFT JOIN equipment_issuance reissued_iss ON ei.id = reissued_iss.reissued_from_id
+        LEFT JOIN employees reissued_to_emp ON reissued_iss.issued_to = reissued_to_emp.id
+        ORDER BY ei.issued_date DESC LIMIT 100
     ");
     ?>
     <?php if($history && $history->num_rows > 0): ?>
     <div style="overflow-x: auto;">
-        <table style="width: 100%; min-width: 1100px;">
+        <table style="width: 100%; min-width: 1400px;">
             <thead>
                 <tr>
+                    <th>Barcode</th>
                     <th>Date</th>
-                    <th>Item</th>
+                    <th>Item Name</th>
                     <th>Property No.</th>
-                    <th>Issued To</th>
-                    <th>Department/Section</th>
-                    <th>Dept Code</th>
-                    <th>Issued By</th>
                     <th>Qty</th>
+                    <th>Unit</th>
+                    <th>Issued To</th>
+                    <th>Condition</th>
+                    <th>Issued By</th>
+                    <th>Reissued From</th>
+                    <th>Reissued To</th>
                     <th>Status</th>
                     <th>Return Date</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
-                <?php while($item = $history->fetch_assoc()): ?>
+                <?php while($item = $history->fetch_assoc()): 
+                    $unit_display = !empty($item['big_unit']) ? $item['big_unit'] : ($item['small_unit'] ?? 'pcs');
+                    $condition_class = 'condition-' . str_replace(' ', '', $item['condition_on_issue'] ?? 'Serviceable');
+                    $status_class = 'issue-status-' . $item['status'];
+                    $safe_name = addslashes($item['article_name']);
+                ?>
                 <tr>
-                    <td style="white-space: nowrap;"><?php echo date('M d, Y',strtotime($item['issued_date'])); ?> </div>
-                    <td><strong><?php echo htmlspecialchars($item['article_name']); ?></strong></div>
-                    <td><code><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></code>
-                        <?php if(strpos($item['property_no']??'', '-') !== false): ?>
-                        <br><small class="property-dept-code">Dept: <?php echo substr($item['property_no'], strrpos($item['property_no'], '-') + 1); ?></small>
-                        <?php endif; ?>
+                    <td>
+                        <?php if(!empty($item['issuance_barcode'])): ?>
+                        <img src="<?php echo SITE_URL; ?>/admin/barcode_generator_issued.php?code=<?php echo urlencode($item['issuance_barcode']); ?>&width=100&height=30" class="barcode-img" onclick="showBarcodeModal('<?php echo htmlspecialchars($item['issuance_barcode']); ?>', '<?php echo $safe_name; ?>')">
+                        <br><small><?php echo htmlspecialchars(substr($item['issuance_barcode'], 0, 15)); ?>...</small>
+                        <?php else: ?>—<?php endif; ?>
                     </div>
-                    <td><?php echo htmlspecialchars($item['issued_to_name']); ?> </div>
+                    <td style="white-space: nowrap;"><?php echo date('M d, Y', strtotime($item['issued_date'])); ?></div>
+                    <td><strong><?php echo htmlspecialchars($item['article_name']); ?></strong></div>
+                    <td><code><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></code></div>
+                    <td><?php echo $item['quantity_issued']; ?></div>
+                    <td><?php echo htmlspecialchars($unit_display); ?></div>
+                    <td><?php echo htmlspecialchars($item['issued_to_name']); ?></div>
+                    <td><span class="condition-badge <?php echo $condition_class; ?>"><?php echo htmlspecialchars($item['condition_on_issue'] ?? 'Serviceable'); ?></span></div>
+                    <td><?php echo htmlspecialchars($item['issued_by_name']); ?></div>
                     <td>
                         <?php 
-                        $loc_parts = [];
-                        if(!empty($item['department_name'])) $loc_parts[] = $item['department_name'];
-                        if(!empty($item['section_name'])) $loc_parts[] = $item['section_name'];
-                        echo !empty($loc_parts) ? htmlspecialchars(implode(' → ', $loc_parts)) : '-';
+                        if(!empty($item['reissued_from_name']) && $item['reissued_from_name'] != '—') {
+                            echo '<span style="color:#FF9800;">' . htmlspecialchars($item['reissued_from_name']) . '</span>';
+                        } else {
+                            echo '—';
+                        }
                         ?>
-                     </div>
-                    <td><span class="user-location-badge"><?php echo htmlspecialchars($item['department_code'] ?? '-'); ?></span></div>
-                    <td><?php echo htmlspecialchars($item['issued_by_name']); ?> </div>
-                    <td><?php echo $item['quantity_issued']; ?> </div>
+                    </div>
                     <td>
                         <?php 
-                        $status_color = $item['status'] == 'issued' ? '#FF9800' : ($item['status'] == 'returned' ? '#4CAF50' : '#f44336');
-                        $status_bg = $item['status'] == 'issued' ? '#FFF3E0' : ($item['status'] == 'returned' ? '#E8F5E9' : '#FFEBEE');
-                        echo '<span style="background:'.$status_bg.';color:'.$status_color.';padding:4px 10px;border-radius:20px;font-size:11px;font-weight:600">'.ucfirst($item['status']).'</span>';
+                        if(!empty($item['reissued_to_name']) && $item['reissued_to_name'] != '—') {
+                            echo '<span style="color:#4CAF50;">' . htmlspecialchars($item['reissued_to_name']) . '</span>';
+                        } else {
+                            echo '—';
+                        }
                         ?>
-                     </div>
-                    <td><?php echo $item['actual_return'] ? date('M d, Y', strtotime($item['actual_return'])) : '—'; ?> </div>
-                 </tr>
+                    </div>
+                    <td><span class="issue-status-badge <?php echo $status_class; ?>"><?php echo ucfirst($item['status']); ?></span></div>
+                    <td><?php echo $item['actual_return'] ? date('M d, Y', strtotime($item['actual_return'])) : '—'; ?></div>
+                    <td>
+                        <div class="action-buttons">
+                            <a href="?print_par=<?php echo $item['id']; ?>" class="action-btn print" target="_blank"><i class="fas fa-print"></i></a>
+                            <?php if($item['status'] == 'returned'): ?>
+                            <a href="?reissue_returned=<?php echo $item['id']; ?>" class="reissue-btn" onclick="return confirmReissueReturned(event, this)"><i class="fas fa-redo-alt"></i> Reissue</a>
+                            <?php endif; ?>
+                            <button class="action-btn view" onclick="viewIssuanceDetails(<?php echo $item['id']; ?>)"><i class="fas fa-eye"></i></button>
+                        </div>
+                    </div>
+                </tr>
                 <?php endwhile; ?>
             </tbody>
         </table>
     </div>
     <?php else: ?>
-    <div style="text-align: center; padding: 60px 20px;">
-        <i class="fas fa-inbox" style="font-size: 64px; color: var(--text-muted); margin-bottom: 20px; display: block;"></i>
-        <h4 style="color: var(--text-secondary); margin-bottom: 8px;">No issuance records found</h4>
-        <p style="color: var(--text-muted); font-size: 13px;">When items are issued, they will appear here.</p>
-    </div>
+    <div style="text-align:center;padding:60px"><i class="fas fa-inbox" style="font-size:64px;color:#ccc"></i><p>No issuance records found</p></div>
     <?php endif; ?>
 </div>
 
-<!-- Custom Confirmation Modal -->
-<div id="confirmModal" class="confirm-modal">
-    <div class="confirm-modal-content">
-        <div class="confirm-modal-icon">
-            <i class="fas fa-question-circle"></i>
+<!-- Sticky Scan Button -->
+<div class="sticky-scan-button-container">
+    <a href="<?php echo SITE_URL; ?>/admin/barcode_generator_issued.php" target="_blank" class="sticky-scan-button">
+        <i class="fas fa-camera"></i> SCAN BARCODE
+    </a>
+</div>
+
+<!-- Return Modal -->
+<div id="returnModal" class="return-modal">
+    <div class="return-modal-content">
+        <div class="return-modal-header"><h3>Return Item</h3></div>
+        <div class="return-modal-body">
+            <p><strong>Item:</strong> <span id="return_item_name"></span></p>
+            <p><strong>Note:</strong> Department code will be removed from property number.</p>
+            <label>Condition on Return: <span class="text-danger">*</span></label>
+            <select id="return_condition" class="return-condition-select">
+                <option value="">-- Select --</option>
+                <option value="Serviceable">Serviceable</option>
+                <option value="Non-Serviceable">Non-Serviceable</option>
+                <option value="For Condemn">For Condemn</option>
+                <option value="Under Repair">Under Repair</option>
+            </select>
         </div>
-        <h3>Confirm Issuance</h3>
-        <p id="confirmModalMessage">Issue item(s) to this employee?</p>
-        <div class="confirm-modal-buttons">
-            <button class="confirm-btn-cancel" onclick="closeConfirmModal()">Cancel</button>
-            <button class="confirm-btn-confirm" onclick="submitForm()">Confirm</button>
+        <div class="return-modal-footer">
+            <button class="confirm-btn-cancel" onclick="closeReturnModal()">Cancel</button>
+            <button class="confirm-btn-confirm" onclick="submitReturn()">Confirm Return</button>
         </div>
     </div>
 </div>
 
-<script>
-// Store inventory data
-const inventoryData = <?php echo json_encode($inventory_data); ?>;
-let cartItems = [];
-let hardwareScannedItems = [];
-let selectedEmployeeId = null;
-let selectedDeptCode = null;
+<!-- View Modal -->
+<div id="viewModal" class="view-modal">
+    <div class="view-modal-content">
+        <div class="view-modal-header">
+            <h3><i class="fas fa-info-circle"></i> Issuance Details</h3>
+            <span class="view-modal-close" onclick="closeViewModal()">&times;</span>
+        </div>
+        <div class="view-modal-body" id="viewModalBody">
+            <div style="text-align:center;padding:20px"><i class="fas fa-spinner fa-spin"></i> Loading...</div>
+        </div>
+    </div>
+</div>
 
-// Property Number Search Function
-function searchByProperty() {
-    const searchTerm = document.getElementById('property_search_input').value.trim();
-    const resultDiv = document.getElementById('property_search_result');
+<!-- Barcode Modal -->
+<div id="barcodeModal" class="barcode-modal">
+    <div class="barcode-modal-content">
+        <div class="barcode-modal-header">
+            <h3><i class="fas fa-barcode"></i> <span id="barcodeModalTitle">Barcode</span></h3>
+            <span class="barcode-modal-close" onclick="closeBarcodeModal()">&times;</span>
+        </div>
+        <div class="barcode-modal-body">
+            <div class="barcode-image" id="barcodeModalImage"></div>
+            <div class="barcode-value" id="barcodeModalValue"></div>
+        </div>
+        <div class="barcode-modal-footer">
+            <button class="btn-primary" onclick="printBarcodeFromModal()"><i class="fas fa-print"></i> Print Barcode</button>
+            <button class="btn-secondary" onclick="closeBarcodeModal()">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- Confirm Modals -->
+<div id="confirmModal" class="confirm-modal"><div class="confirm-modal-content"><div class="confirm-modal-icon"><i class="fas fa-question-circle"></i></div><h3>Confirm Issuance</h3><p id="confirmModalMessage"></p><div class="confirm-modal-buttons"><button class="confirm-btn-cancel" onclick="closeConfirmModal()">Cancel</button><button class="confirm-btn-confirm" onclick="submitForm()">Confirm</button></div></div></div>
+<div id="confirmReissueModal" class="confirm-modal"><div class="confirm-modal-content"><div class="confirm-modal-icon"><i class="fas fa-redo-alt"></i></div><h3>Confirm Reissue</h3><p id="confirmReissueModalMessage"></p><div class="confirm-modal-buttons"><button class="confirm-btn-cancel" onclick="closeConfirmReissueModal()">Cancel</button><button class="confirm-btn-confirm" onclick="submitReissueForm()">Confirm</button></div></div></div>
+
+<script>
+// Store data
+const inventoryData = <?php echo json_encode($inventory_items); ?>;
+const allEmployees = <?php echo json_encode($all_employees); ?>;
+let cartItems = [];
+let selectedEmployeeId = null;
+let selectedReissueEmployeeId = null;
+let currentReturnId = null;
+
+// ============================================
+// EMPLOYEE SEARCH FUNCTIONS - FIXED
+// ============================================
+
+function searchEmployees() {
+    const name = document.getElementById('search_employee_name').value.toLowerCase().trim();
+    const department = document.getElementById('search_department').value;
+    const section = document.getElementById('search_section').value;
+    const position = document.getElementById('search_position').value;
     
-    if (!searchTerm) {
-        resultDiv.innerHTML = '<div class="alert-warning" style="padding:10px">Please enter a property number, article name, or barcode</div>';
-        resultDiv.classList.add('show');
+    let filtered = allEmployees.filter(emp => {
+        const fullName = (emp.firstname + ' ' + emp.lastname).toLowerCase();
+        if (name && !fullName.includes(name)) return false;
+        if (department && emp.department_name !== department) return false;
+        if (section && emp.section_name !== section) return false;
+        if (position && emp.position !== position) return false;
+        return true;
+    });
+    displayEmployeeResults(filtered);
+}
+
+function displayEmployeeResults(employees) {
+    const tbody = document.getElementById('employee_results_body');
+    if (employees.length === 0) {
+        tbody.innerHTML = '</table><td colspan="4" class="no-results">No employees found</div></div>';
         return;
     }
+    let html = '';
+    employees.forEach(emp => {
+        const isSelected = (selectedEmployeeId == emp.id);
+        const deptDisplay = emp.department_name && emp.department_name !== '—' ? emp.department_name : '—';
+        html += `<tr class="employee-result-row ${isSelected ? 'selected' : ''}" onclick="selectEmployee(${emp.id}, '${escapeHtml(emp.firstname + ' ' + emp.lastname)}', '${escapeHtml(emp.position || '')}', '${escapeHtml(deptDisplay)}')">
+            <td>${escapeHtml(emp.lastname + ', ' + emp.firstname)}</div>
+            <td>${escapeHtml(emp.position || '—')}</div>
+            <td>${escapeHtml(deptDisplay)}</div>
+            <td><button class="select-employee-btn" onclick="event.stopPropagation();selectEmployee(${emp.id}, '${escapeHtml(emp.firstname + ' ' + emp.lastname)}', '${escapeHtml(emp.position || '')}', '${escapeHtml(deptDisplay)}')">Select</button></div>
+        </tr>`;
+    });
+    tbody.innerHTML = html;
+}
+
+function selectEmployee(id, name, position, department) {
+    selectedEmployeeId = id;
+    document.getElementById('selected_employee_id').value = id;
+    let displayText = name;
+    if (position) displayText += ` - ${position}`;
+    if (department && department !== '—') displayText += ` (${department})`;
+    document.getElementById('selected_employee_name').innerHTML = displayText;
+    document.getElementById('selected_employee_display').style.display = 'flex';
+    document.querySelectorAll('#employee_results_body .employee-result-row').forEach(row => row.classList.remove('selected'));
+    if (event && event.target) {
+        const row = event.target.closest('.employee-result-row');
+        if (row) row.classList.add('selected');
+    }
+}
+
+function clearEmployeeSearch() {
+    document.getElementById('search_employee_name').value = '';
+    document.getElementById('search_department').value = '';
+    document.getElementById('search_section').value = '';
+    document.getElementById('search_position').value = '';
+    document.getElementById('employee_results_body').innerHTML = '<tr><td colspan="4" class="no-results">Type to search</div></div>';
+}
+
+// ============================================
+// REISSUE EMPLOYEE SEARCH
+// ============================================
+
+function searchReissueEmployees() {
+    const name = document.getElementById('reissue_search_employee_name').value.toLowerCase().trim();
+    const department = document.getElementById('reissue_search_department').value;
+    const section = document.getElementById('reissue_search_section').value;
+    const position = document.getElementById('reissue_search_position').value;
     
-    let found = [];
-    for (let id in inventoryData) {
-        const item = inventoryData[id];
+    let filtered = allEmployees.filter(emp => {
+        const fullName = (emp.firstname + ' ' + emp.lastname).toLowerCase();
+        if (name && !fullName.includes(name)) return false;
+        if (department && emp.department_name !== department) return false;
+        if (section && emp.section_name !== section) return false;
+        if (position && emp.position !== position) return false;
+        return true;
+    });
+    displayReissueEmployeeResults(filtered);
+}
+
+function displayReissueEmployeeResults(employees) {
+    const tbody = document.getElementById('reissue_employee_results_body');
+    if (employees.length === 0) {
+        tbody.innerHTML = '<td><td colspan="4" class="no-results">No employees found</div></div>';
+        return;
+    }
+    let html = '';
+    employees.forEach(emp => {
+        const isSelected = (selectedReissueEmployeeId == emp.id);
+        const deptDisplay = emp.department_name && emp.department_name !== '—' ? emp.department_name : '—';
+        html += `<tr class="employee-result-row ${isSelected ? 'selected' : ''}" onclick="selectReissueEmployee(${emp.id}, '${escapeHtml(emp.firstname + ' ' + emp.lastname)}', '${escapeHtml(emp.position || '')}', '${escapeHtml(deptDisplay)}')">
+            <td>${escapeHtml(emp.lastname + ', ' + emp.firstname)}</div>
+            <td>${escapeHtml(emp.position || '—')}</div>
+            <td>${escapeHtml(deptDisplay)}</div>
+            <td><button class="select-employee-btn" onclick="event.stopPropagation();selectReissueEmployee(${emp.id}, '${escapeHtml(emp.firstname + ' ' + emp.lastname)}', '${escapeHtml(emp.position || '')}', '${escapeHtml(deptDisplay)}')">Select</button></div>
+        </tr>`;
+    });
+    tbody.innerHTML = html;
+}
+
+function selectReissueEmployee(id, name, position, department) {
+    selectedReissueEmployeeId = id;
+    document.getElementById('selected_reissue_employee_id').value = id;
+    let displayText = name;
+    if (position) displayText += ` - ${position}`;
+    if (department && department !== '—') displayText += ` (${department})`;
+    document.getElementById('selected_reissue_employee_name').innerHTML = displayText;
+    document.getElementById('selected_reissue_employee_display').style.display = 'flex';
+    document.querySelectorAll('#reissue_employee_results_body .employee-result-row').forEach(row => row.classList.remove('selected'));
+    if (event && event.target) {
+        const row = event.target.closest('.employee-result-row');
+        if (row) row.classList.add('selected');
+    }
+}
+
+function clearReissueEmployeeSearch() {
+    document.getElementById('reissue_search_employee_name').value = '';
+    document.getElementById('reissue_search_department').value = '';
+    document.getElementById('reissue_search_section').value = '';
+    document.getElementById('reissue_search_position').value = '';
+    document.getElementById('reissue_employee_results_body').innerHTML = '<tr><td colspan="4" class="no-results">Type to search</div></div>';
+}
+
+// ============================================
+// SEARCH & CART FUNCTIONS
+// ============================================
+
+function searchByProperty() {
+    const searchTerm = document.getElementById('property_search_input').value.toLowerCase().trim();
+    const resultDiv = document.getElementById('property_search_result');
+    if (!searchTerm) { resultDiv.innerHTML = '<div class="alert-warning">Please enter search term</div>'; resultDiv.classList.add('show'); return; }
+    
+    const found = inventoryData.filter(item => {
         const propertyNo = (item.property_no || '').toLowerCase();
         const articleName = (item.article_name || '').toLowerCase();
-        const barcode = (item.barcode_data || '').toLowerCase();
-        const searchLower = searchTerm.toLowerCase();
-        
-        if (propertyNo.includes(searchLower) || articleName.includes(searchLower) || barcode.includes(searchLower)) {
-            found.push(item);
-        }
-    }
+        return propertyNo.includes(searchTerm) || articleName.includes(searchTerm);
+    });
     
     if (found.length > 0) {
-        let html = '<div style="max-height: 300px; overflow-y: auto;">';
+        let html = '';
         found.forEach(item => {
             const isInCart = cartItems.some(cartItem => cartItem.id == item.id);
-            html += `
-                <div class="result-property-card">
-                    <div class="result-property-info">
-                        <h5>${escapeHtml(item.article_name)}</h5>
-                        <p>Property No: <strong>${escapeHtml(item.property_no || 'N/A')}</strong> | Available: ${parseFloat(item.qty_physical_count).toFixed(2)} ${escapeHtml(item.uom || 'pcs')}</p>
-                        <p>Value: ${formatCurrency(item.unit_value)} each</p>
-                    </div>
-                    <div>
-                        ${isInCart ? 
-                            '<button class="btn-add-property" disabled style="background:#ccc">Already in Cart</button>' : 
-                            `<button class="btn-add-property" onclick="addToCart(${item.id}, 1)">Add to Cart</button>`
-                        }
-                    </div>
+            const unitDisplay = item.big_unit ? item.big_unit : (item.small_unit || 'pcs');
+            html += `<div class="result-property-card">
+                <div class="result-property-info">
+                    <h5>${escapeHtml(item.article_name)}</h5>
+                    <p>Property: <strong>${escapeHtml(item.property_no || 'N/A')}</strong> | Available: ${item.qty_physical_count} ${escapeHtml(unitDisplay)}</p>
                 </div>
-            `;
+                <div>${isInCart ? '<button disabled style="background:#ccc">In Cart</button>' : `<button class="btn-add-property" onclick="addToCart(${item.id}, 1)">Add to Cart</button>`}</div>
+            </div>`;
         });
-        html += '</div>';
         resultDiv.innerHTML = html;
         resultDiv.classList.add('show');
     } else {
-        resultDiv.innerHTML = `<div class="result-property-card"><div class="result-property-info"><h5 style="color:#f44336">No items found</h5><p>No items match: <strong>${escapeHtml(searchTerm)}</strong></p></div></div>`;
+        resultDiv.innerHTML = `<div class="result-property-card"><h5>No items found for: ${escapeHtml(searchTerm)}</h5></div>`;
         resultDiv.classList.add('show');
     }
 }
@@ -1513,364 +2149,61 @@ function clearPropertySearch() {
     document.getElementById('property_search_result').classList.remove('show');
 }
 
-// Search for employees
-function searchEmployees() {
-    const name = document.getElementById('search_employee_name').value.trim();
-    const department = document.getElementById('search_department').value;
-    const section = document.getElementById('search_section').value;
-    const position = document.getElementById('search_position').value;
-    
-    let params = [];
-    if (name) params.push('name=' + encodeURIComponent(name));
-    if (department) params.push('department=' + encodeURIComponent(department));
-    if (section) params.push('section=' + encodeURIComponent(section));
-    if (position) params.push('position=' + encodeURIComponent(position));
-    
-    const queryString = params.join('&');
-    
-    fetch('<?php echo SITE_URL; ?>/api/search_employees.php?' + queryString)
-        .then(response => response.json())
-        .then(data => {
-            displayEmployeeResults(data);
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            const tbody = document.getElementById('employee_results_body');
-            tbody.innerHTML = '<tr><td colspan="5" class="no-results"><i class="fas fa-exclamation-triangle"></i><p>Error loading employees</p></td></tr>';
-        });
-}
-
-function displayEmployeeResults(employees) {
-    const tbody = document.getElementById('employee_results_body');
-    
-    if (!employees || employees.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="no-results"><i class="fas fa-search"></i><p>No employees found</p></td></tr>';
-        return;
-    }
-    
-    let html = '';
-    employees.forEach(emp => {
-        const isSelected = (selectedEmployeeId == emp.id);
-        const selectedClass = isSelected ? 'selected' : '';
-        
-        html += `
-            <tr class="employee-result-row ${selectedClass}" onclick="selectEmployeeFromResult(${emp.id}, '${escapeHtml(emp.firstname + ' ' + emp.lastname)}', '${escapeHtml(emp.position || '')}', '${escapeHtml(emp.department_name || '')}', '${escapeHtml(emp.department_code || '')}')">
-                <td class="employee-name-result">${escapeHtml(emp.lastname + ', ' + emp.firstname)}</td>
-                <td class="employee-position-result">${escapeHtml(emp.position || '—')}</td>
-                <td class="employee-dept-result">${escapeHtml(emp.department_name || '—')}</td>
-                <td class="employee-dept-result"><span class="user-location-badge">${escapeHtml(emp.department_code || '—')}</span></td>
-                <td><button class="select-employee-btn" onclick="event.stopPropagation();selectEmployeeFromResult(${emp.id}, '${escapeHtml(emp.firstname + ' ' + emp.lastname)}', '${escapeHtml(emp.position || '')}', '${escapeHtml(emp.department_name || '')}', '${escapeHtml(emp.department_code || '')}')">Select</button></td>
-            </tr>
-        `;
-    });
-    
-    tbody.innerHTML = html;
-}
-
-function selectEmployeeFromResult(id, name, position, department, deptCode) {
-    selectedEmployeeId = id;
-    selectedDeptCode = deptCode;
-    document.getElementById('selected_employee_id').value = id;
-    document.getElementById('selected_dept_code').value = deptCode;
-    
-    let displayText = name;
-    if (position) displayText += ` - ${position}`;
-    if (department) displayText += ` (${department})`;
-    
-    document.getElementById('selected_employee_name').innerHTML = displayText;
-    document.getElementById('selected_dept_code_display').innerHTML = `Dept Code: ${deptCode || 'N/A'}`;
-    document.getElementById('selected_employee_display').style.display = 'flex';
-    
-    // Update selected row styling
-    document.querySelectorAll('.employee-result-row').forEach(row => {
-        row.classList.remove('selected');
-    });
-    
-    const rows = document.querySelectorAll('.employee-result-row');
-    for (let row of rows) {
-        if (row.cells && row.cells[0] && row.cells[0].innerText.includes(name.split(' ')[0])) {
-            row.classList.add('selected');
-            break;
-        }
-    }
-}
-
-function clearEmployeeSearch() {
-    document.getElementById('search_employee_name').value = '';
-    document.getElementById('search_department').value = '';
-    document.getElementById('search_section').value = '';
-    document.getElementById('search_position').value = '';
-    
-    const tbody = document.getElementById('employee_results_body');
-    tbody.innerHTML = '<tr><td colspan="5" class="no-results"><i class="fas fa-search"></i><p>Click "Search" to find employees</p></td></tr>';
-}
-
-function showConfirmModal() {
-    const employeeId = document.getElementById('selected_employee_id').value;
-    const purposeField = document.getElementById('purpose');
-    const cartCount = cartItems.length;
-    
-    if (!employeeId) {
-        alert('Please search and select an employee to issue to');
-        return false;
-    }
-    if (!purposeField.value.trim()) {
-        alert('Please enter a purpose');
-        purposeField.focus();
-        return false;
-    }
-    if (cartCount === 0 && (!document.getElementById('selectedItemsList') || document.getElementById('selectedItemsList').innerHTML === '')) {
-        alert('Please add at least one item');
-        return false;
-    }
-    
-    const employeeName = document.getElementById('selected_employee_name').innerHTML;
-    const deptCode = document.getElementById('selected_dept_code').value;
-    const itemCount = cartCount > 0 ? cartCount : 1;
-    const deptMsg = deptCode ? ` (Department Code: ${deptCode})` : '';
-    
-    document.getElementById('confirmModalMessage').innerHTML = `Issue ${itemCount} item(s) to ${employeeName}${deptMsg}?<br><small style="color:var(--success);">Property numbers will be updated with department code: ${deptCode || 'N/A'}</small>`;
-    document.getElementById('confirmModal').classList.add('show');
-}
-
-function closeConfirmModal() {
-    document.getElementById('confirmModal').classList.remove('show');
-}
-
-function submitForm() {
-    closeConfirmModal();
-    const form = document.getElementById('issueForm');
-    const submitBtn = document.getElementById('submitBtn');
-    submitBtn.disabled = true;
-    submitBtn.innerHTML = '<span class="spinner"></span> Processing...';
-    form.submit();
-}
-
-function confirmReturnItem(event, element) {
-    event.preventDefault();
-    const modal = document.getElementById('confirmModal');
-    document.getElementById('confirmModalMessage').innerHTML = `Return this item?<br><small>This will add the quantity back to inventory.</small>`;
-    modal.classList.add('show');
-    
-    window.pendingReturnUrl = element.getAttribute('href');
-    window.submitForm = function() {
-        closeConfirmModal();
-        window.location.href = window.pendingReturnUrl;
-        window.submitForm = originalSubmitForm;
-    };
-    return false;
-}
-
-function originalSubmitForm() {
-    closeConfirmModal();
-    const form = document.getElementById('issueForm');
-    const submitBtn = document.getElementById('submitBtn');
-    submitBtn.disabled = true;
-    submitBtn.innerHTML = '<span class="spinner"></span> Processing...';
-    form.submit();
-}
-
-function resetSubmitForm() {
-    window.submitForm = originalSubmitForm;
-}
-
 function searchBarcode() {
-    performBarcodeSearch(document.getElementById('barcode_input').value.trim(), 'barcode_input', 'barcode_result');
-}
-
-function openScannerModal() {
-    const m = document.getElementById('scannerModal');
-    if (m) {
-        m.classList.add('show');
-        setTimeout(() => document.getElementById('modal_barcode_input').focus(), 100);
-    }
-}
-
-function closeScannerModal() {
-    document.getElementById('scannerModal').classList.remove('show');
-    document.getElementById('modal_barcode_result').innerHTML = '';
-    document.getElementById('modal_barcode_input').value = '';
-}
-
-function openHardwareScannerModal() {
-    const m = document.getElementById('hardwareScannerModal');
-    if (m) {
-        m.classList.add('show');
-        hardwareScannedItems = [];
-        updateHardwareScannedItemsDisplay();
-        setTimeout(() => {
-            const i = document.getElementById('hardwareScannerInput');
-            if (i) i.focus();
-        }, 100);
-    }
-}
-
-function closeHardwareScannerModal() {
-    document.getElementById('hardwareScannerModal').classList.remove('show');
-}
-
-function escapeHtml(s) {
-    if (!s) return '';
-    return s.replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
-}
-
-function formatCurrency(a) {
-    return '₱' + parseFloat(a || 0).toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,');
-}
-
-function performBarcodeSearch(barcode, inputId, resultId) {
-    const rd = document.getElementById(resultId);
-    const st = barcode.toLowerCase().trim();
-    if (!st) {
-        rd.innerHTML = '<div class="alert-warning" style="padding:10px">Please enter a barcode</div>';
-        rd.classList.add('show');
+    const barcode = document.getElementById('barcode_input').value.trim();
+    const resultDiv = document.getElementById('barcode_result');
+    
+    if (!barcode) {
+        resultDiv.innerHTML = '<div class="alert-warning">Please enter or scan barcode</div>';
+        resultDiv.classList.add('show');
         return;
     }
     
-    let found = [];
-    for (let id in inventoryData) {
-        const it = inventoryData[id];
-        const be = (it.barcode_data || '').toLowerCase().trim();
-        const bn = be.replace(/\s+/g, '');
-        const sn = st.replace(/\s+/g, '');
-        const al = (it.article_name || '').toLowerCase();
-        const pl = (it.property_no || '').toLowerCase();
-        
-        if (bn === sn || (be && be.includes(st)) || al.includes(st) || pl.includes(st)) {
-            found.push(it);
-        }
-    }
+    const found = inventoryData.filter(item => {
+        const propertyNo = (item.property_no || '').toLowerCase();
+        const articleName = (item.article_name || '').toLowerCase();
+        return propertyNo.includes(barcode.toLowerCase()) || articleName.includes(barcode.toLowerCase());
+    });
     
     if (found.length > 0) {
-        const gi = {};
-        found.forEach(i => {
-            if (!gi[i.article_name]) gi[i.article_name] = [];
-            gi[i.article_name].push(i);
+        let html = '';
+        found.forEach(item => {
+            const isInCart = cartItems.some(cartItem => cartItem.id == item.id);
+            const unitDisplay = item.big_unit ? item.big_unit : (item.small_unit || 'pcs');
+            html += `<div class="result-item">
+                <div class="result-info">
+                    <h5>${escapeHtml(item.article_name)}</h5>
+                    <p>Property: <strong>${escapeHtml(item.property_no || 'N/A')}</strong> | Available: ${item.qty_physical_count} ${escapeHtml(unitDisplay)}</p>
+                </div>
+                <div>${isInCart ? '<button disabled>In Cart</button>' : `<button class="btn-add-item" onclick="addToCart(${item.id}, 1)">Add to Cart</button>`}</div>
+            </div>`;
         });
-        
-        let h = '';
-        let gIdx = 0;
-        for (const an in gi) {
-            const its = gi[an];
-            const ta = its.reduce((s, i) => s + parseFloat(i.qty_physical_count || 0), 0);
-            const fi = its[0];
-            const aic = cartItems.find(i => its.some(si => si.id == i.id));
-            window['variantGroup_' + gIdx] = its;
-            h += `
-                <div class="result-item" style="margin-bottom:15px">
-                    <div class="result-info">
-                        <h5>${escapeHtml(an)}</h5>
-                        <p>Available: <strong>${ta.toFixed(2)} ${fi.uom || 'pcs'}</strong> | Value: ${formatCurrency(fi.unit_value)}</p>
-                        <p style="font-size:12px;color:#666">Property: <code>${escapeHtml(fi.property_no || 'N/A')}</code></p>
-                    </div>
-                    <div class="result-actions">
-                        ${aic ? '<button class="btn-add-item" disabled>Already Added</button>' : `<button class="btn-add-item" onclick="openVariantSelector(${gIdx},'${resultId}')">Select Variant & Add</button>`}
-                    </div>
-                </div>
-            `;
-            gIdx++;
-        }
-        rd.innerHTML = h;
-        rd.classList.add('show');
-        document.getElementById(inputId).value = '';
+        resultDiv.innerHTML = html;
+        resultDiv.classList.add('show');
+        document.getElementById('barcode_input').value = '';
     } else {
-        rd.innerHTML = `<div class="result-item"><div class="result-info"><h5 style="color:#f44336">Item not found</h5><p>No item found for: <strong>${escapeHtml(barcode)}</strong></p></div></div>`;
-        rd.classList.add('show');
+        resultDiv.innerHTML = `<div class="result-item"><h5>No item found for: ${escapeHtml(barcode)}</h5></div>`;
+        resultDiv.classList.add('show');
     }
 }
 
-function openVariantSelector(gi, rid) {
-    const its = window['variantGroup_' + gi];
-    if (!its || !its.length) return;
-    
-    const vm = document.createElement('div');
-    vm.id = 'vs_' + gi;
-    vm.style.cssText = 'display:flex;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.6);z-index:2000;align-items:center;justify-content:center';
-    
-    let vh = `
-        <div style="background:#fff;border-radius:12px;max-width:500px;width:90%;max-height:80vh;overflow-y:auto">
-            <div style="padding:20px;background:linear-gradient(135deg,#6B8CFF,#8FB5FF);color:#fff;border-radius:12px 12px 0 0;display:flex;justify-content:space-between;align-items:center">
-                <h3 style="margin:0">Select ${escapeHtml(its[0].article_name)}</h3>
-                <button onclick="closeVariantModal(${gi})" style="background:rgba(255,255,255,.2);border:none;color:#fff;font-size:24px;cursor:pointer;width:36px;height:36px;border-radius:50%">&times;</button>
-            </div>
-            <div style="padding:20px">
-    `;
-    
-    its.forEach((it, i) => {
-        const q = parseFloat(it.qty_physical_count || 0);
-        vh += `
-            <div style="padding:12px;border:1px solid #E0E0E0;border-radius:8px;margin-bottom:10px">
-                <div style="display:flex;justify-content:space-between">
-                    <div>
-                        <p><strong>Property:</strong> ${escapeHtml(it.property_no || 'N/A')}</p>
-                        <p><strong>Available:</strong> ${q.toFixed(2)} ${escapeHtml(it.uom || 'pcs')}</p>
-                        <p><strong>Value:</strong> ${formatCurrency(it.unit_value)} each</p>
-                    </div>
-                    <div style="text-align:right">
-                        <input type="number" id="qty_${gi}_${i}" value="1" min="1" max="${q}" style="width:70px;padding:5px;border:1px solid #E0E0E0;border-radius:5px;margin-bottom:8px">
-                        <button onclick="selectVariantAndAdd(${it.id},${gi},${i},'${rid}')" class="btn-primary" style="width:100%;padding:8px">Add</button>
-                    </div>
-                </div>
-            </div>
-        `;
-    });
-    
-    vh += '</div></div>';
-    vm.innerHTML = vh;
-    document.body.appendChild(vm);
-    vm.addEventListener('click', function(e) { if (e.target === vm) closeVariantModal(gi); });
-}
-
-function closeVariantModal(gi) {
-    const vm = document.getElementById('vs_' + gi);
-    if (vm) vm.remove();
-}
-
-function selectVariantAndAdd(id, gi, vi, rid) {
-    const it = inventoryData[id];
-    if (!it) return;
-    const q = parseFloat(document.getElementById('qty_' + gi + '_' + vi)?.value || 1);
-    const m = parseFloat(it.qty_physical_count || 0);
-    if (q < 1 || q > m) {
-        alert('Please enter 1 to ' + m);
-        return;
-    }
-    addToCart(id, q);
-    closeVariantModal(gi);
-    document.getElementById(rid).classList.remove('show');
-    document.getElementById(rid).innerHTML = '';
-}
-
-function addToCart(id, q = 1) {
-    const it = inventoryData[id];
-    if (!it) return;
-    const ei = cartItems.findIndex(i => i.id == id);
-    if (ei !== -1) {
-        const nq = cartItems[ei].quantity + q;
-        if (nq > it.qty_physical_count) {
-            alert('Max available: ' + it.qty_physical_count);
-            return;
-        }
-        cartItems[ei].quantity = nq;
+function addToCart(id, qty) {
+    const item = inventoryData.find(i => i.id == id);
+    if (!item) return;
+    const existing = cartItems.find(i => i.id == id);
+    if (existing) {
+        const newQty = existing.quantity + (qty || 1);
+        if (newQty <= item.qty_physical_count) existing.quantity = newQty;
+        else alert('Max available: ' + item.qty_physical_count);
     } else {
-        if (q > it.qty_physical_count) {
-            alert('Max available: ' + it.qty_physical_count);
-            return;
-        }
         cartItems.push({
-            id: it.id,
-            name: it.article_name,
-            property_no: it.property_no,
-            uom: it.uom,
-            available_qty: it.qty_physical_count,
-            unit_value: it.unit_value,
-            quantity: q
+            id: item.id, name: item.article_name, property_no: item.property_no,
+            big_unit: item.big_unit, small_unit: item.small_unit,
+            available_qty: item.qty_physical_count, unit_value: item.unit_value, quantity: (qty || 1)
         });
     }
     updateCartDisplay();
-    // Clear search results after adding
-    document.getElementById('property_search_result').innerHTML = '';
-    document.getElementById('property_search_result').classList.remove('show');
+    clearPropertySearch();
     document.getElementById('barcode_result').innerHTML = '';
     document.getElementById('barcode_result').classList.remove('show');
 }
@@ -1880,405 +2213,334 @@ function removeFromCart(id) {
     updateCartDisplay();
 }
 
-function updateCartQuantity(id, nq) {
-    const ei = cartItems.findIndex(i => i.id == id);
-    if (ei === -1) return;
-    const it = inventoryData[id];
-    nq = parseInt(nq);
-    if (isNaN(nq) || nq < 1) nq = 1;
-    if (nq > it.qty_physical_count) nq = it.qty_physical_count;
-    cartItems[ei].quantity = nq;
-    updateCartDisplay();
+function updateCartQuantity(id, newQty) {
+    const item = cartItems.find(i => i.id == id);
+    if (item) {
+        newQty = parseInt(newQty) || 1;
+        if (newQty > item.available_qty) newQty = item.available_qty;
+        item.quantity = newQty;
+        updateCartDisplay();
+    }
 }
 
 function updateCartDisplay() {
-    const c = document.getElementById('selectedItemsList');
-    const em = document.getElementById('emptyCartMessage');
-    const sc = document.getElementById('selectedCount');
-    const cs = document.getElementById('cartSummary');
+    const container = document.getElementById('selectedItemsList');
+    const emptyMsg = document.getElementById('emptyCartMessage');
+    const countSpan = document.getElementById('selectedCount');
+    const summary = document.getElementById('cartSummary');
     
     if (cartItems.length === 0) {
-        if (em) em.style.display = 'block';
-        if (c) c.innerHTML = '';
-        if (sc) sc.innerText = '0';
-        if (cs) cs.style.display = 'none';
+        emptyMsg.style.display = 'block';
+        container.innerHTML = '';
+        countSpan.innerText = '0';
+        summary.style.display = 'none';
         return;
     }
-    
-    if (em) em.style.display = 'none';
-    let h = '';
-    let ti = 0;
-    let tv = 0;
-    
+    emptyMsg.style.display = 'none';
+    let html = '', totalQty = 0, totalValue = 0;
     cartItems.forEach(item => {
-        const it = item.unit_value * item.quantity;
-        ti += item.quantity;
-        tv += it;
-        h += `
-            <div class="selected-item-card">
-                <div class="selected-item-info">
-                    <div class="item-name">${escapeHtml(item.name)}</div>
-                    <div class="item-property">Property: ${escapeHtml(item.property_no || 'N/A')}</div>
-                    <div class="item-property">${formatCurrency(item.unit_value)} each</div>
-                </div>
-                <div class="selected-item-qty">
-                    <input type="number" value="${item.quantity}" min="1" max="${item.available_qty}" onchange="updateCartQuantity(${item.id}, this.value)">
-                    <span>${escapeHtml(item.uom || 'pcs')}</span>
-                    <span style="font-weight:bold">${formatCurrency(it)}</span>
-                </div>
-                <button class="btn-remove-item" onclick="removeFromCart(${item.id})"><i class="fas fa-trash"></i></button>
+        const unitDisplay = item.big_unit ? item.big_unit : (item.small_unit || 'pcs');
+        const itemTotal = item.unit_value * item.quantity;
+        totalQty += item.quantity;
+        totalValue += itemTotal;
+        html += `<div class="selected-item-card">
+            <div class="selected-item-info">
+                <div class="item-name">${escapeHtml(item.name)}</div>
+                <div class="item-property">Property: ${escapeHtml(item.property_no || 'N/A')}</div>
             </div>
-        `;
+            <div class="selected-item-qty">
+                <input type="number" value="${item.quantity}" min="1" max="${item.available_qty}" onchange="updateCartQuantity(${item.id}, this.value)">
+                <span>${escapeHtml(unitDisplay)}</span>
+                <span>₱${itemTotal.toFixed(2)}</span>
+            </div>
+            <button class="btn-remove-item" onclick="removeFromCart(${item.id})"><i class="fas fa-trash"></i></button>
+        </div>`;
     });
-    
-    if (c) c.innerHTML = h;
-    if (sc) sc.innerText = cartItems.length;
-    if (cs) {
-        cs.style.display = 'block';
-        cs.innerHTML = `<strong>Total Items: ${ti}</strong> | <strong>Total Value: ${formatCurrency(tv)}</strong>`;
-    }
+    container.innerHTML = html;
+    countSpan.innerText = cartItems.length;
+    summary.style.display = 'block';
+    summary.innerHTML = `<strong>Total Items: ${totalQty}</strong> | <strong>Total Value: ₱${totalValue.toFixed(2)}</strong>`;
     updateFormInputs();
 }
 
 function updateFormInputs() {
     document.querySelectorAll('input[name="inventory_ids[]"]').forEach(e => e.remove());
     document.querySelectorAll('input[name="quantities[]"]').forEach(e => e.remove());
-    
-    const f = document.getElementById('issueForm');
-    cartItems.forEach(i => {
+    const form = document.getElementById('issueForm');
+    cartItems.forEach(item => {
         let ii = document.createElement('input');
-        ii.type = 'hidden';
-        ii.name = 'inventory_ids[]';
-        ii.value = i.id;
-        f.appendChild(ii);
-        
+        ii.type = 'hidden'; ii.name = 'inventory_ids[]'; ii.value = item.id;
+        form.appendChild(ii);
         let qi = document.createElement('input');
-        qi.type = 'hidden';
-        qi.name = 'quantities[]';
-        qi.value = i.quantity;
-        f.appendChild(qi);
+        qi.type = 'hidden'; qi.name = 'quantities[]'; qi.value = item.quantity;
+        form.appendChild(qi);
     });
 }
+
+// ============================================
+// CONFIRMATION FUNCTIONS
+// ============================================
+
+function showConfirmModal() {
+    if (!selectedEmployeeId) { alert('Please select an employee'); return; }
+    const condition = document.getElementById('condition').value;
+    if (!condition) { alert('Please select a condition'); return; }
+    if (cartItems.length === 0) { alert('Please add items to issue'); return; }
+    document.getElementById('confirmModalMessage').innerHTML = `Issue ${cartItems.length} item(s) to ${document.getElementById('selected_employee_name').innerHTML}?<br><small>Condition: ${condition}</small>`;
+    document.getElementById('confirmModal').classList.add('show');
+}
+
+function closeConfirmModal() { document.getElementById('confirmModal').classList.remove('show'); }
+function submitForm() { closeConfirmModal(); document.getElementById('issueForm').submit(); }
+
+function confirmReissueSubmit() {
+    if (!selectedReissueEmployeeId) { alert('Please select an employee'); return; }
+    const condition = document.getElementById('reissue_condition').value;
+    if (!condition) { alert('Please select a condition'); return; }
+    document.getElementById('confirmReissueModalMessage').innerHTML = `Reissue to ${document.getElementById('selected_reissue_employee_name').innerHTML}?<br><small>Condition: ${condition}</small>`;
+    document.getElementById('confirmReissueModal').classList.add('show');
+}
+
+function closeConfirmReissueModal() { document.getElementById('confirmReissueModal').classList.remove('show'); }
+function submitReissueForm() { closeConfirmReissueModal(); document.getElementById('reissueForm').submit(); }
+
+function confirmReissueReturned(event, element) {
+    event.preventDefault();
+    if (confirm('Reissue this returned item?')) window.location.href = element.getAttribute('href');
+    return false;
+}
+
+// ============================================
+// RETURN MODAL FUNCTIONS
+// ============================================
+
+function openReturnModal(issuanceId, itemName) {
+    currentReturnId = issuanceId;
+    document.getElementById('return_item_name').innerHTML = itemName;
+    document.getElementById('return_condition').value = '';
+    document.getElementById('returnModal').classList.add('show');
+}
+
+function closeReturnModal() { document.getElementById('returnModal').classList.remove('show'); }
+
+function submitReturn() {
+    const condition = document.getElementById('return_condition').value;
+    if (!condition) { alert('Please select a condition'); return; }
+    fetch('', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'action=return_item&issuance_id=' + currentReturnId + '&condition_on_return=' + encodeURIComponent(condition)
+    })
+    .then(response => response.json())
+    .then(data => { alert(data.message); if(data.success) location.reload(); })
+    .catch(error => alert('Error: ' + error));
+    closeReturnModal();
+}
+
+// ============================================
+// VIEW MODAL FUNCTIONS
+// ============================================
 
 function viewIssuanceDetails(id) {
-    let m = document.getElementById('dynamic-modal');
-    if (!m) {
-        m = document.createElement('div');
-        m.id = 'dynamic-modal';
-        m.style.cssText = 'display:none;position:fixed;z-index:1000;left:0;top:0;width:100%;height:100%;background:rgba(0,0,0,.5)';
-        m.innerHTML = `<div style="background:#fff;margin:10% auto;width:500px;max-width:90%;border-radius:12px"><div style="padding:20px;border-bottom:2px solid #FFD8E0;display:flex;justify-content:space-between"><h2>Issuance Details</h2><span style="font-size:28px;cursor:pointer" onclick="document.getElementById('dynamic-modal').style.display='none'">&times;</span></div><div style="padding:20px" id="modal-body">Loading...</div></div>`;
-        document.body.appendChild(m);
-    }
-    m.style.display = 'block';
-    document.getElementById('modal-body').innerHTML = '<div style="text-align:center"><i class="fas fa-spinner fa-spin"></i> Loading...</div>';
+    const modal = document.getElementById('viewModal');
+    const body = document.getElementById('viewModalBody');
+    modal.classList.add('show');
+    body.innerHTML = '<div style="text-align:center;padding:20px"><i class="fas fa-spinner fa-spin"></i> Loading...</div>';
     
-    fetch('<?php echo SITE_URL; ?>/api/get_issuance_details.php?id=' + id)
-        .then(r => r.json())
-        .then(d => {
-            if (d.error) {
-                document.getElementById('modal-body').innerHTML = '<div style="color:red">' + d.error + '</div>';
-                return;
+    fetch('?ajax=get_issuance&id=' + id)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const item = data.data;
+                const unitDisplay = item.big_unit ? item.big_unit : (item.small_unit || 'pcs');
+                const conditionClass = 'condition-' + (item.condition_on_issue || 'Serviceable').replace(/ /g, '');
+                const statusClass = 'issue-status-' + item.status;
+                
+                body.innerHTML = `
+                    <div class="view-detail-row"><div class="view-detail-label">Item Name:</div><div class="view-detail-value"><strong>${escapeHtml(item.article_name)}</strong></div></div>
+                    <div class="view-detail-row"><div class="view-detail-label">Property No.:</div><div class="view-detail-value"><code>${escapeHtml(item.property_no)}</code></div></div>
+                    <div class="view-detail-row"><div class="view-detail-label">Description:</div><div class="view-detail-value">${escapeHtml(item.description || 'N/A')}</div></div>
+                    <div class="view-detail-row"><div class="view-detail-label">Quantity:</div><div class="view-detail-value">${item.quantity_issued} ${escapeHtml(unitDisplay)}</div></div>
+                    <div class="view-detail-row"><div class="view-detail-label">Unit Value:</div><div class="view-detail-value">₱${parseFloat(item.unit_value).toFixed(2)}</div></div>
+                    <div class="view-detail-row"><div class="view-detail-label">Total Value:</div><div class="view-detail-value">₱${(item.quantity_issued * item.unit_value).toFixed(2)}</div></div>
+                    <div class="view-detail-row"><div class="view-detail-label">Issued To:</div><div class="view-detail-value">${escapeHtml(item.issued_to_name)}${item.issued_to_position ? ' - ' + escapeHtml(item.issued_to_position) : ''}</div></div>
+                    <div class="view-detail-row"><div class="view-detail-label">Condition:</div><div class="view-detail-value"><span class="condition-badge ${conditionClass}">${escapeHtml(item.condition_on_issue || 'Serviceable')}</span></div></div>
+                    <div class="view-detail-row"><div class="view-detail-label">Issued By:</div><div class="view-detail-value">${escapeHtml(item.issued_by_name)}</div></div>
+                    <div class="view-detail-row"><div class="view-detail-label">Issued Date:</div><div class="view-detail-value">${new Date(item.issued_date).toLocaleString()}</div></div>
+                    <div class="view-detail-row"><div class="view-detail-label">Signatory:</div><div class="view-detail-value">${escapeHtml(item.signatory_name || 'N/A')}</div></div>
+                    <div class="view-detail-row"><div class="view-detail-label">Status:</div><div class="view-detail-value"><span class="issue-status-badge ${statusClass}">${escapeHtml(item.status)}</span></div></div>
+                    ${item.actual_return ? `<div class="view-detail-row"><div class="view-detail-label">Return Date:</div><div class="view-detail-value">${new Date(item.actual_return).toLocaleString()}</div></div>` : ''}
+                    ${item.condition_on_return ? `<div class="view-detail-row"><div class="view-detail-label">Condition on Return:</div><div class="view-detail-value">${escapeHtml(item.condition_on_return)}</div></div>` : ''}
+                    ${item.reissued_from_name ? `<div class="view-detail-row"><div class="view-detail-label">Reissued From:</div><div class="view-detail-value">${escapeHtml(item.reissued_from_name)}</div></div>` : ''}
+                    ${item.reissued_to_name ? `<div class="view-detail-row"><div class="view-detail-label">Reissued To:</div><div class="view-detail-value">${escapeHtml(item.reissued_to_name)}</div></div>` : ''}
+                    ${item.remarks ? `<div class="view-detail-row"><div class="view-detail-label">Remarks:</div><div class="view-detail-value">${escapeHtml(item.remarks)}</div></div>` : ''}
+                `;
+            } else {
+                body.innerHTML = '<div style="color:red;text-align:center;padding:20px">Error loading details</div>';
             }
-            document.getElementById('modal-body').innerHTML = `
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-                    <div><strong>Item:</strong><br>${escapeHtml(d.article_name || 'N/A')}</div>
-                    <div><strong>Property No.:</strong><br><code>${escapeHtml(d.property_no || 'N/A')}</code></div>
-                    <div><strong>Issued To:</strong><br>${escapeHtml(d.issued_to_name || 'N/A')}</div>
-                    <div><strong>Department:</strong><br>${escapeHtml(d.department_name || 'N/A')}</div>
-                    <div><strong>Dept Code:</strong><br><span class="user-location-badge">${escapeHtml(d.department_code || 'N/A')}</span></div>
-                    <div><strong>Quantity:</strong><br>${d.quantity_issued} ${escapeHtml(d.uom || 'pcs')}</div>
-                    <div><strong>Purpose:</strong><br>${escapeHtml(d.purpose || 'N/A')}</div>
-                    <div><strong>Condition:</strong><br>${escapeHtml(d.condition_on_issue || 'N/A')}</div>
-                    <div><strong>Issued By:</strong><br>${escapeHtml(d.issued_by_name || 'N/A')}</div>
-                    <div><strong>Issued Date:</strong><br>${new Date(d.issued_date).toLocaleDateString()}</div>
-                    <div><strong>Remarks:</strong><br>${escapeHtml(d.remarks || '—')}</div>
-                    <div><strong>Return Date:</strong><br>${d.actual_return ? new Date(d.actual_return).toLocaleDateString() : '—'}</div>
-                </div>
-            `;
         })
         .catch(() => {
-            document.getElementById('modal-body').innerHTML = '<div style="color:red">Error loading</div>';
+            body.innerHTML = '<div style="color:red;text-align:center;padding:20px">Error loading details</div>';
         });
 }
 
-function processHardwareBarcode(barcode) {
-    const st = barcode.toLowerCase().trim();
-    let fi = null;
-    for (let id in inventoryData) {
-        const it = inventoryData[id];
-        const be = (it.barcode_data || '').toLowerCase().trim();
-        const bn = be.replace(/[\s\-\.]/g, '');
-        const sn = st.replace(/[\s\-\.]/g, '');
-        const al = (it.article_name || '').toLowerCase();
-        const pl = (it.property_no || '').toLowerCase();
-        if (bn === sn || (be && be === st) || (be && be.includes(st)) || al.includes(st) || pl.includes(st)) {
-            fi = it;
-            break;
-        }
-    }
+function closeViewModal() {
+    document.getElementById('viewModal').classList.remove('show');
+}
+
+// ============================================
+// BARCODE MODAL FUNCTIONS - FIXED
+// ============================================
+
+function showBarcodeModal(barcode, itemName) {
+    document.getElementById('barcodeModalTitle').innerHTML = itemName;
+    document.getElementById('barcodeModalImage').innerHTML = `<img src="<?php echo SITE_URL; ?>/admin/barcode_generator_issued.php?code=${encodeURIComponent(barcode)}&width=300&height=80&t=${Date.now()}" style="border:1px solid #ddd;padding:10px;border-radius:8px">`;
+    document.getElementById('barcodeModalValue').innerHTML = barcode;
+    document.getElementById('barcodeModal').classList.add('show');
+}
+
+function closeBarcodeModal() {
+    document.getElementById('barcodeModal').classList.remove('show');
+}
+
+function printBarcodeFromModal() {
+    const barcode = document.getElementById('barcodeModalValue').innerText;
+    const itemName = document.getElementById('barcodeModalTitle').innerText;
     
-    if (fi) {
-        const ei = hardwareScannedItems.findIndex(i => i.id == fi.id);
-        if (ei !== -1) {
-            const c = hardwareScannedItems[ei];
-            const m = parseFloat(fi.qty_physical_count || 0);
-            if (c.quantity < m) {
-                c.quantity++;
-                showScanSuccess(fi.article_name, c.quantity);
-            } else {
-                showScanWarning(fi.article_name, m);
-            }
-        } else {
-            const a = parseFloat(fi.qty_physical_count || 0);
-            if (a <= 0) {
-                showScanWarning(fi.article_name, 0);
-                return;
-            }
-            hardwareScannedItems.push({
-                id: fi.id,
-                name: fi.article_name,
-                property_no: fi.property_no,
-                barcode_data: fi.barcode_data,
-                uom: fi.uom || 'pcs',
-                available_qty: a,
-                unit_value: fi.unit_value || 0,
-                quantity: 1
-            });
-            showScanSuccess(fi.article_name, 1);
-        }
-        updateHardwareScannedItemsDisplay();
-    } else {
-        showScanError(barcode);
-    }
+    // Create a print window with the barcode
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Print Barcode</title>
+            <style>
+                * { margin: 0; padding: 0; box-sizing: border-box; }
+                body { 
+                    font-family: 'Segoe UI', Arial, sans-serif; 
+                    text-align: center; 
+                    padding: 40px; 
+                    background: white;
+                }
+                .barcode-container { 
+                    max-width: 500px; 
+                    margin: 0 auto; 
+                    padding: 30px;
+                    border: 1px dashed #6B8CFF;
+                    border-radius: 16px;
+                }
+                .barcode-img { 
+                    max-width: 100%; 
+                    height: auto; 
+                    margin: 20px 0;
+                }
+                .item-name { 
+                    font-size: 18px; 
+                    font-weight: bold; 
+                    color: #2C3E50;
+                    margin-bottom: 10px;
+                }
+                .barcode-number { 
+                    font-family: monospace; 
+                    font-size: 14px; 
+                    margin-top: 15px; 
+                    color: #6B8CFF;
+                    word-break: break-all;
+                }
+                .buttons {
+                    margin-top: 30px;
+                    display: flex;
+                    gap: 15px;
+                    justify-content: center;
+                }
+                button {
+                    padding: 10px 20px;
+                    border: none;
+                    border-radius: 8px;
+                    cursor: pointer;
+                    font-size: 14px;
+                }
+                .btn-print {
+                    background: #6B8CFF;
+                    color: white;
+                }
+                .btn-close {
+                    background: #6c757d;
+                    color: white;
+                }
+                @media print {
+                    .buttons { display: none; }
+                    body { padding: 20px; }
+                    .barcode-container { border: none; padding: 0; }
+                }
+            </style>
+        </head>
+        <body>
+            <div class="barcode-container">
+                <div class="item-name">${escapeHtml(itemName)}</div>
+                <img src="<?php echo SITE_URL; ?>/admin/barcode_generator_issued.php?code=${encodeURIComponent(barcode)}&width=400&height=100&t=${Date.now()}" class="barcode-img" alt="Barcode">
+                <div class="barcode-number">${escapeHtml(barcode)}</div>
+            </div>
+            <div class="buttons">
+                <button class="btn-print" onclick="window.print()">🖨️ Print</button>
+                <button class="btn-close" onclick="window.close()">Close</button>
+            </div>
+            <script>
+                // Auto print when window loads
+                window.onload = function() {
+                    setTimeout(function() {
+                        window.print();
+                    }, 500);
+                }
+            <\/script>
+        </body>
+        </html>
+    `);
+    printWindow.document.close();
 }
 
-function showScanSuccess(n, q) {
-    const i = document.getElementById('hardwareScannerInput');
-    if (!i) return;
-    i.style.backgroundColor = '#C8E6C9';
-    i.style.borderColor = '#4CAF50';
-    i.placeholder = '✓ Added: ' + n + ' (Qty: ' + q + ')';
-    setTimeout(() => {
-        i.style.backgroundColor = '';
-        i.style.borderColor = '#2196F3';
-        i.placeholder = 'Place cursor here and scan...';
-    }, 1500);
+// ============================================
+// OTHER FUNCTIONS
+// ============================================
+
+function escapeHtml(s) { 
+    if (!s) return ''; 
+    return String(s).replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m])); 
 }
 
-function showScanWarning(n, m) {
-    const i = document.getElementById('hardwareScannerInput');
-    if (!i) return;
-    i.style.backgroundColor = '#FFF3E0';
-    i.style.borderColor = '#FF9800';
-    i.placeholder = m > 0 ? '⚠ Max: ' + n + ' (' + m + ')' : '⚠ Out of stock: ' + n;
-    setTimeout(() => {
-        i.style.backgroundColor = '';
-        i.style.borderColor = '#2196F3';
-        i.placeholder = 'Place cursor here and scan...';
-    }, 2000);
-}
-
-function showScanError(b) {
-    const i = document.getElementById('hardwareScannerInput');
-    if (!i) return;
-    i.style.backgroundColor = '#FFCDD2';
-    i.style.borderColor = '#f44336';
-    i.placeholder = '✗ Not found: ' + b;
-    setTimeout(() => {
-        i.style.backgroundColor = '';
-        i.style.borderColor = '#2196F3';
-        i.placeholder = 'Place cursor here and scan...';
-    }, 2000);
-}
-
-function updateHardwareScannedItemsDisplay() {
-    const c = document.getElementById('hardwareScannedItemsContainer');
-    const ab = document.getElementById('addToCartBtn');
-    const cb = document.getElementById('clearScansBtn');
-    if (!c) return;
-    
-    if (hardwareScannedItems.length === 0) {
-        c.innerHTML = '<div class="empty-scan-state"><i class="fas fa-box"></i><p>No items scanned yet</p></div>';
-        if (ab) ab.disabled = true;
-        if (cb) cb.style.display = 'none';
-    } else {
-        let h = '';
-        let ti = 0;
-        let tv = 0;
-        hardwareScannedItems.forEach((item, idx) => {
-            const it = item.quantity * item.unit_value;
-            ti += item.quantity;
-            tv += it;
-            h += `
-                <div class="scanned-item-card success">
-                    <div class="scanned-item-info">
-                        <div class="scanned-item-name"><i class="fas fa-check-circle"></i> ${escapeHtml(item.name)}</div>
-                        <div class="scanned-item-details">Property: ${escapeHtml(item.property_no || 'N/A')} | Stock: ${item.available_qty} ${escapeHtml(item.uom || 'pcs')} | Value: ${formatCurrency(item.unit_value)}</div>
-                    </div>
-                    <div class="scanned-item-qty-controls">
-                        <button class="qty-btn" onclick="decreaseHardwareQty(${idx})">−</button>
-                        <input type="number" class="qty-input" value="${item.quantity}" min="1" max="${item.available_qty}" onchange="updateHardwareQty(${idx},this.value)">
-                        <button class="qty-btn" onclick="increaseHardwareQty(${idx})">+</button>
-                        <button class="remove-scanned-item" onclick="removeHardwareScannedItem(${idx})"><i class="fas fa-trash"></i> Remove</button>
-                    </div>
-                </div>
-            `;
-        });
-        h += `<div style="margin-top:15px;padding:12px;background:#F5F5F5;border-radius:8px;text-align:right;font-weight:bold">Items: ${hardwareScannedItems.length} | Total Qty: ${ti} | Total Value: ${formatCurrency(tv)}</div>`;
-        c.innerHTML = h;
-        if (ab) ab.disabled = false;
-        if (cb) cb.style.display = 'inline-block';
-    }
-}
-
-function increaseHardwareQty(idx) {
-    if (idx < hardwareScannedItems.length) {
-        const it = hardwareScannedItems[idx];
-        if (it.quantity < it.available_qty) {
-            it.quantity++;
-            updateHardwareScannedItemsDisplay();
-        } else {
-            showScanWarning(it.name, it.available_qty);
-        }
-    }
-}
-
-function decreaseHardwareQty(idx) {
-    if (idx < hardwareScannedItems.length && hardwareScannedItems[idx].quantity > 1) {
-        hardwareScannedItems[idx].quantity--;
-        updateHardwareScannedItemsDisplay();
-    }
-}
-
-function updateHardwareQty(idx, v) {
-    if (idx < hardwareScannedItems.length) {
-        const it = hardwareScannedItems[idx];
-        const nq = parseInt(v);
-        it.quantity = isNaN(nq) || nq < 1 ? 1 : (nq > it.available_qty ? it.available_qty : nq);
-        updateHardwareScannedItemsDisplay();
-    }
-}
-
-function removeHardwareScannedItem(idx) {
-    if (confirm('Remove "' + hardwareScannedItems[idx].name + '"?')) {
-        hardwareScannedItems.splice(idx, 1);
-        updateHardwareScannedItemsDisplay();
-    }
-}
-
-function clearHardwareScans() {
-    if (hardwareScannedItems.length > 0 && confirm('Clear all ' + hardwareScannedItems.length + ' item(s)?')) {
-        hardwareScannedItems = [];
-        updateHardwareScannedItemsDisplay();
-    }
-}
-
-function addHardwareScannedToCart() {
-    if (hardwareScannedItems.length === 0) {
-        alert('No items to add');
-        return;
-    }
-    
-    let ac = 0, sk = 0;
-    hardwareScannedItems.forEach(item => {
-        const ec = cartItems.find(i => i.id == item.id);
-        if (ec) {
-            const nq = Math.min(ec.quantity + item.quantity, item.available_qty);
-            if (nq !== ec.quantity) {
-                ec.quantity = nq;
-                ac++;
-            } else {
-                sk++;
-            }
-        } else {
-            addToCart(item.id, item.quantity);
-            if (cartItems.find(i => i.id == item.id)) ac++;
-            else sk++;
-        }
-    });
-    
-    closeHardwareScannerModal();
-    let msg = ac + ' item(s) added to cart.';
-    if (sk > 0) msg += '\n' + sk + ' item(s) skipped (max stock reached).';
-    alert(msg);
-    
-    const sb = document.getElementById('submitBtn');
-    if (sb) {
-        sb.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        sb.style.boxShadow = '0 0 20px rgba(248,176,192,.8)';
-        setTimeout(() => sb.style.boxShadow = '', 2000);
-    }
-}
+// ============================================
+// EVENT LISTENERS
+// ============================================
 
 document.addEventListener('DOMContentLoaded', function() {
-    document.getElementById('barcode_input')?.addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            searchBarcode();
-        }
+    document.getElementById('property_search_input')?.addEventListener('keypress', e => { 
+        if (e.key === 'Enter') { e.preventDefault(); searchByProperty(); } 
     });
     
-    document.getElementById('property_search_input')?.addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            searchByProperty();
-        }
+    document.getElementById('barcode_input')?.addEventListener('keypress', e => { 
+        if (e.key === 'Enter') { e.preventDefault(); searchBarcode(); } 
     });
     
-    document.getElementById('modal_barcode_input')?.addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            performBarcodeSearch(this.value.trim(), 'modal_barcode_input', 'modal_barcode_result');
-        }
+    document.addEventListener('keydown', e => { 
+        if (e.key === 'Escape') { 
+            closeReturnModal();
+            closeViewModal();
+            closeBarcodeModal();
+        } 
     });
     
-    const hsi = document.getElementById('hardwareScannerInput');
-    if (hsi) {
-        hsi.addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                const b = this.value.trim();
-                if (b) {
-                    processHardwareBarcode(b);
-                    this.value = '';
-                    this.focus();
-                }
-            }
-        });
-        hsi.addEventListener('paste', function() {
-            setTimeout(() => {
-                const v = this.value.trim();
-                if (v && v.length > 2) {
-                    const cb = v.replace(/\n/g, '').trim();
-                    if (cb !== v) {
-                        processHardwareBarcode(cb);
-                        this.value = '';
-                        this.focus();
-                    }
-                }
-            }, 50);
-        });
-    }
-    
-    document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') {
-            const hm = document.getElementById('hardwareScannerModal');
-            if (hm && hm.classList.contains('show')) closeHardwareScannerModal();
-            const sm = document.getElementById('scannerModal');
-            if (sm && sm.classList.contains('show')) closeScannerModal();
-        }
+    document.getElementById('viewModal')?.addEventListener('click', function(e) {
+        if (e.target === this) closeViewModal();
+    });
+    document.getElementById('barcodeModal')?.addEventListener('click', function(e) {
+        if (e.target === this) closeBarcodeModal();
+    });
+    document.getElementById('returnModal')?.addEventListener('click', function(e) {
+        if (e.target === this) closeReturnModal();
     });
     
-    const hm = document.getElementById('hardwareScannerModal');
-    if (hm) {
-        hm.addEventListener('click', function(e) {
-            if (e.target === hm) closeHardwareScannerModal();
-        });
-    }
-    
-    document.getElementById('barcode_input')?.focus();
-    resetSubmitForm();
-    window.searchEmployees = searchEmployees;
+    searchEmployees();
+    <?php if($reissue_item): ?>searchReissueEmployees();<?php endif; ?>
 });
 </script>
 

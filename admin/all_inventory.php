@@ -20,7 +20,7 @@ require_once $root_path . '/vendor/autoload.php';
 use Picqer\Barcode\BarcodeGeneratorPNG as BarcodeGen;
 
 // Require admin role
-requireRole('admin' || 'superadmin' || 'supply');
+requireRole('admin');
 
 // Generate CSRF token if not exists
 if (empty($_SESSION['csrf_token'])) {
@@ -48,6 +48,40 @@ $sections = $conn->query("SELECT s.*, d.name as department_name FROM sections s 
 // Get distinct categories, conditions, locations for filter dropdowns
 $categories = $conn->query("SELECT DISTINCT category FROM inventory WHERE category IS NOT NULL AND category != '' ORDER BY category");
 $conditions = $conn->query("SELECT DISTINCT condition_text FROM inventory WHERE condition_text IS NOT NULL AND condition_text != '' ORDER BY condition_text");
+
+// ============================================
+// HANDLE DELETE
+// ============================================
+if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
+    if (!isset($_GET['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_GET['csrf_token'])) {
+        die('Invalid CSRF token');
+    }
+    
+    $id = (int)$_GET['delete'];
+    
+    // Check if item is issued
+    $check_stmt = $conn->prepare("SELECT id FROM equipment_issuance WHERE inventory_id = ? AND status = 'issued' LIMIT 1");
+    $check_stmt->bind_param("i", $id);
+    $check_stmt->execute();
+    $check_result = $check_stmt->get_result();
+    
+    if ($check_result->num_rows > 0) {
+        $_SESSION['error'] = "Cannot delete item that is currently issued";
+    } else {
+        $stmt = $conn->prepare("DELETE FROM inventory WHERE id = ?");
+        $stmt->bind_param("i", $id);
+        if ($stmt->execute() && $stmt->affected_rows > 0) {
+            $_SESSION['success'] = "Inventory item deleted successfully";
+        } else {
+            $_SESSION['error'] = "Error deleting item or item not found";
+        }
+        $stmt->close();
+    }
+    $check_stmt->close();
+    
+    header('Location: ' . SITE_URL . '/admin/all_inventory.php');
+    exit();
+}
 
 // ============================================
 // AJAX HANDLERS
@@ -94,14 +128,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['edit_inventory'])) {
     $equipment_id = !empty($_POST['equipment_id']) ? (int)$_POST['equipment_id'] : null;
     $section_id = !empty($_POST['section_id']) ? (int)$_POST['section_id'] : null;
     $qty_physical_count = (int)$_POST['qty_physical_count'];
-    $uom = sanitize($_POST['uom']);
+    $big_unit = sanitize($_POST['big_unit'] ?? '');
+    $big_quantity = floatval($_POST['big_quantity'] ?? 0);
+    $small_unit = sanitize($_POST['small_unit'] ?? '');
+    $pieces_per_big_unit = floatval($_POST['pieces_per_big_unit'] ?? 1);
     $unit_value = (float)$_POST['unit_value'];
     $condition_text = sanitize($_POST['condition_text']);
     $remarks = sanitize($_POST['remarks']);
     $fund_cluster = sanitize($_POST['fund_cluster'] ?? '');
     
-    $stmt = $conn->prepare("UPDATE inventory SET article_name = ?, description = ?, category = ?, type_equipment_id = ?, type_equipment = ?, equipment_id = ?, section_id = ?, qty_physical_count = ?, uom = ?, unit_value = ?, condition_text = ?, remarks = ?, fund_cluster = ? WHERE id = ?");
-    $stmt->bind_param("sssisiiissdsssi", $article_name, $description, $category, $type_equipment_id, $type_equipment_name, $equipment_id, $section_id, $qty_physical_count, $uom, $unit_value, $condition_text, $remarks, $fund_cluster, $id);
+    $stmt = $conn->prepare("UPDATE inventory SET article_name = ?, description = ?, category = ?, type_equipment_id = ?, type_equipment = ?, equipment_id = ?, section_id = ?, qty_physical_count = ?, big_unit = ?, big_quantity = ?, small_unit = ?, pieces_per_big_unit = ?, unit_value = ?, condition_text = ?, remarks = ?, fund_cluster = ? WHERE id = ?");
+    $stmt->bind_param("sssisiiidddssdsssi", $article_name, $description, $category, $type_equipment_id, $type_equipment_name, $equipment_id, $section_id, $qty_physical_count, $big_unit, $big_quantity, $small_unit, $pieces_per_big_unit, $unit_value, $condition_text, $remarks, $fund_cluster, $id);
     
     if ($stmt->execute()) {
         $_SESSION['success'] = "Inventory item updated successfully";
@@ -123,10 +160,8 @@ if (isset($_GET['get_multiple_items'])) {
     }
     
     // Fix: Remove the last dash and number suffix correctly
-    // Example: PROP-001-01 becomes PROP-001
     $base_property = preg_replace('/-\d+$/', '', $property_no);
     
-    // If no dash pattern found, use the original property number
     if ($base_property == $property_no) {
         $base_property = $property_no;
     }
@@ -143,8 +178,11 @@ if (isset($_GET['get_multiple_items'])) {
             'property_no' => $row['property_no'], 
             'article_name' => $row['article_name'], 
             'barcode_data' => $row['barcode_data'], 
-            'quantity' => $row['qty_physical_count'], 
-            'uom' => $row['uom'], 
+            'quantity' => $row['qty_physical_count'],
+            'big_unit' => $row['big_unit'],
+            'big_quantity' => $row['big_quantity'],
+            'small_unit' => $row['small_unit'],
+            'pieces_per_big_unit' => $row['pieces_per_big_unit'],
             'unit_value' => $row['unit_value']
         ];
     }
@@ -177,7 +215,6 @@ if (isset($_GET['generate_barcode'])) {
 
 $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
 $per_page = 20;
-$edit_id = isset($_GET['edit']) ? (int)$_GET['edit'] : 0;
 $search = isset($_GET['search']) ? sanitize($_GET['search']) : '';
 $low_stock_filter = isset($_GET['low_stock']) && $_GET['low_stock'] == 1;
 $filter_category = isset($_GET['filter_category']) ? sanitize($_GET['filter_category']) : '';
@@ -263,6 +300,15 @@ $result = $stmt->get_result();
 
 $inventory_items = [];
 while ($row = $result->fetch_assoc()) {
+    // Format display values
+    $row['big_unit_display'] = !empty($row['big_quantity']) && !empty($row['big_unit']) && $row['big_unit'] != '0'
+        ? number_format($row['big_quantity'], 0) . ' ' . $row['big_unit'] 
+        : '—';
+    
+    $row['small_unit_display'] = !empty($row['pieces_per_big_unit']) && !empty($row['small_unit']) && $row['small_unit'] != '0'
+        ? number_format($row['pieces_per_big_unit'], 0) . ' ' . $row['small_unit'] 
+        : (!empty($row['small_unit']) && $row['small_unit'] != '0' ? $row['small_unit'] : '—');
+    
     $inventory_items[] = $row;
 }
 $stmt->close();
@@ -424,7 +470,7 @@ body {
     margin: 0;
 }
 
-/* SIMPLE FILTER BAR - NO BACKGROUND */
+/* Filter Bar */
 .filter-bar-simple {
     margin-bottom: 20px;
     padding: 0;
@@ -654,7 +700,7 @@ body {
     width: 100%;
     border-collapse: collapse;
     font-size: 13px;
-    min-width: 1100px;
+    min-width: 1200px;
 }
 
 .inventory-table thead {
@@ -798,7 +844,7 @@ body {
 .condition-good { background: #DBEAFE; color: #2563EB; }
 .condition-fair { background: #FEF3C7; color: #D97706; }
 .condition-poor { background: #FEE2E2; color: #DC2626; }
-.condition-serviceable, .condition-servicable { background: #D1FAE5; color: #059669; }
+.condition-serviceable { background: #D1FAE5; color: #059669; }
 
 .status-badge {
     display: inline-block;
@@ -853,10 +899,7 @@ body {
     filter: brightness(0.95);
 }
 
-/* ============================================
-   MODAL STYLES - MATCHING SETTINGS.PHP
-   ============================================ */
-
+/* Modal Styles */
 .modal-overlay {
     display: none;
     position: fixed;
@@ -881,7 +924,6 @@ body {
     animation: modalSlideIn 0.3s;
 }
 
-/* Custom Delete Confirmation Modal */
 .delete-modal-overlay {
     display: none;
     position: fixed;
@@ -1093,6 +1135,28 @@ body {
 }
 
 /* Form Styles */
+.form-section {
+    background: var(--white);
+    padding: 20px;
+    margin-bottom: 25px;
+    border-radius: 10px;
+    border-left: 4px solid var(--primary);
+    box-shadow: 0 2px 8px rgba(107, 140, 255, 0.1);
+}
+
+.form-section h3 {
+    color: var(--primary);
+    margin-bottom: 20px;
+    font-size: 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--accent-light);
+}
+
+.form-section h3 i {
+    color: var(--accent);
+    margin-right: 10px;
+}
+
 .form-group {
     margin-bottom: 20px;
 }
@@ -1176,11 +1240,6 @@ select.form-control {
 
 .btn-secondary:hover {
     background-color: #7a9fe6;
-}
-
-.btn-sm {
-    padding: 6px 12px;
-    font-size: 11px;
 }
 
 .btn-modal {
@@ -1319,24 +1378,6 @@ select.form-control {
 .text-center { text-align: center; }
 .mt-3 { margin-top: 16px; }
 
-/* Scrollbar Styling */
-.delete-modal-body::-webkit-scrollbar,
-.modal-body-scroll::-webkit-scrollbar {
-    width: 6px;
-}
-
-.delete-modal-body::-webkit-scrollbar-track,
-.modal-body-scroll::-webkit-scrollbar-track {
-    background: var(--light);
-    border-radius: 3px;
-}
-
-.delete-modal-body::-webkit-scrollbar-thumb,
-.modal-body-scroll::-webkit-scrollbar-thumb {
-    background: var(--primary);
-    border-radius: 3px;
-}
-
 /* Responsive */
 @media (max-width: 768px) {
     .dashboard-cards {
@@ -1467,9 +1508,7 @@ select.form-control {
 </div>
 <?php endif; ?>
 
-<!-- ============================================ -->
-<!-- FILTER BAR - MOVED ABOVE SEARCH -->
-<!-- ============================================ -->
+<!-- Filter Bar -->
 <div class="table-container">
     <div class="table-header">
         <h2><i class="fas fa-filter"></i> Filter Inventory</h2>
@@ -1509,16 +1548,6 @@ select.form-control {
                         <option value="Fair" <?php echo $filter_condition == 'Fair' ? 'selected' : ''; ?>>Fair</option>
                         <option value="Poor" <?php echo $filter_condition == 'Poor' ? 'selected' : ''; ?>>Poor</option>
                         <option value="New" <?php echo $filter_condition == 'New' ? 'selected' : ''; ?>>New</option>
-                        <?php if ($conditions && $conditions->num_rows > 0): ?>
-                            <?php while($cond = $conditions->fetch_assoc()): ?>
-                                <?php if (!in_array($cond['condition_text'], ['Serviceable', 'Good', 'Fair', 'Poor', 'New'])): ?>
-                                <option value="<?php echo htmlspecialchars($cond['condition_text']); ?>" 
-                                    <?php echo $filter_condition == $cond['condition_text'] ? 'selected' : ''; ?>>
-                                    <?php echo htmlspecialchars($cond['condition_text']); ?>
-                                </option>
-                                <?php endif; ?>
-                            <?php endwhile; ?>
-                        <?php endif; ?>
                     </select>
                 </div>
                 
@@ -1580,7 +1609,7 @@ select.form-control {
             </div>
             
             <!-- Active Filters Display -->
-            <?php if ($filter_category || $filter_condition || $filter_location || $filter_status): ?>
+            <?php if ($filter_category || $filter_condition || $filter_location > 0 || $filter_status): ?>
             <div class="active-filters-simple">
                 <span style="font-size: 11px; color: var(--text-muted);"><i class="fas fa-filter"></i> Active filters:</span>
                 <?php if ($filter_category): ?>
@@ -1649,6 +1678,8 @@ select.form-control {
                     <th>PROPERTY NO.</th>
                     <th>BARCODE</th>
                     <th>TYPE</th>
+                    <th>BIG UNIT</th>
+                    <th>SMALL UNIT</th>
                     <th>QTY</th>
                     <th>UNIT VALUE</th>
                     <th>LOCATION</th>
@@ -1673,7 +1704,6 @@ select.form-control {
                         $quantity_badge_class = 'quantity-warning';
                     }
                     
-                    // Fix condition display - handle "Serviceable" properly
                     $condition_text = $item['condition_text'] ?? 'Good';
                     $condition_lower = strtolower($condition_text);
                     $condition_class = 'condition-good';
@@ -1681,7 +1711,7 @@ select.form-control {
                     elseif ($condition_lower == 'good') $condition_class = 'condition-good';
                     elseif ($condition_lower == 'fair') $condition_class = 'condition-fair';
                     elseif ($condition_lower == 'poor') $condition_class = 'condition-poor';
-                    elseif ($condition_lower == 'serviceable' || $condition_lower == 'servicable') $condition_class = 'condition-serviceable';
+                    elseif ($condition_lower == 'serviceable') $condition_class = 'condition-serviceable';
                     ?>
                     <tr class="<?php echo $row_class; ?>">
                         <td>
@@ -1690,7 +1720,7 @@ select.form-control {
                             <div class="article-description"><?php echo htmlspecialchars(substr($item['description'], 0, 50)); ?></div>
                             <?php endif; ?>
                         </td>
-                        <td class="property-no"><?php echo htmlspecialchars($item['property_no']); ?></td>
+                        <td><?php echo htmlspecialchars($item['property_no']); ?></td>
                         <td>
                             <?php if (!empty($item['barcode_data'])): ?>
                                 <img src="generate_barcode.php?code=<?php echo urlencode($item['barcode_data']); ?>&width=100&height=30" 
@@ -1707,9 +1737,11 @@ select.form-control {
                             <div class="type-sub"><?php echo htmlspecialchars($item['equipment_name']); ?></div>
                             <?php endif; ?>
                         </td>
+                        <td><?php echo $item['big_unit_display']; ?></td>
+                        <td><?php echo $item['small_unit_display']; ?></td>
                         <td>
                             <span class="quantity-badge <?php echo $quantity_badge_class; ?>">
-                                <?php echo number_format($item['qty_physical_count']); ?> <?php echo htmlspecialchars($item['uom']); ?>
+                                <?php echo number_format($item['qty_physical_count']); ?>
                             </span>
                         </td>
                         <td><span class="unit-value">₱<?php echo number_format($item['unit_value'], 2); ?></span></td>
@@ -1753,7 +1785,7 @@ select.form-control {
                     <?php endforeach; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="10" class="text-center" style="padding: 60px 20px;">
+                        <td colspan="12" class="text-center" style="padding: 60px 20px;">
                             <i class="fas fa-boxes" style="font-size: 48px; color: var(--text-muted); margin-bottom: 16px; display: block;"></i>
                             <p style="color: var(--text-muted); margin-bottom: 20px;">No inventory items found</p>
                             <a href="<?php echo SITE_URL; ?>/admin/add_inventory.php" class="btn btn-primary">Add Your First Item</a>
@@ -1785,6 +1817,13 @@ select.form-control {
         <?php endif; ?>
     </div>
     <?php endif; ?>
+</div>
+
+<!-- Sticky Scan Button -->
+<div class="sticky-scan-button-container">
+    <a href="<?php echo SITE_URL; ?>/admin/barcodescanner.php" class="sticky-scan-button">
+        <i class="fas fa-camera"></i> SCAN BARCODE
+    </a>
 </div>
 
 <!-- Delete Item Confirmation Modal -->
@@ -1903,7 +1942,6 @@ function editItem(id) {
             if (data.success) {
                 let item = data.data;
                 
-                // Get current values for dropdowns
                 let typeOptions = '';
                 <?php 
                 $type_options = '';
@@ -1929,7 +1967,7 @@ function editItem(id) {
                 $section_options = '';
                 $sections->data_seek(0);
                 while($sec = $sections->fetch_assoc()): 
-                    $section_options .= '<option value="'.$sec['id'].'">'.htmlspecialchars($sec['department_name'] ? $sec['department_name'] . ' - ' : '' . $sec['name']).'</option>';
+                    $section_options .= '<option value="'.$sec['id'].'">'.htmlspecialchars(($sec['department_name'] ? $sec['department_name'] . ' - ' : '') . $sec['name']).'</option>';
                 endwhile;
                 ?>
                 sectionOptions = '<?php echo $section_options; ?>';
@@ -1942,13 +1980,30 @@ function editItem(id) {
                     <option value="New" ${item.condition_text == 'New' ? 'selected' : ''}>New</option>
                 `;
                 
-                let fundClusterOptions = `
-                    <option value="">-- Select Fund Cluster --</option>
-                    <?php 
-                    $fund_clusters = $conn->query("SELECT code, name FROM fund_cluster ORDER BY code");
-                    while($fc = $fund_clusters->fetch_assoc()): ?>
-                    <option value="<?php echo htmlspecialchars($fc['code']); ?>"><?php echo htmlspecialchars($fc['code'] . ' - ' . $fc['name']); ?></option>
-                    <?php endwhile; ?>
+                let bigUnitOptions = `
+                    <option value="">-- Select --</option>
+                    <option value="Box" ${item.big_unit == 'Box' ? 'selected' : ''}>Box</option>
+                    <option value="Pack" ${item.big_unit == 'Pack' ? 'selected' : ''}>Pack</option>
+                    <option value="Case" ${item.big_unit == 'Case' ? 'selected' : ''}>Case</option>
+                    <option value="Carton" ${item.big_unit == 'Carton' ? 'selected' : ''}>Carton</option>
+                    <option value="Bundle" ${item.big_unit == 'Bundle' ? 'selected' : ''}>Bundle</option>
+                    <option value="Roll" ${item.big_unit == 'Roll' ? 'selected' : ''}>Roll</option>
+                    <option value="Set" ${item.big_unit == 'Set' ? 'selected' : ''}>Set</option>
+                    <option value="Ream" ${item.big_unit == 'Ream' ? 'selected' : ''}>Ream</option>
+                    <option value="Bottle" ${item.big_unit == 'Bottle' ? 'selected' : ''}>Bottle</option>
+                    <option value="Can" ${item.big_unit == 'Can' ? 'selected' : ''}>Can</option>
+                    <option value="Bag" ${item.big_unit == 'Bag' ? 'selected' : ''}>Bag</option>
+                `;
+                
+                let smallUnitOptions = `
+                    <option value="">-- Select --</option>
+                    <option value="Piece" ${item.small_unit == 'Piece' ? 'selected' : ''}>Piece(s)</option>
+                    <option value="Unit" ${item.small_unit == 'Unit' ? 'selected' : ''}>Unit(s)</option>
+                    <option value="Each" ${item.small_unit == 'Each' ? 'selected' : ''}>Each</option>
+                    <option value="Meter" ${item.small_unit == 'Meter' ? 'selected' : ''}>Meter(s)</option>
+                    <option value="Kilogram" ${item.small_unit == 'Kilogram' ? 'selected' : ''}>Kilogram(s)</option>
+                    <option value="Liter" ${item.small_unit == 'Liter' ? 'selected' : ''}>Liter(s)</option>
+                    <option value="Pair" ${item.small_unit == 'Pair' ? 'selected' : ''}>Pair(s)</option>
                 `;
                 
                 let html = `
@@ -1958,9 +2013,7 @@ function editItem(id) {
                         <input type="hidden" name="id" value="${item.id}">
                         
                         <div class="form-section">
-                            <h3 style="color: var(--primary); margin-bottom: 20px; font-size: 16px; padding-bottom: 10px; border-bottom: 2px solid var(--accent-light);">
-                                <i class="fas fa-info-circle"></i> Basic Information
-                            </h3>
+                            <h3><i class="fas fa-info-circle"></i> Basic Information</h3>
                             <div class="form-group">
                                 <label>Article Name <span class="text-danger">*</span></label>
                                 <input type="text" name="article_name" class="form-control" value="${escapeHtml(item.article_name)}" required>
@@ -1972,9 +2025,7 @@ function editItem(id) {
                         </div>
                         
                         <div class="form-section">
-                            <h3 style="color: var(--primary); margin-bottom: 20px; font-size: 16px; padding-bottom: 10px; border-bottom: 2px solid var(--accent-light);">
-                                <i class="fas fa-tags"></i> Classification
-                            </h3>
+                            <h3><i class="fas fa-tags"></i> Classification</h3>
                             <div class="form-row">
                                 <div class="form-group">
                                     <label>Category</label>
@@ -1986,7 +2037,6 @@ function editItem(id) {
                                         <option value="">-- Select Type --</option>
                                         ${typeOptions}
                                     </select>
-                                    <small class="text-muted">Select from predefined types or enter manually below</small>
                                 </div>
                             </div>
                             <div class="form-group">
@@ -2012,19 +2062,39 @@ function editItem(id) {
                         </div>
                         
                         <div class="form-section">
-                            <h3 style="color: var(--primary); margin-bottom: 20px; font-size: 16px; padding-bottom: 10px; border-bottom: 2px solid var(--accent-light);">
-                                <i class="fas fa-calculator"></i> Quantity and Value
-                            </h3>
+                            <h3><i class="fas fa-calculator"></i> Quantity and Unit of Measure</h3>
                             <div class="form-row">
                                 <div class="form-group">
-                                    <label>Quantity <span class="text-danger">*</span></label>
-                                    <input type="number" name="qty_physical_count" class="form-control" value="${item.qty_physical_count}" min="0" required>
+                                    <label>Big Unit</label>
+                                    <select name="big_unit" class="form-control" id="edit_big_unit" onchange="calculateTotalQty()">
+                                        ${bigUnitOptions}
+                                    </select>
                                 </div>
                                 <div class="form-group">
-                                    <label>Unit of Measure</label>
-                                    <input type="text" name="uom" class="form-control" value="${escapeHtml(item.uom || 'unit')}" placeholder="e.g., unit, set, box">
+                                    <label>Number of Big Units</label>
+                                    <input type="number" name="big_quantity" id="edit_big_quantity" class="form-control" value="${item.big_quantity || 0}" step="1" onchange="calculateTotalQty()">
                                 </div>
                             </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Small Unit</label>
+                                    <select name="small_unit" class="form-control" id="edit_small_unit" onchange="calculateTotalQty()">
+                                        ${smallUnitOptions}
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Units per Big Unit</label>
+                                    <input type="number" name="pieces_per_big_unit" id="edit_pieces_per_big_unit" class="form-control" value="${item.pieces_per_big_unit || 1}" step="1" onchange="calculateTotalQty()">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Total Quantity <span class="text-danger">*</span></label>
+                                <input type="number" name="qty_physical_count" id="edit_qty_physical_count" class="form-control" value="${item.qty_physical_count}" min="0" required readonly style="background:#f0f0f0">
+                            </div>
+                        </div>
+                        
+                        <div class="form-section">
+                            <h3><i class="fas fa-dollar-sign"></i> Value Information</h3>
                             <div class="form-row">
                                 <div class="form-group">
                                     <label>Unit Value (₱)</label>
@@ -2051,9 +2121,7 @@ function editItem(id) {
                         </div>
                         
                         <div class="form-section">
-                            <h3 style="color: var(--primary); margin-bottom: 20px; font-size: 16px; padding-bottom: 10px; border-bottom: 2px solid var(--accent-light);">
-                                <i class="fas fa-clipboard-list"></i> Additional Information
-                            </h3>
+                            <h3><i class="fas fa-clipboard-list"></i> Additional Information</h3>
                             <div class="form-row">
                                 <div class="form-group">
                                     <label>Condition</label>
@@ -2095,6 +2163,13 @@ function editItem(id) {
         });
 }
 
+function calculateTotalQty() {
+    let bigQty = parseFloat(document.getElementById('edit_big_quantity').value) || 0;
+    let piecesPerBig = parseFloat(document.getElementById('edit_pieces_per_big_unit').value) || 1;
+    let total = bigQty * piecesPerBig;
+    document.getElementById('edit_qty_physical_count').value = total;
+}
+
 function removeFilter(filterName) {
     let url = new URL(window.location.href);
     url.searchParams.delete(filterName);
@@ -2121,7 +2196,7 @@ function viewItem(id) {
                 else if (conditionLower == 'good') conditionClass = 'condition-good';
                 else if (conditionLower == 'fair') conditionClass = 'condition-fair';
                 else if (conditionLower == 'poor') conditionClass = 'condition-poor';
-                else if (conditionLower == 'serviceable' || conditionLower == 'servicable') conditionClass = 'condition-serviceable';
+                else if (conditionLower == 'serviceable') conditionClass = 'condition-serviceable';
                 
                 let quantityClass = 'quantity-normal';
                 let qty = item.qty_physical_count;
@@ -2129,6 +2204,9 @@ function viewItem(id) {
                 let critical = <?php echo $critical_threshold; ?>;
                 if (qty <= critical) quantityClass = 'quantity-critical';
                 else if (qty <= threshold) quantityClass = 'quantity-warning';
+                
+                let bigDisplay = (item.big_quantity && item.big_unit && item.big_unit != '0') ? item.big_quantity + ' ' + item.big_unit : 'N/A';
+                let smallDisplay = (item.pieces_per_big_unit && item.small_unit && item.small_unit != '0') ? item.pieces_per_big_unit + ' ' + item.small_unit : (item.small_unit && item.small_unit != '0' ? item.small_unit : 'N/A');
                 
                 let html = `
                     <div class="detail-section"><div class="detail-header"><i class="fas fa-info-circle"></i> Basic Information</div><div class="detail-content"><div class="detail-grid">
@@ -2145,7 +2223,9 @@ function viewItem(id) {
                         <div class="detail-item"><div class="detail-label">Condition</div><div class="detail-value"><span class="condition-badge ${conditionClass}">${escapeHtml(conditionText)}</span></div></div>
                     </div></div></div>
                     <div class="detail-section"><div class="detail-header"><i class="fas fa-calculator"></i> Quantity and Value</div><div class="detail-content"><div class="detail-grid">
-                        <div class="detail-item"><div class="detail-label">Quantity</div><div class="detail-value"><span class="quantity-badge ${quantityClass}">${item.qty_physical_count} ${escapeHtml(item.uom)}</span></div></div>
+                        <div class="detail-item"><div class="detail-label">Big Unit</div><div class="detail-value">${escapeHtml(bigDisplay)}</div></div>
+                        <div class="detail-item"><div class="detail-label">Small Unit</div><div class="detail-value">${escapeHtml(smallDisplay)}</div></div>
+                        <div class="detail-item"><div class="detail-label">Total Quantity</div><div class="detail-value"><span class="quantity-badge ${quantityClass}">${item.qty_physical_count}</span></div></div>
                         <div class="detail-item"><div class="detail-label">Unit Value</div><div class="detail-value">₱${parseFloat(item.unit_value).toFixed(2)}</div></div>
                         <div class="detail-item"><div class="detail-label">Total Value</div><div class="detail-value">₱${(item.qty_physical_count * item.unit_value).toFixed(2)}</div></div>
                         <div class="detail-item"><div class="detail-label">Fund Cluster</div><div class="detail-value">${escapeHtml(item.fund_cluster || 'N/A')}</div></div>
@@ -2274,7 +2354,6 @@ document.addEventListener('change', function(e) {
         let selectedOption = select.options[select.selectedIndex];
         if (selectedOption && selectedOption.value) {
             let typeName = selectedOption.text;
-            // Remove the code prefix (e.g., "01 - " from "01 - Computers")
             typeName = typeName.replace(/^\d+\s*-\s*/, '');
             let manualInput = document.querySelector('#editModal input[name="type_equipment_name"]');
             if (manualInput) {

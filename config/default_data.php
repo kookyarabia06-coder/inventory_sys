@@ -31,27 +31,27 @@ foreach ($users as $u) {
     }
 }
 
-// Insert sample buildings if not exists
-$check = $conn->query("SELECT * FROM buildings LIMIT 1");
-if ($check->num_rows == 0) {
-    $conn->query("INSERT INTO buildings (name, floor) VALUES 
-                  ('Main Building', 3),
-                  ('Ward Building', 2),
-                  ('Annex Building', 1),
-                  ('Warehouse', 1)");
-}
+// // Insert sample buildings if not exists
+// $check = $conn->query("SELECT * FROM buildings LIMIT 1");
+// if ($check->num_rows == 0) {
+//     $conn->query("INSERT INTO buildings (name, floor) VALUES 
+//                   ('Main Building', 3),
+//                   ('Ward Building', 2),
+//                   ('Annex Building', 1),
+//                   ('Warehouse', 1)");
+// }
 
-// Insert sample departments if not exists
-$check = $conn->query("SELECT * FROM departments LIMIT 1");
-if ($check->num_rows == 0) {
-    $conn->query("INSERT INTO departments (building_id, name) VALUES 
-                  (1, 'Emergency Department'),
-                  (1, 'Pharmacy'),
-                  (2, 'ICU'),
-                  (2, 'Surgery'),
-                  (3, 'Administration'),
-                  (4, 'Storage')");
-}
+// // Insert sample departments if not exists
+// $check = $conn->query("SELECT * FROM departments LIMIT 1");
+// if ($check->num_rows == 0) {
+//     $conn->query("INSERT INTO departments (building_id, name) VALUES 
+//                   (1, 'Emergency Department'),
+//                   (1, 'Pharmacy'),
+//                   (2, 'ICU'),
+//                   (2, 'Surgery'),
+//                   (3, 'Administration'),
+//                   (4, 'Storage')");
+// }
 
 // Insert sample sections if not exists
 // $check = $conn->query("SELECT * FROM sections LIMIT 1");
