@@ -51,6 +51,8 @@ $users = $conn->query("SELECT id, username, firstname, lastname FROM users WHERE
 
 // Get fund clusters for dropdown (from fund_cluster table)
 $fund_clusters = $conn->query("SELECT id, code, name FROM fund_cluster WHERE status = 'active' ORDER BY name");
+// Get suppliers for dropdown (from supplier table)
+$suppliers_list = $conn->query("SELECT id, supplier_id, supplier_name FROM supplier WHERE status = 'active' ORDER BY supplier_name");
 
 // Build equipment sub type options array for JavaScript
 $equipment_sub_type_options = [];
@@ -382,7 +384,50 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_edit_item' && isset($_GET['id'
     }
     exit;
 }
-
+// Get ALL barcodes for items sharing same base property number (for PPE)
+if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_all_barcodes' && isset($_GET['property_no'])) {
+    header('Content-Type: application/json');
+    $property_no = sanitize($_GET['property_no']);
+    
+    // Extract base (remove everything after the LAST dash)
+    $last_dash = strrpos($property_no, '-');
+    $base = ($last_dash !== false) ? substr($property_no, 0, $last_dash) : $property_no;
+    
+    // Get ALL items with this base property number
+    $stmt = $conn->prepare("
+        SELECT id, property_no, article_name, barcode_data, 
+               big_quantity, small_unit, big_unit, qty_physical_count,
+               pieces_per_big_unit
+        FROM inventory 
+        WHERE (property_no = ? OR property_no LIKE CONCAT(?, '-%')) AND category = 'PPE'
+        ORDER BY property_no
+    ");
+    $stmt->bind_param("ss", $base, $base);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    $items = [];
+    while ($row = $result->fetch_assoc()) {
+        $items[] = [
+            'property_no' => $row['property_no'],
+            'article_name' => $row['article_name'],
+            'barcode_data' => $row['barcode_data'] ?: $row['property_no'],
+            'big_quantity' => (int)$row['big_quantity'],
+            'pieces_per_big_unit' => (int)$row['pieces_per_big_unit'],  // ADD THIS
+            'small_unit' => $row['small_unit'],
+            'big_unit' => $row['big_unit']
+        ];
+    }
+    $stmt->close();
+    
+    echo json_encode([
+        'success' => true,
+        'items' => $items,
+        'count' => count($items),
+        'base_property' => $base
+    ]);
+    exit;
+}
 // ============================================
 // FUNCTION TO GENERATE PROPERTY NUMBER (YYYY-MM-DD-SEQ)
 // ============================================
@@ -853,21 +898,22 @@ if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
     exit();
 }
 
-// Barcode handler
 if (isset($_GET['generate_barcode'])) {
-    ob_clean();
-    header('Content-Type: application/json');
     $barcode_value = $_GET['barcode_value'] ?? '';
     if (empty($barcode_value)) {
-        echo json_encode(['error' => 'Please provide barcode value']);
-        exit;
+        if (isset($_GET['code'])) {
+            $barcode_value = $_GET['code'];
+        } else {
+            die('No barcode value provided');
+        }
     }
     try {
         $generator = new BarcodeGeneratorPNG();
-        $barcode = base64_encode($generator->getBarcode($barcode_value, $generator::TYPE_CODE_128));
-        echo json_encode(['success' => true, 'barcode' => $barcode, 'value' => $barcode_value]);
+        $barcode = $generator->getBarcode($barcode_value, $generator::TYPE_CODE_128);
+        header('Content-Type: image/png');
+        echo $barcode;
     } catch (Exception $e) {
-        echo json_encode(['error' => $e->getMessage()]);
+        die('Error generating barcode');
     }
     exit;
 }
@@ -1801,7 +1847,7 @@ tr:hover {
                         </td>
                         <td class="text-center">
                             <?php if (!empty($item['barcode_data'])): ?>
-                                <button class="btn-xs" onclick="showBarcodeModal('<?php echo htmlspecialchars($item['barcode_data']); ?>', '<?php echo htmlspecialchars($item['article_name']); ?>')">
+                                <button class="btn-xs" onclick="showBarcodeModal('<?php echo htmlspecialchars($item['barcode_data']); ?>', '<?php echo htmlspecialchars($item['article_name']); ?>', '<?php echo htmlspecialchars($item['property_no']); ?>')">
                                     <i class="fas fa-qrcode"></i> View
                                 </button>
                             <?php else: ?>
@@ -1947,24 +1993,38 @@ tr:hover {
                     </div>
                 </div>
                 
-                <!-- Supplier Information -->
-                <div class="form-section">
-                    <h3><i class="fas fa-truck"></i> Supplier Information</h3>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="supplier">Supplier</label>
-                            <input type="text" class="form-control" id="supplier" name="supplier" placeholder="Enter supplier name">
-                        </div>
-                        <div class="form-group">
-                            <label for="ref_po_number">Reference PO Number</label>
-                            <input type="text" class="form-control" id="ref_po_number" name="ref_po_number">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="delivery_date">Delivery Date</label>
-                        <input type="date" class="form-control" id="delivery_date" name="delivery_date">
-                    </div>
-                </div>
+<!-- Supplier Information -->
+<div class="form-section">
+    <h3><i class="fas fa-truck"></i> Supplier Information</h3>
+    <div class="form-row">
+        <div class="form-group">
+            <label for="supplier">Supplier</label>
+            <select class="form-control" id="supplier" name="supplier">
+                <option value="">-- Select Supplier --</option>
+                <?php 
+                if ($suppliers_list && $suppliers_list->num_rows > 0):
+                    $suppliers_list->data_seek(0);
+                    while($supp = $suppliers_list->fetch_assoc()): 
+                ?>
+                <option value="<?php echo htmlspecialchars($supp['supplier_name']); ?>">
+                    <?php echo htmlspecialchars($supp['supplier_name']); ?>
+                </option>
+                <?php 
+                    endwhile; 
+                endif; 
+                ?>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="ref_po_number">Reference PO Number</label>
+            <input type="text" class="form-control" id="ref_po_number" name="ref_po_number">
+        </div>
+    </div>
+    <div class="form-group">
+        <label for="delivery_date">Delivery Date</label>
+        <input type="date" class="form-control" id="delivery_date" name="delivery_date">
+    </div>
+</div>
                 
                 <!-- Quantity and Unit of Measure -->
                 <div class="form-section">
@@ -2144,21 +2204,26 @@ tr:hover {
 </div>
 
 <!-- Barcode Modal -->
+<!--- proto -->
 <div id="barcodeModal" class="modal">
-    <div class="modal-content" style="max-width: 400px;">
+    <div class="modal-content" style="max-width: 700px; width: 90%;">
         <div class="modal-header">
             <h2 id="barcodeModalTitle">Barcode</h2>
             <span class="modal-close" onclick="closeBarcodeModal()">&times;</span>
         </div>
-        <div class="modal-body">
+        <div class="modal-body" id="barcodeModalBody" style="max-height: 70vh; overflow-y: auto;">
             <div id="barcodeModalImage"></div>
             <div id="barcodeModalNumber" style="font-family: monospace; margin-top: 10px;"></div>
-            <div style="margin-top: 20px; text-align: center;">
-                <button class="btn btn-primary" onclick="printCurrentBarcode()">Print</button>
-            </div>
+        </div>
+        <div class="modal-footer" style="padding: 15px 25px; border-top: 1px solid #e0e0e0; display: flex; gap: 10px; justify-content: flex-end;">
+            <button class="btn btn-secondary" onclick="closeBarcodeModal()">Close</button>
+            <button class="btn btn-primary" onclick="printCurrentBarcode()">
+                <i class="fas fa-print"></i> Print
+            </button>
         </div>
     </div>
 </div>
+
 
 <script>
 var equipmentSubTypes = <?php echo json_encode($equipment_sub_type_options); ?>;
@@ -2380,7 +2445,11 @@ function openEditModal(id) {
                 document.getElementById('pieces_per_big_unit').value = item.pieces_per_big_unit || 1;
                 document.getElementById('unit_value').value = item.unit_value || 0;
                 document.getElementById('fund_cluster').value = item.fund_cluster_id || '';
-                document.getElementById('supplier').value = item.supplier || '';
+                
+var supplierSelect = document.getElementById('supplier');
+if (supplierSelect) {
+    supplierSelect.value = item.supplier || '';
+}
                 document.getElementById('ref_po_number').value = item.ref_po_number || '';
                 document.getElementById('delivery_date').value = item.delivery_date || '';
                 document.getElementById('condition_text').value = item.condition_text || 'Serviceable';
@@ -2445,7 +2514,6 @@ function closeViewModal() {
 function closeBarcodeModal() {
     document.getElementById('barcodeModal').style.display = 'none';
 }
-
 function generateBarcodeForEdit() {
     let date = new Date();
     let dateStr = date.getFullYear() + '-' + String(date.getMonth()+1).padStart(2,'0') + '-' + String(date.getDate()).padStart(2,'0');
@@ -2454,18 +2522,8 @@ function generateBarcodeForEdit() {
     document.getElementById('barcode_data').value = barcode;
     
     let preview = document.getElementById('barcodePreview');
-    preview.innerHTML = '<div class="loading-spinner"><i class="fas fa-spinner fa-spin"></i> Generating...</div>';
-    
-    fetch('?generate_barcode=1&barcode_value=' + encodeURIComponent(barcode))
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                preview.innerHTML = '<img src="data:image/png;base64,' + data.barcode + '" style="max-width:200px;border:1px solid #ddd;padding:10px;border-radius:5px;">';
-            } else {
-                preview.innerHTML = '<span class="text-danger">Error generating barcode</span>';
-            }
-        })
-        .catch(() => preview.innerHTML = '<span class="text-danger">Error</span>');
+    let imgUrl = '?generate_barcode=1&barcode_value=' + encodeURIComponent(barcode);
+    preview.innerHTML = '<img src="' + imgUrl + '" style="max-width:200px;border:1px solid #ddd;padding:10px;border-radius:5px;">';
 }
 
 function viewItem(id) {
@@ -2546,45 +2604,170 @@ function viewItem(id) {
         .catch(() => content.innerHTML = '<div class="alert alert-danger">Error loading item</div>');
 }
 
-function showBarcodeModal(barcode, name) {
+function escapeHtml(text) {
+    if (!text) return '';
+    let div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function showBarcodeModal(barcode, name, propertyNo) {
+    if (propertyNo) {
+        let lastDash = propertyNo.lastIndexOf('-');
+        let baseProperty = lastDash !== -1 ? propertyNo.substring(0, lastDash) : propertyNo;
+        
+        fetch('?ajax=get_all_barcodes&property_no=' + encodeURIComponent(baseProperty))
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.count > 1) {
+                    window.currentBarcodeItems = data.items;
+                    window.currentBarcodeGroupName = name;
+                    
+                    let content = '<div style="max-height: 500px; overflow-y: auto;">';
+                    data.items.forEach(function(item, index) {
+                        let printCopies = item.pieces_per_big_unit || 1;  // CHANGED: use pieces_per_big_unit
+                        let copiesText = printCopies > 1 ? ` (${printCopies} copies - one per ${item.small_unit})` : '';
+                        
+                        content += `
+                            <div style="border:1px solid #ddd; border-radius:8px; padding:15px; margin-bottom:15px; text-align:center;">
+                                <div style="background:#6B8CFF; color:white; display:inline-block; padding:3px 12px; border-radius:20px; margin-bottom:10px;">
+                                    Item ${index + 1} of ${data.count}
+                                </div>
+                                <h4>${escapeHtml(item.article_name)}</h4>
+                                <div><strong>Property No:</strong> ${escapeHtml(item.property_no)}</div>
+                                <div><strong>Unit:</strong> ${escapeHtml(item.big_unit)} (${item.big_quantity}) / ${escapeHtml(item.small_unit)} (${item.pieces_per_big_unit} per ${item.big_unit})</div>
+                                <div><strong>Will print:</strong> ${printCopies} ${escapeHtml(item.small_unit)}${copiesText}</div>
+                                <div style="margin:10px 0;">
+                                    <img src="?generate_barcode=1&barcode_value=${encodeURIComponent(item.barcode_data)}" 
+                                         style="border:1px solid #ddd; padding:5px; max-width:250px;">
+                                </div>
+                                <div><small>${escapeHtml(item.barcode_data)}</small></div>
+                                <button class="btn-xs" onclick="printSingleBarcode('${escapeHtml(item.barcode_data)}', '${escapeHtml(item.article_name)}', ${item.pieces_per_big_unit})" style="margin-top:10px;">
+                                    <i class="fas fa-print"></i> Print (${printCopies} ${item.small_unit}s)
+                                </button>
+                            </div>
+                        `;
+                    });
+                    content += '</div>';
+                    
+                    document.getElementById('barcodeModalTitle').textContent = 'Barcodes - ' + escapeHtml(name) + ' (' + data.count + ' items)';
+                    document.getElementById('barcodeModalImage').innerHTML = content;
+                    document.getElementById('barcodeModalNumber').innerHTML = '';
+                    document.getElementById('barcodeModal').style.display = 'block';
+                } else if (data.success && data.count === 1) {
+                    let item = data.items[0];
+                    showSingleBarcode(item.barcode_data, item.article_name, item.pieces_per_big_unit);  // CHANGED
+                } else {
+                    showSingleBarcode(barcode, name, 1);
+                }
+            })
+            .catch(() => showSingleBarcode(barcode, name, 1));
+    } else {
+        showSingleBarcode(barcode, name, 1);
+    }
+}
+function showSingleBarcode(barcode, name, copies = 1) {
     document.getElementById('barcodeModalTitle').textContent = 'Barcode - ' + escapeHtml(name);
-    
-    fetch('?generate_barcode=1&barcode_value=' + encodeURIComponent(barcode))
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                document.getElementById('barcodeModalImage').innerHTML = '<img src="data:image/png;base64,' + data.barcode + '" alt="Barcode" style="max-width:100%;border:1px solid #ddd;padding:10px;border-radius:5px;">';
-            } else {
-                document.getElementById('barcodeModalImage').innerHTML = '<span class="text-danger">Error generating barcode</span>';
-            }
-        })
-        .catch(() => document.getElementById('barcodeModalImage').innerHTML = '<span class="text-danger">Error</span>');
-    
-    document.getElementById('barcodeModalNumber').textContent = barcode;
+    document.getElementById('barcodeModalImage').innerHTML = `
+        <div style="text-align:center;">
+            <div style="margin:10px 0;">
+                <img src="?generate_barcode=1&barcode_value=${encodeURIComponent(barcode)}" 
+                     style="max-width:100%;border:1px solid #ddd;padding:10px;border-radius:5px;">
+            </div>
+            <div style="font-family:monospace;">${escapeHtml(barcode)}</div>
+            ${copies > 1 ? `<div style="margin-top:10px;color:#6B8CFF;">Will print ${copies} copies (one per Small Unit)</div>` : ''}
+        </div>
+    `;
+    document.getElementById('barcodeModalNumber').innerHTML = barcode;
     document.getElementById('barcodeModal').style.display = 'block';
+    
+    window.currentSingleBarcode = { barcode: barcode, name: name, copies: copies };
 }
-
-function printCurrentBarcode() { 
-    printBarcode(document.getElementById('barcodeModalNumber').textContent, document.getElementById('barcodeModalTitle').textContent.replace('Barcode - ', '')); 
-}
-
-function printBarcode(barcode, name) {
+function printSingleBarcode(barcode, name, copies = 1) {
     let win = window.open('', '_blank');
-    win.document.write(`<html><head><title>Print Barcode</title><style>body{text-align:center;padding:20px;font-family:Arial}.barcode-container{padding:30px;border:1px dashed #6B8CFF;border-radius:10px;display:inline-block}.ppe-label{background:#6B8CFF;padding:5px 15px;border-radius:20px;display:inline-block;margin-bottom:15px;color:white}.item-name{margin-top:10px;font-weight:bold}.barcode-number{margin-top:5px;font-family:monospace}</style></head><body><div class="barcode-container"><div class="ppe-label">PPE Equipment</div><img src="?generate_barcode=1&barcode_value=${encodeURIComponent(barcode)}" alt="Barcode"><div class="item-name">${escapeHtml(name)}</div><div class="barcode-number">${escapeHtml(barcode)}</div></div><script>window.onload=function(){setTimeout(function(){window.print();window.close()},500)}<\/script></body></html>`);
+    let htmlContent = '<html><head><title>Print Barcode</title><style>';
+    htmlContent += 'body{text-align:center;padding:20px;font-family:Arial,sans-serif}';
+    htmlContent += '.barcode-card{border:1px dashed #6B8CFF;border-radius:10px;padding:20px;margin-bottom:20px;page-break-after:avoid;break-inside:avoid}';
+    htmlContent += '.ppe-label{background:#6B8CFF;padding:5px 15px;border-radius:20px;display:inline-block;margin-bottom:15px;color:white}';
+    htmlContent += '.item-name{font-size:14px;font-weight:bold;margin:10px 0}';
+    htmlContent += '.barcode-number{font-family:monospace;font-size:12px;margin-top:10px}';
+    htmlContent += '@media print{.barcode-card{break-inside:avoid}body{padding:0}}';
+    htmlContent += '</style></head><body>';
+    
+    // Generate copies based on pieces_per_big_unit (Small Unit quantity)
+    for (let i = 1; i <= copies; i++) {
+        htmlContent += `
+            <div class="barcode-card">
+                <div class="ppe-label">PPE EQUIPMENT</div>
+                <img src="?generate_barcode=1&barcode_value=${encodeURIComponent(barcode)}" alt="Barcode">
+                <div class="item-name">${escapeHtml(name)}</div>
+                <div class="barcode-number">${escapeHtml(barcode)}</div>
+                ${copies > 1 ? `<div style="font-size:10px;color:#999;margin-top:5px;">Item ${i} of ${copies}</div>` : ''}
+            </div>
+        `;
+    }
+    
+    htmlContent += '<script>window.onload=function(){setTimeout(function(){window.print();window.close()},500)}<\/script>';
+    htmlContent += '</body></html>';
+    
+    win.document.write(htmlContent);
+    win.document.close();
+}
+function printAllBarcodesInModal() {
+    let items = window.currentBarcodeItems;
+    
+    if (!items || items.length === 0) {
+        alert('No barcodes to print');
+        return;
+    }
+    
+    let win = window.open('', '_blank');
+    let htmlContent = '<html><head><title>Print All Barcodes</title><style>';
+    htmlContent += 'body{font-family:Arial,sans-serif;padding:20px}';
+    htmlContent += '.barcode-card{border:1px solid #ddd;border-radius:12px;padding:20px;margin-bottom:30px;text-align:center;page-break-after:avoid;break-inside:avoid}';
+    htmlContent += '.ppe-label{background:#6B8CFF;display:inline-block;padding:5px 15px;border-radius:20px;margin-bottom:10px;color:white}';
+    htmlContent += '.item-name{font-size:14px;font-weight:bold;margin:10px 0}';
+    htmlContent += '.barcode-number{font-family:monospace;font-size:12px;margin-top:10px}';
+    htmlContent += '.copy-label{font-size:10px;color:#999;margin-top:5px}';
+    htmlContent += '@media print{.barcode-card{break-inside:avoid}}';
+    htmlContent += '</style></head><body>';
+    htmlContent += '<h2 style="text-align:center;">PPE Barcodes</h2>';
+    
+    // Generate barcodes for each item, with copies based on pieces_per_big_unit
+    items.forEach(function(item, itemIndex) {
+        let copies = item.pieces_per_big_unit || 1;  // CHANGED: use pieces_per_big_unit
+        
+        for (let copy = 1; copy <= copies; copy++) {
+            htmlContent += `
+                <div class="barcode-card">
+                    <div class="ppe-label">PPE EQUIPMENT</div>
+                    <div style="margin-bottom:5px;font-size:12px;color:#666;">${escapeHtml(item.article_name)}</div>
+                    <div style="margin-bottom:5px;font-size:11px;color:#888;">Property: ${escapeHtml(item.property_no)}</div>
+                    <img src="?generate_barcode=1&barcode_value=${encodeURIComponent(item.barcode_data)}" alt="Barcode">
+                    <div class="barcode-number">${escapeHtml(item.barcode_data)}</div>
+                    ${copies > 1 ? `<div class="copy-label">${escapeHtml(item.small_unit || 'Piece')} ${copy} of ${copies}</div>` : ''}
+                </div>
+            `;
+        }
+    });
+    
+    htmlContent += '<script>window.onload=function(){setTimeout(function(){window.print();window.close()},500)}<\/script>';
+    htmlContent += '</body></html>';
+    
+    win.document.write(htmlContent);
     win.document.close();
 }
 
-function escapeHtml(text) { 
-    if (!text) return ''; 
-    let div = document.createElement('div'); 
-    div.textContent = text; 
-    return div.innerHTML; 
-}
-
-window.onclick = function(e) {
-    if (e.target == document.getElementById('ppeModal')) closeModal();
-    if (e.target == document.getElementById('viewModal')) closeViewModal();
-    if (e.target == document.getElementById('barcodeModal')) closeBarcodeModal();
+function printCurrentBarcode() {
+    let title = document.getElementById('barcodeModalTitle').textContent;
+    if (title.startsWith('Barcodes -')) {
+        printAllBarcodesInModal();
+    } else {
+        let barcode = document.getElementById('barcodeModalNumber').textContent;
+        let name = title.replace('Barcode - ', '');
+        let copies = (window.currentSingleBarcode && window.currentSingleBarcode.copies) || 1;
+        printSingleBarcode(barcode, name, copies);
+    }
 }
 </script>
 

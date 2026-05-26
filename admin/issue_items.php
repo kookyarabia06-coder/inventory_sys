@@ -1,13 +1,6 @@
 <?php
 ob_start();
-/**
- * Issue Items Page (Admin)
- * Handle item issuance and reissuance to employees
- */
-
-// Get the absolute path to the root directory
 $root_path = dirname(__DIR__);
-
 // Load configuration and auth
 require_once $root_path . '/config.php';
 require_once INCLUDE_PATH . '/auth.php';
@@ -36,32 +29,119 @@ $conn->query("ALTER TABLE equipment_issuance DROP COLUMN IF EXISTS purpose");
 // AJAX HANDLER FOR VIEW MODAL
 // ============================================
 if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_issuance') {
+    header('Content-Type: application/json');
     $issuance_id = (int)$_GET['id'];
-    $result = $conn->query("
+    
+    // First, determine which table the inventory item belongs to
+    $check_source = $conn->query("
         SELECT 
-            ei.*, 
-            i.article_name, 
-            i.description,
-            i.property_no,
-            i.big_unit,
-            i.small_unit,
-            i.unit_value,
-            CONCAT(e.firstname, ' ', e.lastname) as issued_to_name,
-            e.position as issued_to_position,
-            CONCAT(issuer.firstname, ' ', issuer.lastname) as issued_by_name,
-            sig.name as signatory_name,
-            CONCAT(original_emp.firstname, ' ', original_emp.lastname) as reissued_from_name,
-            CONCAT(reissued_emp.firstname, ' ', reissued_emp.lastname) as reissued_to_name
-        FROM equipment_issuance ei 
-        JOIN inventory i ON ei.inventory_id = i.id 
-        JOIN employees e ON ei.issued_to = e.id
-        JOIN users issuer ON ei.issued_by = issuer.id
-        LEFT JOIN signatories sig ON ei.signatory_id = sig.id
-        LEFT JOIN equipment_issuance original_iss ON ei.reissued_from_id = original_iss.id
-        LEFT JOIN employees original_emp ON original_iss.issued_to = original_emp.id
-        LEFT JOIN employees reissued_emp ON ei.reissued_to_id = reissued_emp.id
+            ei.inventory_id,
+            CASE 
+                WHEN i.id IS NOT NULL THEN 'inventory'
+                WHEN s.id IS NOT NULL THEN 'semi_ppe'
+                ELSE NULL
+            END as source_table
+        FROM equipment_issuance ei
+        LEFT JOIN inventory i ON ei.inventory_id = i.id
+        LEFT JOIN semi_ppe s ON ei.inventory_id = s.id
         WHERE ei.id = $issuance_id
     ");
+    
+    $source_info = $check_source->fetch_assoc();
+    
+    if (!$source_info || !$source_info['source_table']) {
+        echo json_encode(['success' => false, 'message' => 'Issuance record not found']);
+        exit;
+    }
+    
+    // Build query based on source table
+    if ($source_info['source_table'] == 'inventory') {
+        $query = "
+            SELECT 
+                ei.id,
+                ei.inventory_id,
+                ei.issued_to,
+                ei.issued_by,
+                ei.signatory_id,
+                ei.quantity_issued,
+                ei.condition_on_issue,
+                ei.remarks,
+                ei.status,
+                ei.issued_date,
+                ei.actual_return,
+                ei.condition_on_return,
+                ei.issuance_barcode,
+                ei.reissued_from_id,
+                ei.reissued_to_id,
+                ei.reissue_date,
+                ei.original_issuance_barcode,
+                i.article_name, 
+                i.description,
+                i.property_no,
+                i.big_unit,
+                i.small_unit,
+                i.unit_value,
+                CONCAT(e.firstname, ' ', e.lastname) as issued_to_name,
+                e.position as issued_to_position,
+                CONCAT(issuer.firstname, ' ', issuer.lastname) as issued_by_name,
+                sig.name as signatory_name,
+                CONCAT(original_emp.firstname, ' ', original_emp.lastname) as reissued_from_name,
+                CONCAT(reissued_emp.firstname, ' ', reissued_emp.lastname) as reissued_to_name
+            FROM equipment_issuance ei 
+            JOIN inventory i ON ei.inventory_id = i.id 
+            JOIN employees e ON ei.issued_to = e.id
+            JOIN users issuer ON ei.issued_by = issuer.id
+            LEFT JOIN signatories sig ON ei.signatory_id = sig.id
+            LEFT JOIN equipment_issuance original_iss ON ei.reissued_from_id = original_iss.id
+            LEFT JOIN employees original_emp ON original_iss.issued_to = original_emp.id
+            LEFT JOIN employees reissued_emp ON ei.reissued_to_id = reissued_emp.id
+            WHERE ei.id = $issuance_id
+        ";
+    } else {
+        $query = "
+            SELECT 
+                ei.id,
+                ei.inventory_id,
+                ei.issued_to,
+                ei.issued_by,
+                ei.signatory_id,
+                ei.quantity_issued,
+                ei.condition_on_issue,
+                ei.remarks,
+                ei.status,
+                ei.issued_date,
+                ei.actual_return,
+                ei.condition_on_return,
+                ei.issuance_barcode,
+                ei.reissued_from_id,
+                ei.reissued_to_id,
+                ei.reissue_date,
+                ei.original_issuance_barcode,
+                s.article_name, 
+                s.description,
+                s.property_no,
+                s.big_unit,
+                s.small_unit,
+                s.unit_value,
+                CONCAT(e.firstname, ' ', e.lastname) as issued_to_name,
+                e.position as issued_to_position,
+                CONCAT(issuer.firstname, ' ', issuer.lastname) as issued_by_name,
+                sig.name as signatory_name,
+                CONCAT(original_emp.firstname, ' ', original_emp.lastname) as reissued_from_name,
+                CONCAT(reissued_emp.firstname, ' ', reissued_emp.lastname) as reissued_to_name
+            FROM equipment_issuance ei 
+            JOIN semi_ppe s ON ei.inventory_id = s.id 
+            JOIN employees e ON ei.issued_to = e.id
+            JOIN users issuer ON ei.issued_by = issuer.id
+            LEFT JOIN signatories sig ON ei.signatory_id = sig.id
+            LEFT JOIN equipment_issuance original_iss ON ei.reissued_from_id = original_iss.id
+            LEFT JOIN employees original_emp ON original_iss.issued_to = original_emp.id
+            LEFT JOIN employees reissued_emp ON ei.reissued_to_id = reissued_emp.id
+            WHERE ei.id = $issuance_id
+        ";
+    }
+    
+    $result = $conn->query($query);
     
     if ($result && $result->num_rows > 0) {
         $item = $result->fetch_assoc();
@@ -77,11 +157,11 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_issuance') {
 // ============================================
 
 function getDepartmentCode($conn, $employee_id) {
+    // First try to get department code from the employee's department directly
     $emp_query = $conn->query("
         SELECT d.code as department_code 
         FROM employees e
-        LEFT JOIN sections s ON e.section_id = s.id
-        LEFT JOIN departments d ON s.department_id = d.id
+        LEFT JOIN departments d ON e.department_id = d.id
         WHERE e.id = " . intval($employee_id)
     );
     
@@ -91,13 +171,237 @@ function getDepartmentCode($conn, $employee_id) {
             return $employee['department_code'];
         }
     }
+    
+    // Fallback: get from section if department not directly assigned
+    $section_query = $conn->query("
+        SELECT d.code as department_code 
+        FROM employees e
+        LEFT JOIN sections s ON e.section_id = s.id
+        LEFT JOIN departments d ON s.department_id = d.id
+        WHERE e.id = " . intval($employee_id)
+    );
+    
+    if ($section_query && $section_query->num_rows > 0) {
+        $employee = $section_query->fetch_assoc();
+        if (!empty($employee['department_code'])) {
+            return $employee['department_code'];
+        }
+    }
+    
+    // Default code if no department found
     return '000';
+}
+
+// Handle AJAX request to get all items issued to an employee
+if (isset($_GET['get_employee_issuances']) && is_numeric($_GET['get_employee_issuances'])) {
+    header('Content-Type: application/json');
+    
+    $employee_id = (int)$_GET['get_employee_issuances'];
+    
+    $result = $conn->query("
+        SELECT 
+            ei.id, 
+            ei.inventory_id,
+            ei.quantity_issued,
+            ei.condition_on_issue,
+            ei.remarks,
+            ei.issued_date,
+            ei.issuance_barcode,
+            ei.status,
+            i.article_name,
+            i.description,
+            i.property_no,
+            i.big_unit,
+            i.small_unit,
+            i.unit_value,
+            CONCAT(e.firstname, ' ', e.lastname) as issued_to_name,
+            e.position as issued_to_position,
+            CONCAT(issuer.firstname, ' ', issuer.lastname) as issued_by_name
+        FROM equipment_issuance ei 
+        JOIN inventory i ON ei.inventory_id = i.id 
+        JOIN employees e ON ei.issued_to = e.id
+        JOIN users issuer ON ei.issued_by = issuer.id
+        WHERE ei.issued_to = $employee_id AND ei.status = 'issued'
+        ORDER BY ei.issued_date DESC
+    ");
+    
+    $items = [];
+    if ($result && $result->num_rows > 0) {
+        while($row = $result->fetch_assoc()) {
+            $items[] = $row;
+        }
+    }
+    
+    echo json_encode(['success' => true, 'items' => $items, 'employee_name' => $items[0]['issued_to_name'] ?? '']);
+    exit;
+}
+
+
+// Print grouped items for an employee
+if (isset($_GET['print_grouped']) && is_numeric($_GET['print_grouped'])) {
+    $employee_id = (int)$_GET['print_grouped'];
+    
+    $result = $conn->query("
+        SELECT 
+            ei.*, 
+            i.article_name, 
+            i.description,
+            i.property_no,
+            i.big_unit,
+            i.small_unit,
+            i.unit_value,
+            CONCAT(e.firstname, ' ', e.lastname) as issued_to_name,
+            e.position as issued_to_position,
+            CONCAT(issuer.firstname, ' ', issuer.lastname) as issued_by_name,
+            d.name as department_name,
+            d.code as department_code
+        FROM equipment_issuance ei 
+        JOIN inventory i ON ei.inventory_id = i.id 
+        JOIN employees e ON ei.issued_to = e.id
+        JOIN users issuer ON ei.issued_by = issuer.id
+        LEFT JOIN departments d ON e.department_id = d.id
+        WHERE ei.issued_to = $employee_id AND ei.status = 'issued'
+        ORDER BY ei.issued_date DESC
+    ");
+    
+    if ($result && $result->num_rows > 0) {
+        $items = [];
+        $employee_name = '';
+        $issued_by = '';
+        $issued_date = '';
+        
+        while($row = $result->fetch_assoc()) {
+            $items[] = $row;
+            $employee_name = $row['issued_to_name'];
+            $issued_by = $row['issued_by_name'];
+            $issued_date = $row['issued_date'];
+        }
+        
+        $total_amount = 0;
+        foreach($items as $item) {
+            $total_amount += $item['unit_value'] * $item['quantity_issued'];
+        }
+        
+        $current_date = date('F d, Y');
+        ?>
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Inventory Custodian Slip - <?php echo htmlspecialchars($employee_name); ?></title>
+            <style>
+                * { margin: 0; padding: 0; box-sizing: border-box; }
+                body { font-family: 'Times New Roman', Times, serif; padding: 30px; background: white; }
+                .ics-container { max-width: 1200px; margin: 0 auto; border: 1px solid #000; padding: 20px; }
+                .header { text-align: center; margin-bottom: 20px; }
+                .header h1 { font-size: 18px; font-weight: bold; text-transform: uppercase; }
+                .entity-name { font-size: 12px; margin-top: 5px; }
+                .fund-cluster { text-align: right; font-size: 12px; margin-bottom: 15px; }
+                table { width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 11px; }
+                th, td { border: 1px solid #000; padding: 6px; vertical-align: top; }
+                th { background: #f0f0f0; font-weight: bold; text-align: center; }
+                .signature-section { margin-top: 30px; display: flex; flex-wrap: wrap; justify-content: space-between; }
+                .signature-box { width: 45%; margin-top: 20px; }
+                .signature-line { margin-top: 40px; border-top: 1px solid #000; width: 100%; padding-top: 5px; }
+                .signature-name { font-weight: bold; }
+                .footer-note { margin-top: 30px; font-size: 10px; font-style: italic; text-align: center; border-top: 1px solid #000; padding-top: 10px; }
+                @media print { body { padding: 0; margin: 0; } .no-print { display: none; } .ics-container { border: none; padding: 0; } }
+                .btn-print { display: inline-block; padding: 10px 20px; margin: 10px; background: #6B8CFF; color: white; border: none; border-radius: 5px; cursor: pointer; }
+                .btn-close { background: #6c757d; }
+                .button-container { text-align: center; margin-bottom: 20px; }
+            </style>
+        </head>
+        <body>
+            <div class="button-container no-print">
+                <button class="btn-print" onclick="window.print()"><i class="fas fa-print"></i> Print</button>
+                <button class="btn-print btn-close" onclick="window.close()"><i class="fas fa-times"></i> Close</button>
+            </div>
+            <div class="ics-container">
+                <div class="header">
+                    <h1>INVENTORY CUSTODIAN SLIP</h1>
+                    <div class="entity-name">'AMANG' RODRIGUEZ MEMORIAL MEDICAL CENTER</div>
+                </div>
+                
+                
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Qty</th>
+                            <th>Unit</th>
+                            <th>Amount</th>
+                            <th>Description</th>
+                            <th>Property No.</th>
+                            <th>Est. Useful Life</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach($items as $item): 
+                            $unit_display = !empty($item['big_unit']) ? $item['big_unit'] : ($item['small_unit'] ?? 'pcs');
+                            $amount = $item['unit_value'] * $item['quantity_issued'];
+                        ?>
+                        <tr>
+                            <td style="text-align: center;"><?php echo $item['quantity_issued']; ?></td>
+                            <td style="text-align: center;"><?php echo htmlspecialchars($unit_display); ?></td>
+                            <td style="text-align: right;">₱<?php echo number_format($amount, 2); ?></td>
+                            <td>
+                                <strong><?php echo htmlspecialchars($item['article_name']); ?></strong><br>
+                                <small><?php echo nl2br(htmlspecialchars(substr($item['description'] ?? '', 0, 100))); ?></small>
+                            </td>
+                            <td style="text-align: center;"><?php echo htmlspecialchars($item['property_no']); ?></td>
+                            <td style="text-align: center;">3 years</td>
+                        </tr>
+                        <?php endforeach; ?>
+                        <tr style="background: #f9f9f9;">
+                            <td colspan="2" style="text-align: right;"><strong>TOTAL:</strong></td>
+                            <td style="text-align: right;"><strong>₱<?php echo number_format($total_amount, 2); ?></strong></td>
+                            <td colspan="3"></td>
+                        </tr>
+                    </tbody>
+                </table>
+                
+                <div class="signature-section">
+                    <div class="signature-box">
+                        <div class="signature-line"></div>
+                        <div class="signature-name"><?php echo htmlspecialchars($employee_name); ?></div>
+                        <div>Signature Over Printed Name</div>
+                        <div style="margin-top: 10px;">Recipient/End-User</div>
+                        <div>Position/Office</div>
+                        <div><?php echo $current_date; ?></div>
+                        <div>Date</div>
+                    </div>
+                    <div class="signature-box">
+                        <div class="signature-line"></div>
+                        <div class="signature-name"><?php echo htmlspecialchars($issued_by); ?></div>
+                        <div>Signature Over Printed Name</div>
+                        <div style="margin-top: 10px;">SAO-Materials Management/HOPSS</div>
+                        <div>Position/Office</div>
+                        <div><?php echo $current_date; ?></div>
+                        <div>Date</div>
+                    </div>
+                </div>
+                
+                <div class="footer-note">
+                    <strong>Original Copy 2</strong> - Supply and/or Property Division/Unit Recipient or end-user of the inventory
+                </div>
+            </div>
+            <script>
+                window.onload = function() { setTimeout(function() { window.print(); }, 500); }
+            </script>
+        </body>
+        </html>
+        <?php
+        exit;
+    } else {
+        $_SESSION['error'] = 'No items found for this employee.';
+        header('Location: ' . SITE_URL . '/admin/issue_items.php');
+        exit;
+    }
 }
 
 function removeDepartmentCodeFromPropertyNo($property_no) {
     if (empty($property_no)) return $property_no;
     $parts = explode('-', $property_no);
     $last_part = end($parts);
+    // check the property number if the number is have ano 1-99
     if (strlen($last_part) == 3 && ctype_digit($last_part)) {
         array_pop($parts);
         return implode('-', $parts);
@@ -105,12 +409,14 @@ function removeDepartmentCodeFromPropertyNo($property_no) {
     return $property_no;
 }
 
-function generatePropertyNumberWithDeptCode($conn, $inventory_id, $employee_id) {
-    $inv_query = $conn->query("SELECT property_no FROM inventory WHERE id = " . intval($inventory_id));
+function generatePropertyNumberWithDeptCode($conn, $inventory_id, $employee_id, $table_name = 'inventory') {
+    // Get the item details from the correct table
+    $inv_query = $conn->query("SELECT property_no, article_name FROM $table_name WHERE id = " . intval($inventory_id));
     
     if (!$inv_query || $inv_query->num_rows == 0) {
+        // No existing property number, generate a new one
         $date_prefix = date('Y-m-d');
-        $random_num = str_pad(rand(1, 9999), 4, '0', STR_PAD_LEFT);
+        $random_num = str_pad(mt_rand(1, 9999), 4, '0', STR_PAD_LEFT);
         $dept_code = getDepartmentCode($conn, $employee_id);
         return $date_prefix . '-' . $random_num . '-' . $dept_code;
     }
@@ -120,18 +426,34 @@ function generatePropertyNumberWithDeptCode($conn, $inventory_id, $employee_id) 
     $dept_code = getDepartmentCode($conn, $employee_id);
     
     if (!empty($original_property_no)) {
+        // Check if property number already has a department code (last 3 digits)
         $parts = explode('-', $original_property_no);
         $last_part = end($parts);
-        if (strlen($last_part) == 3 && ctype_digit($last_part)) {
+        
+        // Check if last part is a 3-digit department code (between 001 and 999)
+        if (preg_match('/^\d{3}$/', $last_part)) {
+            // Already has department code, replace it
             array_pop($parts);
-            return implode('-', $parts) . '-' . $dept_code;
+            $base_property = implode('-', $parts);
+            return $base_property . '-' . $dept_code;
         } else {
+            // No department code, append it
             return $original_property_no . '-' . $dept_code;
         }
     } else {
+        // No property number exists, create a new one
         $date_prefix = date('Y-m-d');
-        $random_num = str_pad(rand(1, 9999), 4, '0', STR_PAD_LEFT);
-        return $date_prefix . '-' . $random_num . '-' . $dept_code;
+        // Get the next sequence number for this date
+        $seq_query = $conn->query("
+            SELECT MAX(CAST(SUBSTRING_INDEX(property_no, '-', -2) AS UNSIGNED)) as max_seq 
+            FROM $table_name 
+            WHERE property_no LIKE '$date_prefix-%'
+        ");
+        $seq_result = $seq_query->fetch_assoc();
+        $next_seq = ($seq_result['max_seq'] ?? 0) + 1;
+        $seq_num = str_pad($next_seq, 4, '0', STR_PAD_LEFT);
+        
+        return $date_prefix . '-' . $seq_num . '-' . $dept_code;
     }
 }
 
@@ -139,10 +461,11 @@ function generatePropertyNumberWithDeptCode($conn, $inventory_id, $employee_id) 
 // FORM HANDLERS
 // ============================================
 
-// New Issuance
+// New Issuance - Supports both inventory and semi_ppe
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] == 'new_issue') {
     $inventory_ids = isset($_POST['inventory_ids']) ? $_POST['inventory_ids'] : [];
     $quantities = isset($_POST['quantities']) ? $_POST['quantities'] : [];
+    $item_types = isset($_POST['item_type']) ? $_POST['item_type'] : [];
     $issued_to = (int)$_POST['issued_to'];
     $condition = sanitize($_POST['condition']);
     $remarks = sanitize($_POST['remarks'] ?? '');
@@ -161,41 +484,104 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         foreach ($inventory_ids as $index => $inventory_id) {
             $inventory_id = (int)$inventory_id;
             $requested_qty = isset($quantities[$index]) ? floatval($quantities[$index]) : 1;
+            $item_type = isset($item_types[$index]) ? $item_types[$index] : 'inventory';
             
-            $selected_item = $conn->query("SELECT * FROM inventory WHERE id=$inventory_id")->fetch_assoc();
-            if (!$selected_item) throw new Exception("Item not found");
+            // Determine which table to use
+            $table_name = ($item_type == 'semi_ppe') ? 'semi_ppe' : 'inventory';
+            
+            // Lock the row for update to prevent race conditions
+            $selected_item = $conn->query("SELECT * FROM $table_name WHERE id=$inventory_id FOR UPDATE")->fetch_assoc();
+            if (!$selected_item) throw new Exception("Item not found in $table_name");
             
             if ($selected_item['qty_physical_count'] < $requested_qty) {
-                throw new Exception("Insufficient quantity for: " . $selected_item['article_name']);
+                throw new Exception("Insufficient quantity for: " . $selected_item['article_name'] . " (Available: " . $selected_item['qty_physical_count'] . ", Requested: " . $requested_qty . ")");
             }
             
-            $new_property_no = generatePropertyNumberWithDeptCode($conn, $inventory_id, $issued_to);
-            $new_quantity = $selected_item['qty_physical_count'] - $requested_qty;
-            $conn->query("UPDATE inventory SET qty_physical_count=$new_quantity, current_holder=$issued_to, property_no='$new_property_no', condition_text='$condition' WHERE id=$inventory_id");
+            // ============================================
+            // FIX: Generate sequential property numbers for EACH unit
+            // ============================================
             
-            $issuance_barcode = $new_property_no;
+            $dept_code = getDepartmentCode($conn, $issued_to);
+            $date_prefix = date('Y-m-d');
             
-            $stmt = $conn->prepare("
-                INSERT INTO equipment_issuance (
-                    inventory_id, issued_to, issued_by, signatory_id, quantity_issued, 
-                    condition_on_issue, remarks, status, issued_date, issuance_barcode
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'issued', NOW(), ?)
+            // Get the next available sequence number for this date
+            $seq_query = $conn->query("
+                SELECT MAX(CAST(SUBSTRING_INDEX(issuance_barcode, '-', -2) AS UNSIGNED)) as max_seq 
+                FROM equipment_issuance 
+                WHERE issuance_barcode LIKE '$date_prefix-%'
             ");
+            $seq_result = $seq_query->fetch_assoc();
+            $next_seq = intval($seq_result['max_seq'] ?? 0) + 1;
             
-            $stmt->bind_param("iiiidsss", 
-                $inventory_id, 
-                $issued_to, 
-                $_SESSION['user_id'],
-                $signatory_id, 
-                $requested_qty, 
-                $condition, 
-                $remarks,
-                $issuance_barcode
-            );
-            $stmt->execute();
-            $stmt->close();
+            // Array to store all generated property numbers for this item
+            $generated_property_numbers = [];
             
-            $success_count++;
+            // Generate ONE property number for EACH unit issued
+            for ($i = 0; $i < $requested_qty; $i++) {
+                $seq_num = str_pad($next_seq + $i, 4, '0', STR_PAD_LEFT);
+                $new_property_no = $date_prefix . '-' . $seq_num . '-' . $dept_code;
+                $generated_property_numbers[] = $new_property_no;
+            }
+            
+            // Calculate new quantity
+            $new_quantity = $selected_item['qty_physical_count'] - $requested_qty;
+            
+            // For the first unit, update the inventory table's property_no
+            // For subsequent units, we only track via issuance records
+            $first_property_no = $generated_property_numbers[0];
+            
+            // Update the appropriate table
+            if ($item_type == 'inventory') {
+                $update_sql = "UPDATE inventory SET 
+                    qty_physical_count = $new_quantity, 
+                    current_holder = $issued_to, 
+                    property_no = '$first_property_no', 
+                    condition_text = '$condition' 
+                    WHERE id = $inventory_id";
+            } else {
+                $update_sql = "UPDATE semi_ppe SET 
+                    qty_physical_count = $new_quantity, 
+                    current_holder = $issued_to 
+                    WHERE id = $inventory_id";
+            }
+            
+            if (!$conn->query($update_sql)) {
+                throw new Exception("Failed to update $table_name: " . $conn->error);
+            }
+            
+            // Insert a SEPARATE issuance record for EACH unit
+            foreach ($generated_property_numbers as $property_no) {
+                $stmt = $conn->prepare("
+                    INSERT INTO equipment_issuance (
+                        inventory_id, issued_to, issued_by, signatory_id, quantity_issued, 
+                        condition_on_issue, remarks, status, issued_date, issuance_barcode
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'issued', NOW(), ?)
+                ");
+                
+                if (!$stmt) {
+                    throw new Exception("Prepare failed: " . $conn->error);
+                }
+                
+                $single_qty = 1;  // Each record represents 1 unit
+                
+                $stmt->bind_param("iiiidsss", 
+                    $inventory_id, 
+                    $issued_to, 
+                    $_SESSION['user_id'],
+                    $signatory_id, 
+                    $single_qty, 
+                    $condition, 
+                    $remarks,
+                    $property_no
+                );
+                
+                if (!$stmt->execute()) {
+                    throw new Exception("Failed to insert issuance: " . $stmt->error);
+                }
+                $stmt->close();
+                
+                $success_count++;
+            }
         }
         
         $conn->commit();
@@ -210,7 +596,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     exit();
 }
 
-// Reissue from returned item
+// Reissue from returned item - Handle both inventory and semi_ppe
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] == 'reissue') {
     $original_issuance_id = (int)$_POST['original_issuance_id'];
     $reissue_to = (int)$_POST['reissue_to'];
@@ -227,19 +613,37 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     
     $conn->begin_transaction();
     try {
+        // First check which table the item belongs to
         $original_issuance = $conn->query("
-            SELECT ei.*, i.qty_physical_count, i.article_name, i.property_no 
+            SELECT ei.*, 
+                   CASE 
+                       WHEN i.id IS NOT NULL THEN 'inventory'
+                       WHEN s.id IS NOT NULL THEN 'semi_ppe'
+                   END as item_type,
+                   COALESCE(i.qty_physical_count, s.qty_physical_count) as qty_physical_count,
+                   COALESCE(i.article_name, s.article_name) as article_name,
+                   COALESCE(i.property_no, s.property_no) as property_no,
+                   i.condition_on_return as inv_condition,
+                   s.condition_text as semi_condition
             FROM equipment_issuance ei 
-            JOIN inventory i ON ei.inventory_id = i.id 
+            LEFT JOIN inventory i ON ei.inventory_id = i.id 
+            LEFT JOIN semi_ppe s ON ei.inventory_id = s.id 
             WHERE ei.id = $original_issuance_id AND ei.status = 'returned'
         ")->fetch_assoc();
         
         if (!$original_issuance) throw new Exception("Original issuance not found or not returned.");
         
-        $new_property_no = generatePropertyNumberWithDeptCode($conn, $original_issuance['inventory_id'], $reissue_to);
-        $conn->query("UPDATE inventory SET property_no = '$new_property_no', current_holder=$reissue_to, condition_text='$condition' WHERE id = {$original_issuance['inventory_id']}");
+        $table_name = ($original_issuance['item_type'] == 'semi_ppe') ? 'semi_ppe' : 'inventory';
         
-        $issuance_barcode = $new_property_no;
+        if ($original_issuance['item_type'] == 'inventory') {
+            $new_property_no = generatePropertyNumberWithDeptCode($conn, $original_issuance['inventory_id'], $reissue_to);
+            $conn->query("UPDATE inventory SET property_no = '$new_property_no', current_holder=$reissue_to, condition_text='$condition' WHERE id = {$original_issuance['inventory_id']}");
+            $issuance_barcode = $new_property_no;
+        } else {
+            // For semi-expendable items
+            $issuance_barcode = !empty($original_issuance['property_no']) ? $original_issuance['property_no'] : 'SEMI-' . date('Ymd') . '-' . str_pad($original_issuance['inventory_id'], 5, '0', STR_PAD_LEFT);
+            $conn->query("UPDATE semi_ppe SET current_holder=$reissue_to WHERE id = {$original_issuance['inventory_id']}");
+        }
         
         $stmt = $conn->prepare("
             INSERT INTO equipment_issuance (
@@ -279,8 +683,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     exit();
 }
 
-// Return item with condition
+// Return item with condition - Handle both inventory and semi_ppe
 if (isset($_POST['action']) && $_POST['action'] == 'return_item') {
+    // Disable error display to ensure clean JSON output
+    error_reporting(0);
+    
+    header('Content-Type: application/json');
+    
     $issuance_id = (int)$_POST['issuance_id'];
     $condition_on_return = sanitize($_POST['condition_on_return']);
     
@@ -290,41 +699,74 @@ if (isset($_POST['action']) && $_POST['action'] == 'return_item') {
         exit();
     }
     
+    // Get issuance details and determine item type
     $issuance = $conn->query("
-        SELECT ei.*, i.qty_physical_count, i.property_no
+        SELECT ei.*, 
+               CASE 
+                   WHEN i.id IS NOT NULL THEN 'inventory'
+                   WHEN s.id IS NOT NULL THEN 'semi_ppe'
+               END as item_type,
+               COALESCE(i.qty_physical_count, s.qty_physical_count) as qty_physical_count,
+               COALESCE(i.property_no, s.property_no) as property_no
         FROM equipment_issuance ei 
-        JOIN inventory i ON ei.inventory_id = i.id 
+        LEFT JOIN inventory i ON ei.inventory_id = i.id 
+        LEFT JOIN semi_ppe s ON ei.inventory_id = s.id 
         WHERE ei.id=$issuance_id AND ei.status = 'issued'
     ")->fetch_assoc();
     
-    if ($issuance) {
-        $conn->begin_transaction();
-        try {
-            $conn->query("UPDATE equipment_issuance SET status='returned', actual_return=NOW(), condition_on_return='$condition_on_return' WHERE id=$issuance_id");
-            $new_quantity = $issuance['qty_physical_count'] + $issuance['quantity_issued'];
-            $property_no_without_dept = removeDepartmentCodeFromPropertyNo($issuance['property_no']);
-            $conn->query("UPDATE inventory SET qty_physical_count=$new_quantity, current_holder=NULL, property_no='$property_no_without_dept' WHERE id={$issuance['inventory_id']}");
-            $conn->commit();
-            echo json_encode(['success' => true, 'message' => 'Item returned successfully. Department code removed from property number.']);
-        } catch (Exception $e) {
-            $conn->rollback();
-            echo json_encode(['success' => false, 'message' => 'Error: ' . $e->getMessage()]);
-        }
-    } else {
+    if (!$issuance) {
         echo json_encode(['success' => false, 'message' => 'Issuance not found or already returned.']);
+        exit();
+    }
+    
+    $conn->begin_transaction();
+    try {
+        // Update issuance record
+        $conn->query("UPDATE equipment_issuance SET 
+            status='returned', 
+            actual_return=NOW(), 
+            condition_on_return='$condition_on_return' 
+            WHERE id=$issuance_id");
+        
+        // Calculate new quantity
+        $new_quantity = $issuance['qty_physical_count'] + $issuance['quantity_issued'];
+        
+        if ($issuance['item_type'] == 'inventory') {
+            $property_no_without_dept = removeDepartmentCodeFromPropertyNo($issuance['property_no']);
+            $conn->query("UPDATE inventory SET 
+                qty_physical_count=$new_quantity, 
+                current_holder=NULL, 
+                property_no='$property_no_without_dept' 
+                WHERE id={$issuance['inventory_id']}");
+        } else {
+            $conn->query("UPDATE semi_ppe SET 
+                qty_physical_count=$new_quantity, 
+                current_holder=NULL 
+                WHERE id={$issuance['inventory_id']}");
+        }
+        
+        $conn->commit();
+        echo json_encode(['success' => true, 'message' => 'Item returned successfully.']);
+        
+    } catch (Exception $e) {
+        $conn->rollback();
+        echo json_encode(['success' => false, 'message' => 'Error: ' . $e->getMessage()]);
     }
     exit();
 }
 
+
 // Reissue from returned item in history
 if (isset($_GET['reissue_returned']) && is_numeric($_GET['reissue_returned'])) {
     $original_issuance_id = (int)$_GET['reissue_returned'];
-    $check = $conn->query("SELECT status FROM equipment_issuance WHERE id=$original_issuance_id")->fetch_assoc();
+    $check = $conn->query("SELECT status, condition_on_return FROM equipment_issuance WHERE id=$original_issuance_id")->fetch_assoc();
     
     if (!$check) {
         $_SESSION['error'] = 'Issuance not found.';
     } elseif ($check['status'] !== 'returned') {
         $_SESSION['error'] = 'Only returned items can be reissued.';
+    } elseif (in_array($check['condition_on_return'], ['Non-Serviceable', 'For Condemn'])) {
+        $_SESSION['error'] = 'Items returned as "Non-Serviceable" or "For Condemn" cannot be reissued.';
     } else {
         $_SESSION['reissue_from_returned'] = $original_issuance_id;
     }
@@ -340,28 +782,341 @@ if (isset($_GET['cancel_reissue'])) {
     exit();
 }
 
-// Print PAR
+// Print Inventory Custodian Slip
 if (isset($_GET['print_par']) && is_numeric($_GET['print_par'])) {
     $issuance_id = (int)$_GET['print_par'];
-    $par_query = $conn->query("
-        SELECT ei.*, i.article_name, i.description, i.property_no, i.big_unit, i.small_unit, i.unit_value,
-               CONCAT(e.firstname, ' ', e.lastname) as issued_to_name,
-               CONCAT(issuer.firstname, ' ', issuer.lastname) as issued_by_name,
-               sig.name as signatory_name
+    
+    // First, determine which table the item belongs to
+    $check_source = $conn->query("
+        SELECT 
+            ei.inventory_id,
+            CASE 
+                WHEN i.id IS NOT NULL THEN 'inventory'
+                WHEN s.id IS NOT NULL THEN 'semi_ppe'
+                ELSE NULL
+            END as source_table
         FROM equipment_issuance ei
-        JOIN inventory i ON ei.inventory_id = i.id
-        JOIN employees e ON ei.issued_to = e.id
-        JOIN users issuer ON ei.issued_by = issuer.id
-        LEFT JOIN signatories sig ON ei.signatory_id = sig.id
+        LEFT JOIN inventory i ON ei.inventory_id = i.id
+        LEFT JOIN semi_ppe s ON ei.inventory_id = s.id
         WHERE ei.id = $issuance_id
     ");
+    
+    $source_info = $check_source->fetch_assoc();
+    
+    if (!$source_info || !$source_info['source_table']) {
+        $_SESSION['error'] = 'Issuance record not found.';
+        header('Location: ' . SITE_URL . '/admin/issue_items.php');
+        exit;
+    }
+    
+    // Build query based on source table
+    if ($source_info['source_table'] == 'inventory') {
+        $par_query = $conn->query("
+            SELECT ei.*, i.article_name, i.description, i.property_no, i.big_unit, i.small_unit, i.unit_value,
+                   CONCAT(e.firstname, ' ', e.lastname) as issued_to_name,
+                   e.position as issued_to_position,
+                   CONCAT(issuer.firstname, ' ', issuer.lastname) as issued_by_name,
+                   sig.name as signatory_name,
+                   d.name as department_name,
+                   d.code as department_code
+            FROM equipment_issuance ei
+            JOIN inventory i ON ei.inventory_id = i.id
+            JOIN employees e ON ei.issued_to = e.id
+            JOIN users issuer ON ei.issued_by = issuer.id
+            LEFT JOIN signatories sig ON ei.signatory_id = sig.id
+            LEFT JOIN departments d ON e.department_id = d.id
+            WHERE ei.id = $issuance_id
+        ");
+    } else {
+$par_query = $conn->query("
+    SELECT ei.*, s.article_name, s.description, ei.issuance_barcode as property_no, s.big_unit, s.small_unit, s.unit_value,
+           CONCAT(e.firstname, ' ', e.lastname) as issued_to_name,
+           e.position as issued_to_position,
+           CONCAT(issuer.firstname, ' ', issuer.lastname) as issued_by_name,
+           sig.name as signatory_name,
+           d.name as department_name,
+           d.code as department_code
+    FROM equipment_issuance ei
+    JOIN semi_ppe s ON ei.inventory_id = s.id
+            JOIN employees e ON ei.issued_to = e.id
+            JOIN users issuer ON ei.issued_by = issuer.id
+            LEFT JOIN signatories sig ON ei.signatory_id = sig.id
+            LEFT JOIN departments d ON e.department_id = d.id
+            WHERE ei.id = $issuance_id
+        ");
+    }
     
     if ($par_query && $par_query->num_rows > 0) {
         $item = $par_query->fetch_assoc();
         $unit_display = !empty($item['big_unit']) ? $item['big_unit'] : ($item['small_unit'] ?? 'pcs');
         $total_amount = $item['unit_value'] * $item['quantity_issued'];
+        $current_date = date('F d, Y');
         ?>
-        <!DOCTYPE html><html><head><title>PAR</title><style>body{font-family:'Times New Roman',serif;padding:20px}.par-container{max-width:800px;margin:0 auto}.items-table{width:100%;border-collapse:collapse}.items-table th,.items-table td{border:1px solid #000;padding:8px;text-align:left}</style></head><body><div class="par-container"><h2 style="text-align:center">PROPERTY ACKNOWLEDGMENT RECEIPT</h2><p><strong>Item:</strong> <?php echo htmlspecialchars($item['article_name']); ?></p><p><strong>Property No.:</strong> <?php echo htmlspecialchars($item['property_no']); ?></p><p><strong>Quantity:</strong> <?php echo $item['quantity_issued'] . ' ' . $unit_display; ?></p><p><strong>Issued To:</strong> <?php echo htmlspecialchars($item['issued_to_name']); ?></p><p><strong>Issued By:</strong> <?php echo htmlspecialchars($item['issued_by_name']); ?></p><p><strong>Signatory:</strong> <?php echo htmlspecialchars($item['signatory_name'] ?? 'N/A'); ?></p><p><strong>Date:</strong> <?php echo date('F d, Y', strtotime($item['issued_date'])); ?></p><p><strong>Total Amount:</strong> ₱<?php echo number_format($total_amount, 2); ?></p></div></body></html>
+        <!-- Keep the existing HTML for printing here -->
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Inventory Custodian Slip</title>
+            <style>
+                * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }
+                body {
+                    font-family: 'Times New Roman', Times, serif;
+                    padding: 30px;
+                    background: white;
+                }
+                .ics-container {
+                    max-width: 1100px;
+                    margin: 0 auto;
+                    border: 1px solid #000;
+                    padding: 20px;
+                }
+                .header {
+                    text-align: center;
+                    margin-bottom: 20px;
+                }
+                .header h1 {
+                    font-size: 16px;
+                    font-weight: bold;
+                    text-transform: uppercase;
+                    letter-spacing: 1px;
+                }
+                .header h2 {
+                    font-size: 14px;
+                    font-weight: normal;
+                }
+                .entity-name {
+                    font-size: 12px;
+                    margin-top: 5px;
+                }
+                .fund-cluster {
+                    text-align: right;
+                    font-size: 12px;
+                    margin-bottom: 15px;
+                }
+                table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin: 15px 0;
+                    font-size: 12px;
+                }
+                th, td {
+                    border: 1px solid #000;
+                    padding: 8px;
+                    vertical-align: top;
+                }
+                th {
+                    background: #f0f0f0;
+                    font-weight: bold;
+                    text-align: center;
+                }
+                .specs-section {
+                    margin: 15px 0;
+                }
+                .specs-title {
+                    font-weight: bold;
+                    margin-bottom: 5px;
+                }
+                .specs-content {
+                    padding-left: 20px;
+                }
+                .details-row {
+                    display: flex;
+                    flex-wrap: wrap;
+                    margin: 10px 0;
+                }
+                .details-item {
+                    flex: 1;
+                    min-width: 200px;
+                    margin-bottom: 10px;
+                }
+                .details-label {
+                    font-weight: bold;
+                }
+                .signature-section {
+                    margin-top: 30px;
+                    display: flex;
+                    flex-wrap: wrap;
+                    justify-content: space-between;
+                }
+                .signature-box {
+                    width: 45%;
+                    margin-top: 20px;
+                }
+                .signature-line {
+                    margin-top: 40px;
+                    border-top: 1px solid #000;
+                    width: 100%;
+                    padding-top: 5px;
+                }
+                .signature-name {
+                    font-weight: bold;
+                }
+                .footer-note {
+                    margin-top: 30px;
+                    font-size: 10px;
+                    font-style: italic;
+                    text-align: center;
+                    border-top: 1px solid #000;
+                    padding-top: 10px;
+                }
+                @media print {
+                    body {
+                        padding: 0;
+                        margin: 0;
+                    }
+                    .no-print {
+                        display: none;
+                    }
+                    .ics-container {
+                        border: none;
+                        padding: 0;
+                    }
+                }
+                .btn-print {
+                    display: inline-block;
+                    padding: 10px 20px;
+                    margin: 10px;
+                    background: #6B8CFF;
+                    color: white;
+                    border: none;
+                    border-radius: 5px;
+                    cursor: pointer;
+                    font-size: 14px;
+                }
+                .btn-close {
+                    background: #6c757d;
+                }
+                .button-container {
+                    text-align: center;
+                    margin-bottom: 20px;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="button-container no-print">
+                <button class="btn-print" onclick="window.print()"><i class="fas fa-print"></i> Print</button>
+                <button class="btn-print btn-close" onclick="window.close()"><i class="fas fa-times"></i> Close</button>
+            </div>
+            <div class="ics-container">
+                <div class="header">
+                    <h1>INVENTORY CUSTODIAN SLIP</h1>
+                    <div class="entity-name">
+                        'AMANG' RODRIGUEZ MEMORIAL MEDICAL CENTER
+                    </div>
+                </div>
+                
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 10%">Quantity</th>
+                            <th style="width: 10%">Unit</th>
+                            <th style="width: 15%">Amount</th>
+                            <th style="width: 35%">Description</th>
+                            <th style="width: 20%">Inventory Item No.</th>
+                            <th style="width: 10%">Estimated Useful Life</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td style="text-align: center;"><?php echo $item['quantity_issued']; ?></td>
+                            <td style="text-align: center;"><?php echo htmlspecialchars($unit_display); ?></td>
+                            <td style="text-align: right;">₱<?php echo number_format($total_amount, 2); ?></td>
+                            <td>
+                                <strong><?php echo htmlspecialchars($item['article_name']); ?></strong><br>
+                                <small><?php echo nl2br(htmlspecialchars($item['description'] ?? 'N/A')); ?></small>
+                            </td>
+                            <td style="text-align: center;"><?php echo htmlspecialchars($item['property_no']); ?></td>
+                            <td style="text-align: center;">3 years</td>
+                        </tr>
+                    </tbody>
+                </table>
+                
+                <?php if (!empty($item['description'])): ?>
+                <div class="specs-section">
+                    <div class="specs-title">Specs:</div>
+                    <div class="specs-content">
+                        <?php echo nl2br(htmlspecialchars($item['description'])); ?>
+                    </div>
+                </div>
+                <?php endif; ?>
+                
+                <div class="details-row">
+                    <div class="details-item">
+                        <span class="details-label">Delivery Date:</span> 
+                        <?php echo date('m/d/Y', strtotime($item['issued_date'])); ?>
+                    </div>
+                    <div class="details-item">
+                        <span class="details-label">Supplier:</span> N/A
+                    </div>
+                </div>
+                
+                <div class="details-row">
+                    <div class="details-item">
+                        <span class="details-label">Ref:</span> PO24-12-263/SI7703
+                    </div>
+                </div>
+                
+                <div class="signature-section">
+                    <div class="signature-box">
+                        <div class="signature-line"></div>
+                        <div class="signature-name"><?php echo htmlspecialchars($item['issued_to_name']); ?></div>
+                        <div>Signature Over Printed Name</div>
+                        <div style="margin-top: 10px;"><?php echo htmlspecialchars($item['issued_to_position'] ?? 'Recipient'); ?></div>
+                        <div>Position/Office</div>
+                        <div><?php echo $current_date; ?></div>
+                        <div>Date</div>
+                    </div>
+                    
+                    <div class="signature-box">
+                        <div class="signature-line"></div>
+                        <div class="signature-name"><?php echo htmlspecialchars($item['issued_by_name']); ?></div>
+                        <div>Signature Over Printed Name</div>
+                        <div style="margin-top: 10px;">SAO-Materials Management/HOPSS</div>
+                        <div>Position/Office</div>
+                        <div><?php echo $current_date; ?></div>
+                        <div>Date</div>
+                    </div>
+                </div>
+                
+                <div class="signature-section">
+                    <div class="signature-box">
+                        <div class="signature-line"></div>
+                        <div class="signature-name"><?php echo htmlspecialchars($item['signatory_name'] ?? '________________________'); ?></div>
+                        <div>Signature Over Printed Name</div>
+                        <div>Chairperson-Anesthesia Dept./Medical</div>
+                        <div>Position/Office</div>
+                        <div><?php echo $current_date; ?></div>
+                        <div>Date</div>
+                    </div>
+                    
+                    <div class="signature-box">
+                        <div class="signature-line"></div>
+                        <div class="signature-name">________________________</div>
+                        <div>Signature Over Printed Name</div>
+                        <div>Supply and/or Property Division/Unit</div>
+                        <div>Position/Office</div>
+                        <div><?php echo $current_date; ?></div>
+                        <div>Date</div>
+                    </div>
+                </div>
+                
+                <div class="footer-note">
+                    <strong>Original Copy 2</strong> - Supply and/or Property Division/Unit Recipient or end-user of the inventory
+                </div>
+            </div>
+            <script>
+                window.onload = function() {
+                    setTimeout(function() {
+                        window.print();
+                    }, 500);
+                }
+            </script>
+        </body>
+        </html>
         <?php
         exit;
     } else {
@@ -370,7 +1125,6 @@ if (isset($_GET['print_par']) && is_numeric($_GET['print_par'])) {
         exit;
     }
 }
-
 // ============================================
 // GET DATA
 // ============================================
@@ -382,16 +1136,32 @@ $positions_list = $conn->query("SELECT DISTINCT position FROM employees WHERE po
 // Get all employees for search - FIXED to include department
 $all_employees = [];
 $emp_result = $conn->query("
-    SELECT e.id, e.firstname, e.lastname, e.position, 
-           d.name as department_name, 
-           d.code as department_code,
-           s.name as section_name
+    SELECT 
+        e.id, 
+        e.firstname, 
+        e.lastname, 
+        e.position,
+        e.department_id,
+        e.section_id,
+        COALESCE(
+            d.name,
+            (SELECT d2.name FROM departments d2 WHERE d2.id = e.department_id),
+            (SELECT d3.name FROM sections s2 LEFT JOIN departments d3 ON s2.department_id = d3.id WHERE s2.id = e.section_id),
+            'No Department Assigned'
+        ) as department_name,
+        COALESCE(
+            d.code,
+            (SELECT d2.code FROM departments d2 WHERE d2.id = e.department_id),
+            '000'
+        ) as department_code,
+        s.name as section_name
     FROM employees e
+    LEFT JOIN departments d ON e.department_id = d.id
     LEFT JOIN sections s ON e.section_id = s.id
-    LEFT JOIN departments d ON s.department_id = d.id
     WHERE e.status = 'Active'
     ORDER BY e.lastname, e.firstname
 ");
+
 if ($emp_result) {
     while ($emp = $emp_result->fetch_assoc()) {
         $all_employees[] = $emp;
@@ -399,19 +1169,89 @@ if ($emp_result) {
 }
 
 $current_issuances = $conn->query("
-    SELECT ei.id, ei.inventory_id, ei.quantity_issued, ei.condition_on_issue,
-           ei.remarks, ei.issued_date, ei.status, ei.issuance_barcode,
-           i.article_name, i.property_no, i.big_unit, i.small_unit,
-           CONCAT(e.firstname, ' ', e.lastname) as issued_to_name
+    SELECT 
+        ei.id, 
+        ei.inventory_id, 
+        ei.quantity_issued, 
+        ei.condition_on_issue,
+        ei.remarks, 
+        ei.issued_date, 
+        ei.status, 
+        ei.issuance_barcode,
+        i.article_name, 
+        i.property_no, 
+        i.big_unit, 
+        i.small_unit,
+        CONCAT(e.firstname, ' ', e.lastname) as issued_to_name,
+        'inventory' as item_type
     FROM equipment_issuance ei 
     INNER JOIN inventory i ON ei.inventory_id = i.id 
     INNER JOIN employees e ON ei.issued_to = e.id
     WHERE ei.status = 'issued'
-    ORDER BY ei.issued_date DESC
+    
+    UNION ALL
+    
+    SELECT 
+        ei.id, 
+        ei.inventory_id, 
+        ei.quantity_issued, 
+        ei.condition_on_issue,
+        ei.remarks, 
+        ei.issued_date, 
+        ei.status, 
+        ei.issuance_barcode,
+        s.article_name, 
+        s.property_no, 
+        s.big_unit, 
+        s.small_unit,
+        CONCAT(e.firstname, ' ', e.lastname) as issued_to_name,
+        'semi_ppe' as item_type
+    FROM equipment_issuance ei 
+    INNER JOIN semi_ppe s ON ei.inventory_id = s.id 
+    INNER JOIN employees e ON ei.issued_to = e.id
+    WHERE ei.status = 'issued'
+    
+    ORDER BY issued_date DESC
 ");
 
 $inventory_items = [];
-$inv_result = $conn->query("SELECT * FROM inventory WHERE qty_physical_count > 0 ORDER BY article_name");
+$inv_result = $conn->query("
+    SELECT 
+        id, 
+        article_name, 
+        description,
+        property_no, 
+        barcode_data,
+        qty_physical_count,
+        big_unit, 
+        big_quantity,
+        small_unit, 
+        pieces_per_big_unit,
+        unit_value,
+        'inventory' as item_type
+    FROM inventory 
+    WHERE qty_physical_count > 0 
+    
+    UNION ALL
+    
+    SELECT 
+        id, 
+        article_name, 
+        description,
+        property_no, 
+        barcode_data,
+        qty_physical_count,
+        big_unit, 
+        big_quantity,
+        small_unit, 
+        pieces_per_big_unit,
+        unit_value,
+        'semi_ppe' as item_type
+    FROM semi_ppe 
+    WHERE qty_physical_count > 0
+    
+    ORDER BY article_name
+");
 if ($inv_result) {
     while ($item = $inv_result->fetch_assoc()) {
         $inventory_items[] = $item;
@@ -432,9 +1272,14 @@ if (isset($_SESSION['reissue_from_returned'])) {
         JOIN employees e ON ei.issued_to = e.id        
         WHERE ei.id=$reissue_from_id AND ei.status = 'returned'
     ")->fetch_assoc();
+    if ($reissue_item && in_array($reissue_item['condition_on_return'], ['Non-Serviceable', 'For Condemn'])) {
+        unset($_SESSION['reissue_from_returned']);
+        $reissue_item = null;
+        $_SESSION['error'] = 'Items returned as "Non-Serviceable" or "For Condemn" cannot be reissued.';
+    }
+    
     if (!$reissue_item) unset($_SESSION['reissue_from_returned']);
 }
-
 include INCLUDE_PATH . '/header.php';
 ?>
 
@@ -1510,6 +2355,100 @@ th {
         font-size: 16px;
     }
 }
+
+
+/* Employee Items Table inside Modal */
+.employee-items-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.employee-items-table th,
+.employee-items-table td {
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--border-light);
+    text-align: left;
+    vertical-align: middle;
+}
+
+.employee-items-table th {
+    background: var(--light);
+    font-weight: 600;
+    color: var(--text-primary);
+    position: sticky;
+    top: 0;
+}
+
+.employee-items-table .text-center {
+    text-align: center;
+}
+
+.employee-items-table .text-right {
+    text-align: right;
+}
+
+.total-row {
+    background: var(--accent-light);
+    font-weight: bold;
+}
+
+.total-row td {
+    border-top: 2px solid var(--primary);
+}
+
+
+.btn-barcode-sm {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 8px;
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    text-decoration: none;
+}
+
+.btn-barcode-sm:hover {
+    background: #5a7ae6;
+}
+
+
+.modal-overlay {
+    display: none;
+    position: fixed;
+    z-index: 10000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    backdrop-filter: blur(3px);
+    justify-content: center;
+    align-items: center;
+}
+
+.modal-overlay.show {
+    display: flex;
+}
+
+.modal-container {
+    background-color: var(--white);
+    margin: 5% auto;
+    padding: 0;
+    border-radius: 12px;
+    width: 900px;
+    max-width: 90%;
+    box-shadow: 0 10px 30px rgba(107, 140, 255, 0.2);
+    animation: modalSlideIn 0.3s;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
 </style>
 
 <!-- Display Messages -->
@@ -1547,7 +2486,21 @@ th {
                     <div class="search-group"><label>POSITION</label><select id="reissue_search_position" onchange="searchReissueEmployees()"><option value="">All</option><?php if($positions_list) while($pos = $positions_list->fetch_assoc()) echo '<option value="'.htmlspecialchars($pos['position']).'">'.htmlspecialchars($pos['position']).'</option>'; ?></select></div>
                     <div class="search-group" style="flex:0.3;"><label>&nbsp;</label><button type="button" class="btn-clear-employee" onclick="clearReissueEmployeeSearch()">Clear</button></div>
                 </div>
-                <div id="reissue_employee_results_container" style="max-height:300px;overflow-y:auto"><table class="employee-results-table"><thead><tr><th>Name</th><th>Position</th><th>Department</th><th>Action</th></tr></thead><tbody id="reissue_employee_results_body"><tr><td colspan="4" class="no-results">Type to search</div></div></tbody>}</div>
+                <div id="reissue_employee_results_container" style="max-height:300px;overflow-y:auto">
+    <table class="employee-results-table" style="width:100%">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Position</th>
+                <th>Department</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody id="reissue_employee_results_body">
+            <tr><td colspan="4" class="no-results" style="text-align:center;padding:40px">Type to search</td></tr>
+        </tbody>
+    </table>
+</div>
             </div>
             <div id="selected_reissue_employee_display" style="display:none;margin-top:10px;padding:12px;background:var(--success-light);border-radius:8px"><i class="fas fa-user-check"></i> Selected: <strong id="selected_reissue_employee_name"></strong></div>
             <input type="hidden" id="selected_reissue_employee_id" name="reissue_to" value="">
@@ -1591,16 +2544,7 @@ th {
 <div class="issue-form-container">
     <h3><i class="fas fa-hand-holding"></i> Issue New Item</h3>
     
-    <!-- Property Search Section -->
-    <div class="property-search-section">
-        <h4>Search Items by Property Number or Article Name</h4>
-        <div class="property-search-box">
-            <input type="text" id="property_search_input" placeholder="Property number or article name...">
-            <button type="button" onclick="searchByProperty()">Search</button>
-            <button type="button" onclick="clearPropertySearch()" style="background:#6c757d">Clear</button>
-        </div>
-        <div id="property_search_result" class="property-search-result"></div>
-    </div>
+  
 
     <div class="barcode-search-section">
         <h4>Search by Barcode</h4>
@@ -1733,63 +2677,88 @@ th {
     </form>
 </div>
 
-<!-- ============================================ -->
-<!-- CURRENTLY ISSUED ITEMS -->
-<!-- ============================================ -->
+<!-- ++++++++++++++++++++++++++++++++++++++++++++++++++++++ -->
 <div class="table-container">
     <div class="table-header">
-        <h2><i class="fas fa-clipboard-list"></i> Currently Issued Items</h2>
+        <h2><i class="fas fa-users"></i> Issued Items by Employee (MMulti Item)</h2>
+        <p>Click "View Items" to see all items issued to an employee</p>
     </div>
-    <?php if($current_issuances && $current_issuances->num_rows > 0): ?>
+    <?php
+    // Get grouped issuances by employee
+    $grouped_issuances = $conn->query("
+        SELECT 
+            ei.issued_to,
+            CONCAT(e.firstname, ' ', e.lastname) as issued_to_name,
+            e.position as issued_to_position,
+            COUNT(ei.id) as total_items,
+            SUM(ei.quantity_issued) as total_quantity,
+            SUM(i.unit_value * ei.quantity_issued) as total_value,
+            MAX(ei.issued_date) as last_issue_date
+        FROM equipment_issuance ei 
+        JOIN inventory i ON ei.inventory_id = i.id 
+        JOIN employees e ON ei.issued_to = e.id
+        WHERE ei.status = 'issued'
+        GROUP BY ei.issued_to, e.firstname, e.lastname, e.position
+        ORDER BY e.lastname ASC
+    ");
+    ?>
+
+    <?php
+// Debug - Check if there are any issued items
+$check_issued = $conn->query("SELECT COUNT(*) as count FROM equipment_issuance WHERE status = 'issued'");
+$issued_count = $check_issued->fetch_assoc()['count'];
+?>
+<!-- Debug info (remove after testing) -->
+<div style="background: #f0f0f0; padding: 10px; margin: 10px; border-radius: 5px; font-size: 12px;">
+    <strong>Debug:</strong> Total issued items: <?php echo $issued_count; ?>
+</div>
+    <?php if($grouped_issuances && $grouped_issuances->num_rows > 0): ?>
     <div style="overflow-x: auto;">
-        <table style="width: 100%; min-width: 1200px;">
+        <table style="width: 100%; min-width: 800px;">
             <thead>
                 <tr>
-                    <th>Barcode</th>
-                    <th>Date</th>
-                    <th>Item Name</th>
-                    <th>Property No.</th>
-                    <th>Qty</th>
-                    <th>Unit</th>
-                    <th>Issued To</th>
-                    <th>Condition</th>
-                    <th>Actions</th>
+                    <th>Employee Name</th>
+                    <th>Position</th>
+                    <th class="text-center">Total Items</th>
+                    <th class="text-center">Total Quantity</th>
+                    <th class="text-right">Total Value</th>
+                    <th>Last Issue Date</th>
+                    <th class="text-center">Actions</th>
                 </tr>
             </thead>
             <tbody>
-                <?php while($item = $current_issuances->fetch_assoc()): 
-                    $unit_display = !empty($item['big_unit']) ? $item['big_unit'] : ($item['small_unit'] ?? 'pcs');
-                    $condition_class = 'condition-' . str_replace(' ', '', $item['condition_on_issue'] ?? 'Serviceable');
-                    $safe_name = addslashes($item['article_name']);
-                ?>
+                <?php while($group = $grouped_issuances->fetch_assoc()): ?>
                 <tr>
-                    <td>
-                        <?php if(!empty($item['issuance_barcode'])): ?>
-                        <img src="<?php echo SITE_URL; ?>/admin/barcode_generator_issued.php?code=<?php echo urlencode($item['issuance_barcode']); ?>&width=150&height=50" class="barcode-img" onclick="showBarcodeModal('<?php echo htmlspecialchars($item['issuance_barcode']); ?>', '<?php echo $safe_name; ?>')">
-                        <br><small><?php echo htmlspecialchars($item['issuance_barcode']); ?></small>
-                        <?php else: ?>—<?php endif; ?>
-                    </div>
-                    <td style="white-space: nowrap;"><?php echo date('M d, Y', strtotime($item['issued_date'])); ?></div>
-                    <td><strong><?php echo htmlspecialchars($item['article_name']); ?></strong></div>
-                    <td><code><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></code></div>
-                    <td><?php echo $item['quantity_issued']; ?></div>
-                    <td><?php echo htmlspecialchars($unit_display); ?></div>
-                    <td><?php echo htmlspecialchars($item['issued_to_name']); ?></div>
-                    <td><span class="condition-badge <?php echo $condition_class; ?>"><?php echo htmlspecialchars($item['condition_on_issue'] ?? 'Serviceable'); ?></span></div>
-                    <td>
-                        <div class="action-buttons">
-                            <a href="?print_par=<?php echo $item['id']; ?>" class="action-btn print" target="_blank"><i class="fas fa-print"></i></a>
-                            <button class="return-btn" onclick="openReturnModal(<?php echo $item['id']; ?>, '<?php echo $safe_name; ?>')"><i class="fas fa-undo"></i> Return</button>
-                            <button class="action-btn view" onclick="viewIssuanceDetails(<?php echo $item['id']; ?>)"><i class="fas fa-eye"></i></button>
+                    <td><strong><?php echo htmlspecialchars($group['issued_to_name']); ?></strong></td>
+                    <td><?php echo htmlspecialchars($group['issued_to_position'] ?? 'N/A'); ?></td>
+                    <td class="text-center"><?php echo $group['total_items']; ?></td>
+                    <td class="text-center"><?php echo $group['total_quantity']; ?></td>
+                    <td class="text-right">₱<?php echo number_format($group['total_value'], 2); ?></td>
+                    <td><?php echo date('M d, Y', strtotime($group['last_issue_date'])); ?></td>
+                    <td class="text-center">
+                        <div class="action-buttons" style="justify-content: center;">
+                           <button class="action-btn view" onclick="testEmployeeIssuances(<?php echo $group['issued_to']; ?>, '<?php echo htmlspecialchars(addslashes($group['issued_to_name'])); ?>')" title="View All Items">
+    <i class="fas fa-eye"></i>
+</button>
+                            <a href="?print_grouped=<?php echo $group['issued_to']; ?>" class="action-btn print" target="_blank" title="Print All Items">
+                                <i class="fas fa-print"></i>
+                            </a>
+                            <!-- RETURN BUTTON -->
+        <button class="action-btn return" onclick="openBatchReturnModal(<?php echo $group['issued_to']; ?>, '<?php echo htmlspecialchars(addslashes($group['issued_to_name'])); ?>')" title="Return Multiple Items" style="background: #FF9800;">
+            <i class="fas fa-undo-alt"></i> Return
+        </button>
                         </div>
-                    </div>
+                    </td>
                 </tr>
                 <?php endwhile; ?>
             </tbody>
         </table>
     </div>
     <?php else: ?>
-    <div style="text-align:center;padding:60px"><i class="fas fa-inbox" style="font-size:64px;color:#ccc"></i><p>No items currently issued</p></div>
+    <div style="text-align:center;padding:40px">
+        <i class="fas fa-users" style="font-size: 48px; color: #ccc; margin-bottom: 10px; display: block;"></i>
+        <p>No items currently issued to any employee</p>
+    </div>
     <?php endif; ?>
 </div>
 
@@ -1805,13 +2774,14 @@ th {
         SELECT 
             ei.*, 
             i.article_name, 
-            i.property_no, 
+            ei.issuance_barcode as property_no, 
             i.big_unit, 
             i.small_unit,
             CONCAT(e.firstname, ' ', e.lastname) as issued_to_name,
             CONCAT(ub.firstname, ' ', ub.lastname) as issued_by_name,
             CONCAT(original_emp.firstname, ' ', original_emp.lastname) as reissued_from_name,
-            CONCAT(reissued_to_emp.firstname, ' ', reissued_to_emp.lastname) as reissued_to_name
+            CONCAT(reissued_to_emp.firstname, ' ', reissued_to_emp.lastname) as reissued_to_name,
+            'inventory' as item_type
         FROM equipment_issuance ei 
         JOIN inventory i ON ei.inventory_id = i.id 
         JOIN employees e ON ei.issued_to = e.id
@@ -1820,12 +2790,35 @@ th {
         LEFT JOIN employees original_emp ON original_iss.issued_to = original_emp.id
         LEFT JOIN equipment_issuance reissued_iss ON ei.id = reissued_iss.reissued_from_id
         LEFT JOIN employees reissued_to_emp ON reissued_iss.issued_to = reissued_to_emp.id
-        ORDER BY ei.issued_date DESC LIMIT 100
+        
+        UNION ALL
+        
+        SELECT 
+            ei.*, 
+            s.article_name, 
+            ei.issuance_barcode as property_no, 
+            s.big_unit, 
+            s.small_unit,
+            CONCAT(e.firstname, ' ', e.lastname) as issued_to_name,
+            CONCAT(ub.firstname, ' ', ub.lastname) as issued_by_name,
+            CONCAT(original_emp.firstname, ' ', original_emp.lastname) as reissued_from_name,
+            CONCAT(reissued_to_emp.firstname, ' ', reissued_to_emp.lastname) as reissued_to_name,
+            'semi_ppe' as item_type
+        FROM equipment_issuance ei 
+        JOIN semi_ppe s ON ei.inventory_id = s.id 
+        JOIN employees e ON ei.issued_to = e.id
+        JOIN users ub ON ei.issued_by = ub.id 
+        LEFT JOIN equipment_issuance original_iss ON ei.reissued_from_id = original_iss.id
+        LEFT JOIN employees original_emp ON original_iss.issued_to = original_emp.id
+        LEFT JOIN equipment_issuance reissued_iss ON ei.id = reissued_iss.reissued_from_id
+        LEFT JOIN employees reissued_to_emp ON reissued_iss.issued_to = reissued_to_emp.id
+        
+        ORDER BY issued_date DESC LIMIT 100
     ");
     ?>
     <?php if($history && $history->num_rows > 0): ?>
     <div style="overflow-x: auto;">
-        <table style="width: 100%; min-width: 1400px;">
+        <table style="width: 100%; min-width: 1200px;">
             <thead>
                 <tr>
                     <th>Barcode</th>
@@ -1834,11 +2827,10 @@ th {
                     <th>Property No.</th>
                     <th>Qty</th>
                     <th>Unit</th>
-                    <th>Issued To</th>
-                    <th>Condition</th>
                     <th>Issued By</th>
                     <th>Reissued From</th>
-                    <th>Reissued To</th>
+                    <th>Issued To</th>
+                    <th>Condition</th>
                     <th>Status</th>
                     <th>Return Date</th>
                     <th>Actions</th>
@@ -1850,58 +2842,70 @@ th {
                     $condition_class = 'condition-' . str_replace(' ', '', $item['condition_on_issue'] ?? 'Serviceable');
                     $status_class = 'issue-status-' . $item['status'];
                     $safe_name = addslashes($item['article_name']);
+                    $reissued_from = !empty($item['reissued_from_name']) ? $item['reissued_from_name'] : '—';
+                    $issued_to = !empty($item['issued_to_name']) ? $item['issued_to_name'] : '—';
                 ?>
                 <tr>
-                    <td>
+                    <td style="text-align: center;">
                         <?php if(!empty($item['issuance_barcode'])): ?>
-                        <img src="<?php echo SITE_URL; ?>/admin/barcode_generator_issued.php?code=<?php echo urlencode($item['issuance_barcode']); ?>&width=100&height=30" class="barcode-img" onclick="showBarcodeModal('<?php echo htmlspecialchars($item['issuance_barcode']); ?>', '<?php echo $safe_name; ?>')">
+                        <img src="<?php echo SITE_URL; ?>/admin/barcode_generator_issued.php?code=<?php echo urlencode($item['issuance_barcode']); ?>&width=80&height=30" 
+                             class="barcode-img" 
+                             onclick="showBarcodeModal('<?php echo htmlspecialchars($item['issuance_barcode']); ?>', '<?php echo $safe_name; ?>')"
+                             style="cursor: pointer;">
                         <br><small><?php echo htmlspecialchars(substr($item['issuance_barcode'], 0, 15)); ?>...</small>
                         <?php else: ?>—<?php endif; ?>
-                    </div>
-                    <td style="white-space: nowrap;"><?php echo date('M d, Y', strtotime($item['issued_date'])); ?></div>
-                    <td><strong><?php echo htmlspecialchars($item['article_name']); ?></strong></div>
-                    <td><code><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></code></div>
-                    <td><?php echo $item['quantity_issued']; ?></div>
-                    <td><?php echo htmlspecialchars($unit_display); ?></div>
-                    <td><?php echo htmlspecialchars($item['issued_to_name']); ?></div>
-                    <td><span class="condition-badge <?php echo $condition_class; ?>"><?php echo htmlspecialchars($item['condition_on_issue'] ?? 'Serviceable'); ?></span></div>
-                    <td><?php echo htmlspecialchars($item['issued_by_name']); ?></div>
-                    <td>
-                        <?php 
-                        if(!empty($item['reissued_from_name']) && $item['reissued_from_name'] != '—') {
-                            echo '<span style="color:#FF9800;">' . htmlspecialchars($item['reissued_from_name']) . '</span>';
-                        } else {
-                            echo '—';
-                        }
-                        ?>
-                    </div>
-                    <td>
-                        <?php 
-                        if(!empty($item['reissued_to_name']) && $item['reissued_to_name'] != '—') {
-                            echo '<span style="color:#4CAF50;">' . htmlspecialchars($item['reissued_to_name']) . '</span>';
-                        } else {
-                            echo '—';
-                        }
-                        ?>
-                    </div>
-                    <td><span class="issue-status-badge <?php echo $status_class; ?>"><?php echo ucfirst($item['status']); ?></span></div>
-                    <td><?php echo $item['actual_return'] ? date('M d, Y', strtotime($item['actual_return'])) : '—'; ?></div>
+                    </td>
+                    <td style="white-space: nowrap;"><?php echo date('M d, Y', strtotime($item['issued_date'])); ?></td>
+                    <td><strong><?php echo htmlspecialchars($item['article_name']); ?></strong></td>
+                    <td><code><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></code></td>
+                    <td class="text-center"><?php echo $item['quantity_issued']; ?></td>
+                    <td><?php echo htmlspecialchars($unit_display); ?></td>
+                    <td><?php echo htmlspecialchars($item['issued_by_name']); ?></td>
+                    <td><?php echo htmlspecialchars($reissued_from); ?></td>
+                    <td><?php echo htmlspecialchars($issued_to); ?></td>
+                    <td><span class="condition-badge <?php echo $condition_class; ?>"><?php echo htmlspecialchars($item['condition_on_issue'] ?? 'Serviceable'); ?></span></td>
+                    <td><span class="issue-status-badge <?php echo $status_class; ?>"><?php echo ucfirst($item['status']); ?></span></td>
+                    <td><?php echo $item['actual_return'] ? date('M d, Y', strtotime($item['actual_return'])) : '—'; ?></td>
                     <td>
                         <div class="action-buttons">
-                            <a href="?print_par=<?php echo $item['id']; ?>" class="action-btn print" target="_blank"><i class="fas fa-print"></i></a>
+                            <a href="?print_par=<?php echo $item['id']; ?>" class="action-btn print" target="_blank" title="Print">
+                                <i class="fas fa-print"></i>
+                            </a>
+
+                             <button class="return-btn" onclick="openReturnModal(<?php echo $item['id']; ?>, '<?php echo addslashes($item['article_name']); ?>')" title="Return Item">
+            <i class="fas fa-undo-alt"></i> Return
+        </button>
+
                             <?php if($item['status'] == 'returned'): ?>
-                            <a href="?reissue_returned=<?php echo $item['id']; ?>" class="reissue-btn" onclick="return confirmReissueReturned(event, this)"><i class="fas fa-redo-alt"></i> Reissue</a>
+                                <?php 
+                                $non_reissuable_conditions = ['Non-Serviceable', 'For Condemn'];
+                                $can_reissue = !in_array($item['condition_on_return'], $non_reissuable_conditions);
+                                ?>
+                                <?php if($can_reissue): ?>
+                                    <a href="?reissue_returned=<?php echo $item['id']; ?>" class="reissue-btn" onclick="return confirmReissueReturned(event, this)" title="Reissue">
+                                        <i class="fas fa-redo-alt"></i> Reissue
+                                    </a>
+                                <?php else: ?>
+                                    <span class="reissue-btn" style="background:#ccc; cursor: not-allowed;" title="Cannot reissue - Item is <?php echo $item['condition_on_return']; ?>">
+                                        <i class="fas fa-ban"></i> Cannot Reissue
+                                    </span>
+                                <?php endif; ?>
                             <?php endif; ?>
-                            <button class="action-btn view" onclick="viewIssuanceDetails(<?php echo $item['id']; ?>)"><i class="fas fa-eye"></i></button>
+                            <button class="action-btn view" onclick="viewIssuanceDetails(<?php echo $item['id']; ?>)" title="View Details">
+                                <i class="fas fa-eye"></i>
+                            </button>
                         </div>
-                    </div>
+                    </td>
                 </tr>
                 <?php endwhile; ?>
             </tbody>
         </table>
     </div>
     <?php else: ?>
-    <div style="text-align:center;padding:60px"><i class="fas fa-inbox" style="font-size:64px;color:#ccc"></i><p>No issuance records found</p></div>
+    <div style="text-align:center;padding:60px">
+        <i class="fas fa-inbox" style="font-size:64px;color:#ccc"></i>
+        <p>No issuance records found</p>
+    </div>
     <?php endif; ?>
 </div>
 
@@ -1965,7 +2969,24 @@ th {
         </div>
     </div>
 </div>
-
+<!-- Employee Items Modal (for grouped view) -->
+<div id="employeeItemsModal" class="modal-overlay">
+    <div class="modal-container" style="max-width: 900px;">
+        <div class="modal-header-settings">
+            <h3><i class="fas fa-boxes"></i> Items Issued to: <span id="modal_employee_name"></span></h3>
+            <span class="modal-close" onclick="closeEmployeeItemsModal()">&times;</span>
+        </div>
+        <div class="modal-scroll-content" id="employee_items_content">
+            <div class="text-center"><i class="fas fa-spinner fa-spin"></i> Loading items...</div>
+        </div>
+        <div class="modal-footer-buttons">
+            <button type="button" class="btn-modal btn-modal-secondary" onclick="closeEmployeeItemsModal()">Close</button>
+            <a href="#" id="print_all_items_btn" class="btn-modal" style="background-color: var(--accent); color: var(--text-primary);" target="_blank">
+                <i class="fas fa-print"></i> Print All
+            </a>
+        </div>
+    </div>
+</div>
 <!-- Confirm Modals -->
 <div id="confirmModal" class="confirm-modal"><div class="confirm-modal-content"><div class="confirm-modal-icon"><i class="fas fa-question-circle"></i></div><h3>Confirm Issuance</h3><p id="confirmModalMessage"></p><div class="confirm-modal-buttons"><button class="confirm-btn-cancel" onclick="closeConfirmModal()">Cancel</button><button class="confirm-btn-confirm" onclick="submitForm()">Confirm</button></div></div></div>
 <div id="confirmReissueModal" class="confirm-modal"><div class="confirm-modal-content"><div class="confirm-modal-icon"><i class="fas fa-redo-alt"></i></div><h3>Confirm Reissue</h3><p id="confirmReissueModalMessage"></p><div class="confirm-modal-buttons"><button class="confirm-btn-cancel" onclick="closeConfirmReissueModal()">Cancel</button><button class="confirm-btn-confirm" onclick="submitReissueForm()">Confirm</button></div></div></div>
@@ -1979,9 +3000,629 @@ let selectedEmployeeId = null;
 let selectedReissueEmployeeId = null;
 let currentReturnId = null;
 
-// ============================================
-// EMPLOYEE SEARCH FUNCTIONS - FIXED
-// ============================================
+
+function viewEmployeeIssuances(employeeId, employeeName) {
+    console.log('viewEmployeeIssuances called with:', employeeId, employeeName);
+    
+    const modal = document.getElementById('employeeItemsModal');
+    const modalEmployeeName = document.getElementById('modal_employee_name');
+    const printBtn = document.getElementById('print_all_items_btn');
+    const contentDiv = document.getElementById('employee_items_content');
+    
+    if (!modal) {
+        console.error('Modal not found!');
+        alert('Modal not found. Please refresh the page.');
+        return;
+    }
+    
+    if (modalEmployeeName) modalEmployeeName.innerHTML = employeeName;
+    if (printBtn) printBtn.href = '?print_grouped=' + employeeId;
+    
+    modal.style.display = 'flex';
+    modal.style.visibility = 'visible';
+    
+    if (contentDiv) {
+        contentDiv.innerHTML = '<div style="text-align:center;padding:40px;"><i class="fas fa-spinner fa-spin"></i> Loading items...</div>';
+    }
+    
+    // Store for batch return
+    window.currentReturnEmployeeId = employeeId;
+    window.currentReturnEmployeeName = employeeName;
+    window.currentReturnItems = [];
+    
+    fetch('?get_employee_issuances=' + employeeId)
+        .then(response => response.json())
+        .then(data => {
+            console.log('Data received:', data);
+            
+            if (!contentDiv) return;
+            
+            if (data.success && data.items && data.items.length > 0) {
+                window.currentReturnItems = data.items;
+                
+                let html = `
+                    <div style="margin-bottom: 15px; padding: 10px; background: #f5f5f5; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="select_all_return_items" onchange="toggleSelectAllReturnItems()">
+                            <strong>Select All Items</strong>
+                        </label>
+                        <button onclick="submitBatchReturn()" id="batchReturnBtn" style="background: #FF9800; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">
+                            <i class="fas fa-undo-alt"></i> Return Selected Items
+                        </button>
+                    </div>
+                    <div style="overflow-x: auto; max-height: 500px; overflow-y: auto;">
+                        <table style="width:100%; border-collapse: collapse; font-size: 13px;">
+                            <thead>
+                                <tr style="background: #f5f5f5; position: sticky; top: 0;">
+                                    <th style="padding: 10px; border-bottom: 2px solid #ddd; width: 40px;">Select</th>
+                                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Item Name</th>
+                                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Property No.</th>
+                                    <th style="padding: 10px; text-align: center; border-bottom: 2px solid #ddd;">Qty</th>
+                                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Unit</th>
+                                    <th style="padding: 10px; text-align: right; border-bottom: 2px solid #ddd;">Unit Value</th>
+                                    <th style="padding: 10px; text-align: right; border-bottom: 2px solid #ddd;">Total</th>
+                                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Return Condition</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+                
+                let totalValue = 0;
+                data.items.forEach((item, index) => {
+                    const unitDisplay = item.big_unit ? item.big_unit : (item.small_unit || 'pcs');
+                    const itemTotal = parseFloat(item.unit_value) * parseFloat(item.quantity_issued);
+                    totalValue += itemTotal;
+                    
+                    html += `
+                        <tr style="border-bottom: 1px solid #eee;" data-item-id="${item.id}" data-item-index="${index}">
+                            <td style="padding: 8px; text-align: center;">
+                                <input type="checkbox" class="return_item_checkbox" data-id="${item.id}" data-index="${index}" onchange="updateReturnItemSelection(${index}, this.checked)">
+                            </td>
+                            <td style="padding: 8px;"><strong>${escapeHtml(item.article_name)}</strong></td>
+                            <td style="padding: 8px;"><code>${escapeHtml(item.issuance_barcode || item.property_no || 'N/A')}</code></td>
+                            <td style="padding: 8px; text-align: center;">${item.quantity_issued}</td>
+                            <td style="padding: 8px;">${escapeHtml(unitDisplay)}</td>
+                            <td style="padding: 8px; text-align: right;">₱${parseFloat(item.unit_value).toFixed(2)}</td>
+                            <td style="padding: 8px; text-align: right;">₱${itemTotal.toFixed(2)}</td>
+                            <td style="padding: 8px;">
+                                <select class="return_condition_select" data-id="${item.id}" data-index="${index}" disabled style="padding: 6px; border-radius: 4px; border: 1px solid #ddd; width: 100%; font-size: 11px;">
+                                    <option value="">-- Select --</option>
+                                    <option value="Serviceable">Serviceable - Returns to stock</option>
+                                    <option value="Non-Serviceable">Non-Serviceable - Cannot reissue</option>
+                                    <option value="For Condemn">For Condemn - Cannot reissue</option>
+                                    <option value="Under Repair">Under Repair - Can reissue</option>
+                                </select>
+                             </td>
+                        </tr>
+                    `;
+                });
+                
+                html += `
+                                <tr style="background: #FFD8E0; font-weight: bold;">
+                                    <td colspan="6" style="padding: 10px; text-align: right;"><strong>GRAND TOTAL:</strong></td>
+                                    <td style="padding: 10px; text-align: right;"><strong>₱${totalValue.toFixed(2)}</strong></td>
+                                    <td></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div id="batch_return_warning" style="margin-top: 15px; padding: 10px; background: #FFF3E0; border-left: 4px solid #FF9800; border-radius: 4px; display: none;">
+                        <i class="fas fa-exclamation-triangle"></i> <span id="batch_return_warning_text"></span>
+                    </div>
+                `;
+                contentDiv.innerHTML = html;
+            } else {
+                contentDiv.innerHTML = '<div style="padding:40px;text-align:center;color:#999;">No items found for this employee.</div>';
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            if (contentDiv) {
+                contentDiv.innerHTML = '<div style="padding:40px;text-align:center;color:red;">Error loading items. Please try again.</div>';
+            }
+        });
+}
+
+
+
+
+
+
+
+// Store selected items for batch return
+let selectedReturnItems = [];
+
+function toggleSelectAllReturnItems() {
+    const selectAllCheckbox = document.getElementById('select_all_return_items');
+    const checkboxes = document.querySelectorAll('.return_item_checkbox');
+    const isChecked = selectAllCheckbox.checked;
+    
+    checkboxes.forEach((checkbox, idx) => {
+        checkbox.checked = isChecked;
+        const index = parseInt(checkbox.getAttribute('data-index'));
+        updateReturnItemSelection(index, isChecked);
+    });
+}
+
+function updateReturnItemSelection(index, isSelected) {
+    const conditionSelect = document.querySelector(`.return_condition_select[data-index="${index}"]`);
+    
+    if (conditionSelect) {
+        conditionSelect.disabled = !isSelected;
+        if (!isSelected) {
+            conditionSelect.value = '';
+            // Remove from selected array
+            selectedReturnItems = selectedReturnItems.filter(item => item.index !== index);
+        } else {
+            // Add to selected array
+            const existing = selectedReturnItems.find(item => item.index === index);
+            if (!existing) {
+                selectedReturnItems.push({
+                    index: index,
+                    id: conditionSelect.getAttribute('data-id'),
+                    condition: ''
+                });
+            }
+        }
+    }
+    
+    updateBatchReturnWarning();
+}
+
+
+
+
+
+// Store selected items for batch return - use global variable
+let selectedReturnItemsGlobal = [];
+let currentReturnItemsGlobal = [];
+let currentReturnEmployeeIdGlobal = null;
+
+function openBatchReturnModal(employeeId, employeeName) {
+    // Reset global variables
+    selectedReturnItemsGlobal = [];
+    currentReturnItemsGlobal = [];
+    currentReturnEmployeeIdGlobal = employeeId;
+    
+    const modal = document.getElementById('employeeItemsModal');
+    const modalEmployeeName = document.getElementById('modal_employee_name');
+    const contentDiv = document.getElementById('employee_items_content');
+    
+    if (!modal) {
+        console.error('Modal not found!');
+        alert('Modal not found. Please refresh the page.');
+        return;
+    }
+    
+    if (modalEmployeeName) modalEmployeeName.innerHTML = employeeName;
+    
+    modal.style.display = 'flex';
+    modal.style.visibility = 'visible';
+    
+    if (contentDiv) {
+        contentDiv.innerHTML = '<div style="text-align:center;padding:40px;"><i class="fas fa-spinner fa-spin"></i> Loading items...</div>';
+    }
+    
+    fetch('?get_employee_issuances=' + employeeId)
+        .then(response => response.json())
+        .then(data => {
+            if (!contentDiv) return;
+            
+            if (data.success && data.items && data.items.length > 0) {
+                currentReturnItemsGlobal = data.items;
+                
+                let html = `
+                    <div style="margin-bottom: 15px; padding: 10px; background: #f5f5f5; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="select_all_return_items" onchange="toggleSelectAllReturnItems()">
+                            <strong>Select All Items</strong>
+                        </label>
+                        <button onclick="submitBatchReturn()" id="batchReturnBtn" style="background: #FF9800; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">
+                            <i class="fas fa-undo-alt"></i> Return Selected Items
+                        </button>
+                    </div>
+                    <div style="overflow-x: auto; max-height: 500px; overflow-y: auto;">
+                        <table style="width:100%; border-collapse: collapse; font-size: 13px;">
+                            <thead>
+                                <tr style="background: #f5f5f5; position: sticky; top: 0;">
+                                    <th style="padding: 10px; border-bottom: 2px solid #ddd; width: 40px;">Select</th>
+                                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Item Name</th>
+                                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Property No.</th>
+                                    <th style="padding: 10px; text-align: center; border-bottom: 2px solid #ddd;">Qty</th>
+                                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Unit</th>
+                                    <th style="padding: 10px; text-align: right; border-bottom: 2px solid #ddd;">Unit Value</th>
+                                    <th style="padding: 10px; text-align: right; border-bottom: 2px solid #ddd;">Total</th>
+                                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Return Condition</th>
+                                 </table>
+                            </thead>
+                            <tbody>
+                `;
+                
+                let totalValue = 0;
+                data.items.forEach((item, index) => {
+                    const unitDisplay = item.big_unit ? item.big_unit : (item.small_unit || 'pcs');
+                    const itemTotal = parseFloat(item.unit_value) * parseFloat(item.quantity_issued);
+                    totalValue += itemTotal;
+                    
+                    html += `
+                        <tr style="border-bottom: 1px solid #eee;">
+                            <td style="padding: 8px; text-align: center;">
+                                <input type="checkbox" class="return_item_checkbox" data-id="${item.id}" data-index="${index}" onchange="updateReturnItemSelection(this, ${index})">
+                              </div>
+                            <td style="padding: 8px;"><strong>${escapeHtml(item.article_name)}</strong></div>
+                            <td style="padding: 8px;"><code>${escapeHtml(item.issuance_barcode || item.property_no || 'N/A')}</code></div>
+                            <td style="padding: 8px; text-align: center;">${item.quantity_issued}</div>
+                            <td style="padding: 8px;">${escapeHtml(unitDisplay)}</div>
+                            <td style="padding: 8px; text-align: right;">₱${parseFloat(item.unit_value).toFixed(2)}</div>
+                            <td style="padding: 8px; text-align: right;">₱${itemTotal.toFixed(2)}</div>
+                            <td style="padding: 8px;">
+                                <select class="return_condition_select" data-id="${item.id}" data-index="${index}" disabled style="padding: 6px; border-radius: 4px; border: 1px solid #ddd; width: 100%; font-size: 11px;" onchange="updateReturnCondition(this, ${index})">
+                                    <option value="">-- Select --</option>
+                                    <option value="Serviceable">Serviceable - Returns to stock</option>
+                                    <option value="Non-Serviceable">Non-Serviceable - Cannot reissue</option>
+                                    <option value="For Condemn">For Condemn - Cannot reissue</option>
+                                    <option value="Under Repair">Under Repair - Can reissue</option>
+                                </select>
+                              </div>
+                          </div>
+                    `;
+                });
+                
+                html += `
+                                <tr style="background: #FFD8E0; font-weight: bold;">
+                                    <td colspan="6" style="padding: 10px; text-align: right;"><strong>GRAND TOTAL:</strong></div>
+                                    <td style="padding: 10px; text-align: right;"><strong>₱${totalValue.toFixed(2)}</strong></div>
+                                    <td></div>
+                                  </tr>
+                            </tbody>
+                          </table>
+                    </div>
+                    <div id="batch_return_warning" style="margin-top: 15px; padding: 10px; background: #FFF3E0; border-left: 4px solid #FF9800; border-radius: 4px; display: none;">
+                        <i class="fas fa-exclamation-triangle"></i> <span id="batch_return_warning_text"></span>
+                    </div>
+                `;
+                contentDiv.innerHTML = html;
+            } else {
+                contentDiv.innerHTML = '<div style="padding:40px;text-align:center;color:#999;">No items found for this employee.</div>';
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            if (contentDiv) {
+                contentDiv.innerHTML = '<div style="padding:40px;text-align:center;color:red;">Error loading items. Please try again.</div>';
+            }
+        });
+}
+
+function toggleSelectAllReturnItems() {
+    const selectAllCheckbox = document.getElementById('select_all_return_items');
+    const checkboxes = document.querySelectorAll('.return_item_checkbox');
+    const isChecked = selectAllCheckbox.checked;
+    
+    checkboxes.forEach((checkbox) => {
+        checkbox.checked = isChecked;
+        const index = parseInt(checkbox.getAttribute('data-index'));
+        const conditionSelect = document.querySelector(`.return_condition_select[data-index="${index}"]`);
+        
+        if (conditionSelect) {
+            conditionSelect.disabled = !isChecked;
+            if (!isChecked) {
+                conditionSelect.value = '';
+                // Remove from selected array
+                selectedReturnItemsGlobal = selectedReturnItemsGlobal.filter(item => item.index !== index);
+            } else {
+                // Add to selected array if not already there
+                const existing = selectedReturnItemsGlobal.find(item => item.index === index);
+                if (!existing) {
+                    selectedReturnItemsGlobal.push({
+                        index: index,
+                        id: conditionSelect.getAttribute('data-id'),
+                        condition: ''
+                    });
+                }
+            }
+        }
+    });
+    
+    updateBatchReturnWarning();
+}
+
+function updateReturnItemSelection(checkbox, index) {
+    const isSelected = checkbox.checked;
+    const conditionSelect = document.querySelector(`.return_condition_select[data-index="${index}"]`);
+    
+    if (conditionSelect) {
+        conditionSelect.disabled = !isSelected;
+        if (!isSelected) {
+            conditionSelect.value = '';
+            // Remove from selected array
+            selectedReturnItemsGlobal = selectedReturnItemsGlobal.filter(item => item.index !== index);
+        } else {
+            // Add to selected array
+            const existing = selectedReturnItemsGlobal.find(item => item.index === index);
+            if (!existing) {
+                selectedReturnItemsGlobal.push({
+                    index: index,
+                    id: conditionSelect.getAttribute('data-id'),
+                    condition: ''
+                });
+            }
+        }
+    }
+    
+    updateBatchReturnWarning();
+}
+
+function updateReturnCondition(select, index) {
+    const condition = select.value;
+    const itemIndex = selectedReturnItemsGlobal.findIndex(item => item.index === index);
+    
+    if (itemIndex !== -1) {
+        selectedReturnItemsGlobal[itemIndex].condition = condition;
+    } else {
+        selectedReturnItemsGlobal.push({
+            index: index,
+            id: select.getAttribute('data-id'),
+            condition: condition
+        });
+    }
+    
+    updateBatchReturnWarning();
+}
+
+function updateBatchReturnWarning() {
+    const warningDiv = document.getElementById('batch_return_warning');
+    const warningText = document.getElementById('batch_return_warning_text');
+    
+    if (!warningDiv) return;
+    
+    const selectedCount = selectedReturnItemsGlobal.length;
+    const missingCondition = selectedReturnItemsGlobal.filter(item => !item.condition);
+    const nonReissuable = selectedReturnItemsGlobal.filter(item => item.condition === 'Non-Serviceable' || item.condition === 'For Condemn');
+    
+    if (selectedCount === 0) {
+        warningDiv.style.display = 'none';
+        const btn = document.getElementById('batchReturnBtn');
+        if (btn) btn.disabled = false;
+    } else if (missingCondition.length > 0) {
+        warningDiv.style.display = 'block';
+        warningText.innerHTML = `⚠️ Please select return condition for ${missingCondition.length} item(s).`;
+        const btn = document.getElementById('batchReturnBtn');
+        if (btn) btn.disabled = true;
+    } else {
+        warningDiv.style.display = 'block';
+        if (nonReissuable.length > 0) {
+            warningText.innerHTML = `⚠️ ${nonReissuable.length} item(s) marked as "${nonReissuable.map(i => i.condition).join(', ')}" will NOT be available for reissue.`;
+        } else {
+            warningText.innerHTML = `✅ ${selectedCount} item(s) ready to return.`;
+        }
+        const btn = document.getElementById('batchReturnBtn');
+        if (btn) btn.disabled = false;
+    }
+}
+
+function submitBatchReturn() {
+    const itemsToReturn = selectedReturnItemsGlobal.filter(item => item.condition);
+    
+    if (itemsToReturn.length === 0) {
+        alert('Please select at least one item and set its return condition.');
+        return;
+    }
+    
+    // Get item details for confirmation message
+    let confirmMessage = `Return the following ${itemsToReturn.length} item(s)?\n\n`;
+    itemsToReturn.forEach(item => {
+        const itemData = currentReturnItemsGlobal.find(i => i.id == item.id);
+        if (itemData) {
+            confirmMessage += `- ${itemData.article_name} (${item.condition})\n`;
+        }
+    });
+    
+    if (!confirm(confirmMessage)) {
+        return;
+    }
+    
+    const batchReturnBtn = document.getElementById('batchReturnBtn');
+    batchReturnBtn.disabled = true;
+    batchReturnBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+    
+    let processed = 0;
+    let successCount = 0;
+    let errors = [];
+    
+    itemsToReturn.forEach(item => {
+        fetch(window.location.href, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'action=return_item&issuance_id=' + item.id + '&condition_on_return=' + encodeURIComponent(item.condition)
+        })
+        .then(response => response.json())
+        .then(data => {
+            processed++;
+            if (data.success) {
+                successCount++;
+            } else {
+                const itemData = currentReturnItemsGlobal.find(i => i.id == item.id);
+                errors.push(`${itemData ? itemData.article_name : item.id}: ${data.message}`);
+            }
+            
+            if (processed === itemsToReturn.length) {
+                if (errors.length > 0) {
+                    alert(`Returned ${successCount} of ${itemsToReturn.length} items.\nErrors:\n${errors.join('\n')}`);
+                } else {
+                    alert(`Successfully returned ${successCount} item(s).`);
+                }
+                location.reload();
+            }
+        })
+        .catch(error => {
+            processed++;
+            const itemData = currentReturnItemsGlobal.find(i => i.id == item.id);
+            errors.push(`${itemData ? itemData.article_name : item.id}: Network error`);
+            if (processed === itemsToReturn.length) {
+                alert(`Returned ${successCount} of ${itemsToReturn.length} items.\nErrors:\n${errors.join('\n')}`);
+                location.reload();
+            }
+        });
+    });
+}
+
+
+
+
+
+
+
+
+
+
+
+function updateBatchReturnCondition(index, condition) {
+    const itemIndex = selectedReturnItems.findIndex(item => item.index === index);
+    if (itemIndex !== -1) {
+        selectedReturnItems[itemIndex].condition = condition;
+    } else {
+        selectedReturnItems.push({
+            index: index,
+            id: document.querySelector(`.return_condition_select[data-index="${index}"]`).getAttribute('data-id'),
+            condition: condition
+        });
+    }
+    updateBatchReturnWarning();
+}
+
+function updateBatchReturnWarning() {
+    const warningDiv = document.getElementById('batch_return_warning');
+    const warningText = document.getElementById('batch_return_warning_text');
+    
+    if (!warningDiv) return;
+    
+    const selectedCount = selectedReturnItems.length;
+    const missingCondition = selectedReturnItems.filter(item => !item.condition);
+    const nonReissuable = selectedReturnItems.filter(item => item.condition === 'Non-Serviceable' || item.condition === 'For Condemn');
+    
+    if (selectedCount === 0) {
+        warningDiv.style.display = 'none';
+        document.getElementById('batchReturnBtn').disabled = false;
+    } else if (missingCondition.length > 0) {
+        warningDiv.style.display = 'block';
+        warningText.innerHTML = `⚠️ Please select return condition for ${missingCondition.length} item(s).`;
+        document.getElementById('batchReturnBtn').disabled = true;
+    } else {
+        warningDiv.style.display = 'block';
+        if (nonReissuable.length > 0) {
+            warningText.innerHTML = `⚠️ ${nonReissuable.length} item(s) marked as "${nonReissuable.map(i => i.condition).join(', ')}" will NOT be available for reissue.`;
+        } else {
+            warningText.innerHTML = `✅ ${selectedCount} item(s) ready to return.`;
+        }
+        document.getElementById('batchReturnBtn').disabled = false;
+    }
+}
+
+// Add event listener for condition change
+function attachConditionChangeListeners() {
+    document.querySelectorAll('.return_condition_select').forEach(select => {
+        select.removeEventListener('change', handleConditionChange);
+        select.addEventListener('change', handleConditionChange);
+    });
+}
+
+function handleConditionChange(e) {
+    const index = parseInt(e.target.getAttribute('data-index'));
+    const condition = e.target.value;
+    updateBatchReturnCondition(index, condition);
+}
+
+function submitBatchReturn() {
+    const itemsToReturn = selectedReturnItems.filter(item => item.condition);
+    
+    if (itemsToReturn.length === 0) {
+        alert('Please select at least one item and set its return condition.');
+        return;
+    }
+    
+    // Get item details for confirmation message
+    let confirmMessage = `Return the following ${itemsToReturn.length} item(s)?\n\n`;
+    itemsToReturn.forEach(item => {
+        const itemData = window.currentReturnItems.find(i => i.id == item.id);
+        if (itemData) {
+            confirmMessage += `- ${itemData.article_name} (${item.condition})\n`;
+        }
+    });
+    
+    if (!confirm(confirmMessage)) {
+        return;
+    }
+    
+    const batchReturnBtn = document.getElementById('batchReturnBtn');
+    batchReturnBtn.disabled = true;
+    batchReturnBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+    
+    let processed = 0;
+    let successCount = 0;
+    let errors = [];
+    
+    itemsToReturn.forEach(item => {
+        fetch(window.location.href, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'action=return_item&issuance_id=' + item.id + '&condition_on_return=' + encodeURIComponent(item.condition)
+        })
+        .then(response => response.text())
+        .then(text => {
+            try {
+                const data = JSON.parse(text);
+                processed++;
+                if (data.success) {
+                    successCount++;
+                } else {
+                    const itemData = window.currentReturnItems.find(i => i.id == item.id);
+                    errors.push(`${itemData ? itemData.article_name : item.id}: ${data.message}`);
+                }
+            } catch(e) {
+                processed++;
+                const itemData = window.currentReturnItems.find(i => i.id == item.id);
+                errors.push(`${itemData ? itemData.article_name : item.id}: Invalid server response`);
+            }
+            
+            if (processed === itemsToReturn.length) {
+                if (errors.length > 0) {
+                    alert(`Returned ${successCount} of ${itemsToReturn.length} items.\nErrors:\n${errors.join('\n')}`);
+                } else {
+                    alert(`Successfully returned ${successCount} item(s).`);
+                }
+                location.reload();
+            }
+        })
+        .catch(error => {
+            processed++;
+            const itemData = window.currentReturnItems.find(i => i.id == item.id);
+            errors.push(`${itemData ? itemData.article_name : item.id}: Network error`);
+            if (processed === itemsToReturn.length) {
+                alert(`Returned ${successCount} of ${itemsToReturn.length} items.\nErrors:\n${errors.join('\n')}`);
+                location.reload();
+            }
+        });
+    });
+}
+
+
+function closeEmployeeItemsModal() {
+    document.getElementById('employeeItemsModal').style.display = 'none';
+    selectedReturnItems = [];
+    window.currentReturnItems = [];
+}
+
+
+
+
+
+// Test function to check if button click is working
+function testEmployeeIssuances(employeeId, employeeName) {
+    alert('Button clicked! Employee ID: ' + employeeId + ', Name: ' + employeeName);
+    viewEmployeeIssuances(employeeId, employeeName);
+}
+
 
 function searchEmployees() {
     const name = document.getElementById('search_employee_name').value.toLowerCase().trim();
@@ -2067,7 +3708,7 @@ function searchReissueEmployees() {
 function displayReissueEmployeeResults(employees) {
     const tbody = document.getElementById('reissue_employee_results_body');
     if (employees.length === 0) {
-        tbody.innerHTML = '<td><td colspan="4" class="no-results">No employees found</div></div>';
+        tbody.innerHTML = '<tr><td colspan="4" class="no-results" style="text-align:center;padding:40px">No employees found</td></tr>';
         return;
     }
     let html = '';
@@ -2075,10 +3716,10 @@ function displayReissueEmployeeResults(employees) {
         const isSelected = (selectedReissueEmployeeId == emp.id);
         const deptDisplay = emp.department_name && emp.department_name !== '—' ? emp.department_name : '—';
         html += `<tr class="employee-result-row ${isSelected ? 'selected' : ''}" onclick="selectReissueEmployee(${emp.id}, '${escapeHtml(emp.firstname + ' ' + emp.lastname)}', '${escapeHtml(emp.position || '')}', '${escapeHtml(deptDisplay)}')">
-            <td>${escapeHtml(emp.lastname + ', ' + emp.firstname)}</div>
-            <td>${escapeHtml(emp.position || '—')}</div>
-            <td>${escapeHtml(deptDisplay)}</div>
-            <td><button class="select-employee-btn" onclick="event.stopPropagation();selectReissueEmployee(${emp.id}, '${escapeHtml(emp.firstname + ' ' + emp.lastname)}', '${escapeHtml(emp.position || '')}', '${escapeHtml(deptDisplay)}')">Select</button></div>
+            <td>${escapeHtml(emp.lastname + ', ' + emp.firstname)}</td>
+            <td>${escapeHtml(emp.position || '—')}</td>
+            <td>${escapeHtml(deptDisplay)}</td>
+            <td><button class="select-employee-btn" onclick="event.stopPropagation();selectReissueEmployee(${emp.id}, '${escapeHtml(emp.firstname + ' ' + emp.lastname)}', '${escapeHtml(emp.position || '')}', '${escapeHtml(deptDisplay)}')">Select</button></td>
         </tr>`;
     });
     tbody.innerHTML = html;
@@ -2113,32 +3754,66 @@ function clearReissueEmployeeSearch() {
 
 function searchByProperty() {
     const searchTerm = document.getElementById('property_search_input').value.toLowerCase().trim();
+    const itemTypeFilter = document.getElementById('item_type_filter')?.value || 'all';
     const resultDiv = document.getElementById('property_search_result');
-    if (!searchTerm) { resultDiv.innerHTML = '<div class="alert-warning">Please enter search term</div>'; resultDiv.classList.add('show'); return; }
     
-    const found = inventoryData.filter(item => {
+    if (!searchTerm) { 
+        resultDiv.innerHTML = '<div class="alert-warning">Please enter search term</div>'; 
+        resultDiv.classList.add('show'); 
+        return; 
+    }
+    
+    let found = inventoryData.filter(item => {
+        // Apply item type filter first
+        if (itemTypeFilter !== 'all' && item.item_type !== itemTypeFilter) {
+            return false;
+        }
+        
         const propertyNo = (item.property_no || '').toLowerCase();
         const articleName = (item.article_name || '').toLowerCase();
+        
+        // Search both property number and article name
         return propertyNo.includes(searchTerm) || articleName.includes(searchTerm);
     });
     
+    // Also try partial matches if no results found
+    if (found.length === 0 && searchTerm.length > 2) {
+        found = inventoryData.filter(item => {
+            if (itemTypeFilter !== 'all' && item.item_type !== itemTypeFilter) {
+                return false;
+            }
+            const propertyNo = (item.property_no || '').toLowerCase();
+            const articleName = (item.article_name || '').toLowerCase();
+            return propertyNo.includes(searchTerm) || articleName.includes(searchTerm);
+        });
+    }
+    
     if (found.length > 0) {
-        let html = '';
+        let html = `<div style="padding: 8px; background: var(--accent-light); margin-bottom: 10px; border-radius: 8px;">
+                        <strong>Found ${found.length} item(s)</strong>
+                    </div>`;
         found.forEach(item => {
             const isInCart = cartItems.some(cartItem => cartItem.id == item.id);
             const unitDisplay = item.big_unit ? item.big_unit : (item.small_unit || 'pcs');
+            const itemTypeLabel = item.item_type === 'semi_ppe' ? 'Semi-Expendable' : 'Inventory';
             html += `<div class="result-property-card">
                 <div class="result-property-info">
                     <h5>${escapeHtml(item.article_name)}</h5>
                     <p>Property: <strong>${escapeHtml(item.property_no || 'N/A')}</strong> | Available: ${item.qty_physical_count} ${escapeHtml(unitDisplay)}</p>
+                    <small class="text-muted">Type: ${itemTypeLabel}</small>
                 </div>
-                <div>${isInCart ? '<button disabled style="background:#ccc">In Cart</button>' : `<button class="btn-add-property" onclick="addToCart(${item.id}, 1)">Add to Cart</button>`}</div>
+                <div>${isInCart ? '<button disabled style="background:#ccc">In Cart</button>' : `<button class="btn-add-property" onclick="addToCart(${item.id}, 1)">Issue Item</button>`}</div>
             </div>`;
         });
         resultDiv.innerHTML = html;
         resultDiv.classList.add('show');
     } else {
-        resultDiv.innerHTML = `<div class="result-property-card"><h5>No items found for: ${escapeHtml(searchTerm)}</h5></div>`;
+        resultDiv.innerHTML = `<div class="result-property-card">
+            <div class="result-property-info">
+                <h5>No items found for: "${escapeHtml(searchTerm)}"</h5>
+                <p>Try searching by property number or article name</p>
+            </div>
+        </div>`;
         resultDiv.classList.add('show');
     }
 }
@@ -2148,7 +3823,6 @@ function clearPropertySearch() {
     document.getElementById('property_search_result').innerHTML = '';
     document.getElementById('property_search_result').classList.remove('show');
 }
-
 function searchBarcode() {
     const barcode = document.getElementById('barcode_input').value.trim();
     const resultDiv = document.getElementById('barcode_result');
@@ -2159,34 +3833,84 @@ function searchBarcode() {
         return;
     }
     
+    // Search on barcode_data OR property_no (exact match on either)
     const found = inventoryData.filter(item => {
-        const propertyNo = (item.property_no || '').toLowerCase();
-        const articleName = (item.article_name || '').toLowerCase();
-        return propertyNo.includes(barcode.toLowerCase()) || articleName.includes(barcode.toLowerCase());
+        const itemBarcode = (item.barcode_data || '').toLowerCase();
+        const itemPropertyNo = (item.property_no || '').toLowerCase();
+        const searchTerm = barcode.toLowerCase();
+        
+        // Check both barcode_data AND property_no
+        return itemBarcode === searchTerm || itemPropertyNo === searchTerm;
     });
     
     if (found.length > 0) {
         let html = '';
         found.forEach(item => {
             const isInCart = cartItems.some(cartItem => cartItem.id == item.id);
-            const unitDisplay = item.big_unit ? item.big_unit : (item.small_unit || 'pcs');
-            html += `<div class="result-item">
-                <div class="result-info">
-                    <h5>${escapeHtml(item.article_name)}</h5>
-                    <p>Property: <strong>${escapeHtml(item.property_no || 'N/A')}</strong> | Available: ${item.qty_physical_count} ${escapeHtml(unitDisplay)}</p>
+            
+            // Calculate correct display values
+            const bigQuantity = item.big_quantity || 1;
+            const piecesPerBig = item.pieces_per_big_unit || 1;
+            const totalQuantity = bigQuantity * piecesPerBig;
+            const bigUnitDisplay = `${bigQuantity} ${item.big_unit || 'Unit'}`;
+            const smallUnitDisplay = `${piecesPerBig} ${item.small_unit || 'Piece'}`;
+            const itemTypeLabel = item.item_type === 'semi_ppe' ? 'Semi-Expendable' : 'Inventory';
+            const displayBarcode = item.barcode_data || item.property_no || 'N/A';
+            
+            html += `<div class="result-item" style="background: rgba(255,255,255,0.15); border-radius: 12px; margin-bottom: 15px;">
+                <div class="result-info" style="flex: 2;">
+                    <h5 style="margin: 0 0 10px 0; font-size: 16px;">${escapeHtml(item.article_name)}</h5>
+                    <table style="width: 100%; font-size: 13px;">
+                        <tr>
+                            <td style="padding: 4px 0;"><strong>Property No:</strong></td>
+                            <td style="padding: 4px 0;"><code>${escapeHtml(item.property_no || 'N/A')}</code></td>
+                            <td style="padding: 4px 0;"><strong>Barcode:</strong></td>
+                            <td style="padding: 4px 0;"><code>${escapeHtml(displayBarcode)}</code></td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 4px 0;"><strong>Big Unit:</strong></td>
+                            <td style="padding: 4px 0;">${escapeHtml(bigUnitDisplay)}</td>
+                            <td style="padding: 4px 0;"><strong>Small Unit:</strong></td>
+                            <td style="padding: 4px 0;">${escapeHtml(smallUnitDisplay)}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 4px 0;"><strong>Total Quantity:</strong></td>
+                            <td style="padding: 4px 0;"><strong style="color: #4CAF50;">${totalQuantity} ${escapeHtml(item.small_unit || 'pieces')}</strong></td>
+                            <td style="padding: 4px 0;"><strong>Unit Value:</strong></td>
+                            <td style="padding: 4px 0;">₱${parseFloat(item.unit_value).toFixed(2)}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 4px 0;"><strong>Total Value:</strong></td>
+                            <td style="padding: 4px 0;">₱${(totalQuantity * parseFloat(item.unit_value)).toFixed(2)}</td>
+                            <td style="padding: 4px 0;"><strong>Type:</strong></td>
+                            <td style="padding: 4px 0;">${itemTypeLabel}</td>
+                        </tr>
+                    </table>
                 </div>
-                <div>${isInCart ? '<button disabled>In Cart</button>' : `<button class="btn-add-item" onclick="addToCart(${item.id}, 1)">Add to Cart</button>`}</div>
+                <div style="margin-top: 10px;">
+                    ${isInCart ? 
+                        '<button disabled style="background:#ccc; padding:8px 16px; border:none; border-radius:6px;">In Cart</button>' : 
+                        `<button class="btn-add-item" onclick="addToCart(${item.id}, 1)" style="background:#4CAF50; color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer;">
+                            <i class="fas fa-cart-plus"></i> Issue me asdgbasdgaksd
+                        </button>`
+                    }
+                </div>
             </div>`;
         });
         resultDiv.innerHTML = html;
         resultDiv.classList.add('show');
         document.getElementById('barcode_input').value = '';
     } else {
-        resultDiv.innerHTML = `<div class="result-item"><h5>No item found for: ${escapeHtml(barcode)}</h5></div>`;
+        resultDiv.innerHTML = `<div class="result-item" style="background: rgba(0,0,0,0.2); border-radius: 12px; padding: 20px; text-align: center;">
+            <div class="result-info">
+                <h5><i class="fas fa-exclamation-triangle"></i> Item Not Found</h5>
+                <p>No item found with barcode: <strong>"${escapeHtml(barcode)}"</strong></p>
+                <p>Please check the barcode and try again.</p>
+            </div>
+        </div>`;
         resultDiv.classList.add('show');
     }
 }
-
 function addToCart(id, qty) {
     const item = inventoryData.find(i => i.id == id);
     if (!item) return;
@@ -2197,9 +3921,16 @@ function addToCart(id, qty) {
         else alert('Max available: ' + item.qty_physical_count);
     } else {
         cartItems.push({
-            id: item.id, name: item.article_name, property_no: item.property_no,
-            big_unit: item.big_unit, small_unit: item.small_unit,
-            available_qty: item.qty_physical_count, unit_value: item.unit_value, quantity: (qty || 1)
+            id: item.id, 
+            name: item.article_name, 
+            property_no: item.property_no,
+            barcode_data: item.barcode_data,  // ADD THIS LINE
+            big_unit: item.big_unit, 
+            small_unit: item.small_unit,
+            available_qty: item.qty_physical_count, 
+            unit_value: item.unit_value, 
+            quantity: (qty || 1),
+            item_type: item.item_type 
         });
     }
     updateCartDisplay();
@@ -2266,14 +3997,21 @@ function updateCartDisplay() {
 function updateFormInputs() {
     document.querySelectorAll('input[name="inventory_ids[]"]').forEach(e => e.remove());
     document.querySelectorAll('input[name="quantities[]"]').forEach(e => e.remove());
+    document.querySelectorAll('input[name="item_type[]"]').forEach(e => e.remove());
+    
     const form = document.getElementById('issueForm');
     cartItems.forEach(item => {
         let ii = document.createElement('input');
         ii.type = 'hidden'; ii.name = 'inventory_ids[]'; ii.value = item.id;
         form.appendChild(ii);
+        
         let qi = document.createElement('input');
         qi.type = 'hidden'; qi.name = 'quantities[]'; qi.value = item.quantity;
         form.appendChild(qi);
+        
+        let ti = document.createElement('input');
+        ti.type = 'hidden'; ti.name = 'item_type[]'; ti.value = item.item_type;
+        form.appendChild(ti);
     });
 }
 
@@ -2325,15 +4063,52 @@ function closeReturnModal() { document.getElementById('returnModal').classList.r
 
 function submitReturn() {
     const condition = document.getElementById('return_condition').value;
-    if (!condition) { alert('Please select a condition'); return; }
-    fetch('', {
+    if (!condition) { 
+        alert('Please select a condition'); 
+        return; 
+    }
+    
+    // Show loading state
+    const confirmBtn = document.querySelector('#returnModal .confirm-btn-confirm');
+    const originalText = confirmBtn.innerHTML;
+    confirmBtn.disabled = true;
+    confirmBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+    
+    fetch(window.location.href, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-Requested-With': 'XMLHttpRequest'
+        },
         body: 'action=return_item&issuance_id=' + currentReturnId + '&condition_on_return=' + encodeURIComponent(condition)
     })
-    .then(response => response.json())
-    .then(data => { alert(data.message); if(data.success) location.reload(); })
-    .catch(error => alert('Error: ' + error));
+    .then(response => response.text())  // First get as text to debug
+    .then(text => {
+        console.log('Raw response:', text);  // Debug: see what's returned
+        
+        try {
+            const data = JSON.parse(text);
+            alert(data.message);
+            if (data.success) {
+                location.reload();
+            } else {
+                confirmBtn.disabled = false;
+                confirmBtn.innerHTML = originalText;
+            }
+        } catch(e) {
+            console.error('JSON parse error:', e);
+            alert('Error: Invalid response from server. Check console for details.');
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = originalText;
+        }
+    })
+    .catch(error => {
+        console.error('Fetch error:', error);
+        alert('Error: ' + error);
+        confirmBtn.disabled = false;
+        confirmBtn.innerHTML = originalText;
+    });
+    
     closeReturnModal();
 }
 
@@ -2350,42 +4125,98 @@ function viewIssuanceDetails(id) {
     fetch('?ajax=get_issuance&id=' + id)
         .then(response => response.json())
         .then(data => {
+            console.log('Response:', data);
+            
             if (data.success) {
                 const item = data.data;
                 const unitDisplay = item.big_unit ? item.big_unit : (item.small_unit || 'pcs');
                 const conditionClass = 'condition-' + (item.condition_on_issue || 'Serviceable').replace(/ /g, '');
                 const statusClass = 'issue-status-' + item.status;
+                // Use issuance_barcode for property number display
+                const displayPropertyNo = item.issuance_barcode || item.property_no || 'N/A';
                 
                 body.innerHTML = `
-                    <div class="view-detail-row"><div class="view-detail-label">Item Name:</div><div class="view-detail-value"><strong>${escapeHtml(item.article_name)}</strong></div></div>
-                    <div class="view-detail-row"><div class="view-detail-label">Property No.:</div><div class="view-detail-value"><code>${escapeHtml(item.property_no)}</code></div></div>
-                    <div class="view-detail-row"><div class="view-detail-label">Description:</div><div class="view-detail-value">${escapeHtml(item.description || 'N/A')}</div></div>
-                    <div class="view-detail-row"><div class="view-detail-label">Quantity:</div><div class="view-detail-value">${item.quantity_issued} ${escapeHtml(unitDisplay)}</div></div>
-                    <div class="view-detail-row"><div class="view-detail-label">Unit Value:</div><div class="view-detail-value">₱${parseFloat(item.unit_value).toFixed(2)}</div></div>
-                    <div class="view-detail-row"><div class="view-detail-label">Total Value:</div><div class="view-detail-value">₱${(item.quantity_issued * item.unit_value).toFixed(2)}</div></div>
-                    <div class="view-detail-row"><div class="view-detail-label">Issued To:</div><div class="view-detail-value">${escapeHtml(item.issued_to_name)}${item.issued_to_position ? ' - ' + escapeHtml(item.issued_to_position) : ''}</div></div>
-                    <div class="view-detail-row"><div class="view-detail-label">Condition:</div><div class="view-detail-value"><span class="condition-badge ${conditionClass}">${escapeHtml(item.condition_on_issue || 'Serviceable')}</span></div></div>
-                    <div class="view-detail-row"><div class="view-detail-label">Issued By:</div><div class="view-detail-value">${escapeHtml(item.issued_by_name)}</div></div>
-                    <div class="view-detail-row"><div class="view-detail-label">Issued Date:</div><div class="view-detail-value">${new Date(item.issued_date).toLocaleString()}</div></div>
-                    <div class="view-detail-row"><div class="view-detail-label">Signatory:</div><div class="view-detail-value">${escapeHtml(item.signatory_name || 'N/A')}</div></div>
-                    <div class="view-detail-row"><div class="view-detail-label">Status:</div><div class="view-detail-value"><span class="issue-status-badge ${statusClass}">${escapeHtml(item.status)}</span></div></div>
-                    ${item.actual_return ? `<div class="view-detail-row"><div class="view-detail-label">Return Date:</div><div class="view-detail-value">${new Date(item.actual_return).toLocaleString()}</div></div>` : ''}
-                    ${item.condition_on_return ? `<div class="view-detail-row"><div class="view-detail-label">Condition on Return:</div><div class="view-detail-value">${escapeHtml(item.condition_on_return)}</div></div>` : ''}
-                    ${item.reissued_from_name ? `<div class="view-detail-row"><div class="view-detail-label">Reissued From:</div><div class="view-detail-value">${escapeHtml(item.reissued_from_name)}</div></div>` : ''}
-                    ${item.reissued_to_name ? `<div class="view-detail-row"><div class="view-detail-label">Reissued To:</div><div class="view-detail-value">${escapeHtml(item.reissued_to_name)}</div></div>` : ''}
-                    ${item.remarks ? `<div class="view-detail-row"><div class="view-detail-label">Remarks:</div><div class="view-detail-value">${escapeHtml(item.remarks)}</div></div>` : ''}
+                    <div class="view-detail-row">
+                        <div class="view-detail-label">Item Name:</div>
+                        <div class="view-detail-value"><strong>${escapeHtml(item.article_name)}</strong></div>
+                    </div>
+                    <div class="view-detail-row">
+                        <div class="view-detail-label">Property No.:</div>
+                        <div class="view-detail-value"><code>${escapeHtml(displayPropertyNo)}</code></div>
+                    </div>
+                    <div class="view-detail-row">
+                        <div class="view-detail-label">Description:</div>
+                        <div class="view-detail-value">${escapeHtml(item.description || 'N/A')}</div>
+                    </div>
+                    <div class="view-detail-row">
+                        <div class="view-detail-label">Quantity:</div>
+                        <div class="view-detail-value">${item.quantity_issued} ${escapeHtml(unitDisplay)}</div>
+                    </div>
+                    <div class="view-detail-row">
+                        <div class="view-detail-label">Unit Value:</div>
+                        <div class="view-detail-value">₱${parseFloat(item.unit_value).toFixed(2)}</div>
+                    </div>
+                    <div class="view-detail-row">
+                        <div class="view-detail-label">Total Value:</div>
+                        <div class="view-detail-value">₱${(item.quantity_issued * item.unit_value).toFixed(2)}</div>
+                    </div>
+                    <div class="view-detail-row">
+                        <div class="view-detail-label">Issued To:</div>
+                        <div class="view-detail-value">${escapeHtml(item.issued_to_name)}${item.issued_to_position ? ' - ' + escapeHtml(item.issued_to_position) : ''}</div>
+                    </div>
+                    <div class="view-detail-row">
+                        <div class="view-detail-label">Condition on Issue:</div>
+                        <div class="view-detail-value"><span class="condition-badge ${conditionClass}">${escapeHtml(item.condition_on_issue || 'Serviceable')}</span></div>
+                    </div>
+                    <div class="view-detail-row">
+                        <div class="view-detail-label">Issued By:</div>
+                        <div class="view-detail-value">${escapeHtml(item.issued_by_name)}</div>
+                    </div>
+                    <div class="view-detail-row">
+                        <div class="view-detail-label">Issued Date:</div>
+                        <div class="view-detail-value">${new Date(item.issued_date).toLocaleString()}</div>
+                    </div>
+                    <div class="view-detail-row">
+                        <div class="view-detail-label">Issuance Barcode:</div>
+                        <div class="view-detail-value"><code>${escapeHtml(item.issuance_barcode || 'N/A')}</code></div>
+                    </div>
+                    <div class="view-detail-row">
+                        <div class="view-detail-label">Signatory:</div>
+                        <div class="view-detail-value">${escapeHtml(item.signatory_name || 'N/A')}</div>
+                    </div>
+                    <div class="view-detail-row">
+                        <div class="view-detail-label">Status:</div>
+                        <div class="view-detail-value"><span class="issue-status-badge ${statusClass}">${escapeHtml(item.status)}</span></div>
+                    </div>
+                    ${item.actual_return ? `<div class="view-detail-row">
+                        <div class="view-detail-label">Return Date:</div>
+                        <div class="view-detail-value">${new Date(item.actual_return).toLocaleString()}</div>
+                    </div>` : ''}
+                    ${item.condition_on_return ? `<div class="view-detail-row">
+                        <div class="view-detail-label">Condition on Return:</div>
+                        <div class="view-detail-value">${escapeHtml(item.condition_on_return)}</div>
+                    </div>` : ''}
+                    ${item.reissued_from_name ? `<div class="view-detail-row">
+                        <div class="view-detail-label">Reissued From:</div>
+                        <div class="view-detail-value">${escapeHtml(item.reissued_from_name)}</div>
+                    </div>` : ''}
+                    ${item.reissued_to_name ? `<div class="view-detail-row">
+                        <div class="view-detail-label">Reissued To:</div>
+                        <div class="view-detail-value">${escapeHtml(item.reissued_to_name)}</div>
+                    </div>` : ''}
+                    ${item.remarks ? `<div class="view-detail-row">
+                        <div class="view-detail-label">Remarks:</div>
+                        <div class="view-detail-value">${escapeHtml(item.remarks)}</div>
+                    </div>` : ''}
                 `;
             } else {
-                body.innerHTML = '<div style="color:red;text-align:center;padding:20px">Error loading details</div>';
+                body.innerHTML = '<div style="color:red;text-align:center;padding:20px">' + (data.message || 'Error loading details') + '</div>';
             }
         })
-        .catch(() => {
-            body.innerHTML = '<div style="color:red;text-align:center;padding:20px">Error loading details</div>';
+        .catch(error => {
+            console.error('Error:', error);
+            body.innerHTML = '<div style="color:red;text-align:center;padding:20px">Error loading details: ' + error.message + '</div>';
         });
-}
-
-function closeViewModal() {
-    document.getElementById('viewModal').classList.remove('show');
 }
 
 // ============================================
@@ -2394,7 +4225,7 @@ function closeViewModal() {
 
 function showBarcodeModal(barcode, itemName) {
     document.getElementById('barcodeModalTitle').innerHTML = itemName;
-    document.getElementById('barcodeModalImage').innerHTML = `<img src="<?php echo SITE_URL; ?>/admin/barcode_generator_issued.php?code=${encodeURIComponent(barcode)}&width=300&height=80&t=${Date.now()}" style="border:1px solid #ddd;padding:10px;border-radius:8px">`;
+    document.getElementById('barcodeModalImage').innerHTML = `<img src="<?php echo SITE_URL; ?>/admin/barcode_generator_issued.php?code=${encodeURIComponent(barcode)}&width=200&height=50&t=${Date.now()}" style="border:1px solid #ddd;padding:8px;border-radius:5px;max-width:100%">`;
     document.getElementById('barcodeModalValue').innerHTML = barcode;
     document.getElementById('barcodeModal').classList.add('show');
 }
@@ -2538,9 +4369,29 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('returnModal')?.addEventListener('click', function(e) {
         if (e.target === this) closeReturnModal();
     });
+
+    // Close modals when clicking outside
+document.getElementById('viewModal')?.addEventListener('click', function(e) {
+    if (e.target === this) closeViewModal();
+});
+
+document.getElementById('barcodeModal')?.addEventListener('click', function(e) {
+    if (e.target === this) closeBarcodeModal();
+});
+
+document.getElementById('returnModal')?.addEventListener('click', function(e) {
+    if (e.target === this) closeReturnModal();
+});
     
     searchEmployees();
-    <?php if($reissue_item): ?>searchReissueEmployees();<?php endif; ?>
+    <?php if($reissue_item): ?>
+    searchReissueEmployees();
+    setTimeout(function() {
+        if(document.getElementById('reissue_employee_results_body').innerHTML.includes('Type to search')) {
+            searchReissueEmployees();
+        }
+    }, 100);
+<?php endif; ?>
 });
 </script>
 

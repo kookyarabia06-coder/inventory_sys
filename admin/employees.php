@@ -13,7 +13,7 @@ require_once INCLUDE_PATH . '/auth.php';
 require_once INCLUDE_PATH . '/functions.php';
 
 // Role checking
-requireRole('admin' || 'superadmin');
+requireRole('admin', 'superadmin');
 
 $page_title = 'Employees';
 $page_description = 'Manage employees linked to user accounts';
@@ -21,6 +21,32 @@ $page_description = 'Manage employees linked to user accounts';
 // Generate CSRF token if not exists
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+/**
+ * Check if email already exists (excluding empty emails)
+ */
+function emailExists($conn, $email, $exclude_id = null) {
+    // Skip check if email is empty
+    if (empty($email)) {
+        return false;
+    }
+    
+    $sql = "SELECT id FROM employees WHERE email = ?";
+    if ($exclude_id) {
+        $sql .= " AND id != ?";
+    }
+    $stmt = $conn->prepare($sql);
+    if ($exclude_id) {
+        $stmt->bind_param("si", $email, $exclude_id);
+    } else {
+        $stmt->bind_param("s", $email);
+    }
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $exists = $result->num_rows > 0;
+    $stmt->close();
+    return $exists;
 }
 
 // Handle Add/Edit Employee
@@ -34,7 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $firstname = sanitize($_POST['firstname']);
             $lastname = sanitize($_POST['lastname']);
             $middlename = sanitize($_POST['middlename'] ?? '');
-            $email = sanitize($_POST['email'] ?? '');
+            $email = !empty($_POST['email']) ? sanitize($_POST['email']) : null;
             $contact = sanitize($_POST['contact'] ?? '');
             $department_id = !empty($_POST['department_id']) ? (int)$_POST['department_id'] : null;
             $section_id = !empty($_POST['section_id']) ? (int)$_POST['section_id'] : null;
@@ -48,6 +74,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             
             if (!empty($email) && !validateEmail($email)) {
                 $errors[] = "Invalid email format";
+            }
+            
+            // Check if email already exists
+            if (!empty($email) && emailExists($conn, $email)) {
+                $errors[] = "Email address already exists in the system";
             }
             
             // Check if user_id already linked to an employee
@@ -76,6 +107,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     if ($stmt->execute()) {
                         $employee_id = $stmt->insert_id;
                         $_SESSION['success'] = "Employee added successfully" . ($user_id ? " and linked to user account!" : "!");
+                        logActivity('Add Employee', $employee_id, "Added employee: $lastname, $firstname");
                     } else {
                         $_SESSION['error'] = "Database error: " . $stmt->error;
                     }
@@ -96,7 +128,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $firstname = sanitize($_POST['firstname']);
             $lastname = sanitize($_POST['lastname']);
             $middlename = sanitize($_POST['middlename'] ?? '');
-            $email = sanitize($_POST['email'] ?? '');
+            $email = !empty($_POST['email']) ? sanitize($_POST['email']) : null;
             $contact = sanitize($_POST['contact'] ?? '');
             $department_id = !empty($_POST['department_id']) ? (int)$_POST['department_id'] : null;
             $section_id = !empty($_POST['section_id']) ? (int)$_POST['section_id'] : null;
@@ -110,6 +142,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             
             if (!empty($email) && !validateEmail($email)) {
                 $errors[] = "Invalid email format";
+            }
+            
+            // Check if email already exists for another employee
+            if (!empty($email) && emailExists($conn, $email, $id)) {
+                $errors[] = "Email address already exists in the system";
             }
             
             // Check if user_id already linked to another employee
@@ -140,6 +177,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     
                     if ($stmt->execute()) {
                         $_SESSION['success'] = "Employee updated successfully";
+                        logActivity('Edit Employee', $id, "Updated employee: $lastname, $firstname");
                     } else {
                         $_SESSION['error'] = "Error updating employee: " . $stmt->error;
                     }
@@ -165,10 +203,15 @@ if (isset($_GET['delete']) && is_numeric($_GET['delete'])) {
     
     $id = (int)$_GET['delete'];
     
+    // Get employee name for logging before deletion
+    $name_query = $conn->query("SELECT CONCAT(lastname, ', ', firstname) as name FROM employees WHERE id = $id");
+    $employee_name = $name_query && $name_query->num_rows > 0 ? $name_query->fetch_assoc()['name'] : 'Unknown';
+    
     $conn->query("DELETE FROM employees WHERE id = $id");
     
     if ($conn->affected_rows > 0) {
         $_SESSION['success'] = "Employee deleted successfully";
+        logActivity('Delete Employee', $id, "Deleted employee: $employee_name");
     } else {
         $_SESSION['error'] = "Error deleting employee";
     }
@@ -185,12 +228,14 @@ if (isset($_GET['get_employee']) && is_numeric($_GET['get_employee'])) {
     $result = $conn->query("
         SELECT e.*, 
                d.name as department_name, d.code as department_code,
-               s.name as section_name,
+               s.name as section_name, s.id as section_id,
+               a.name as area_name, a.code as area_code, a.id as division_id,
                u.username, u.role as user_role, u.status as user_status,
                CONCAT(u.firstname, ' ', u.lastname) as user_fullname
         FROM employees e
         LEFT JOIN departments d ON e.department_id = d.id
         LEFT JOIN sections s ON e.section_id = s.id
+        LEFT JOIN areas a ON d.area_id = a.id
         LEFT JOIN users u ON e.user_id = u.id
         WHERE e.id = $id
     ");
@@ -247,6 +292,35 @@ if (isset($_GET['get_sections_by_department']) && is_numeric($_GET['get_sections
     exit;
 }
 
+// Handle AJAX request to get departments by division
+if (isset($_GET['get_departments_by_division']) && is_numeric($_GET['get_departments_by_division'])) {
+    header('Content-Type: application/json');
+    
+    $division_id = (int)$_GET['get_departments_by_division'];
+    
+    // Get departments that belong to this division (area)
+    $result = $conn->prepare("
+        SELECT d.id, d.code, d.name
+        FROM departments d
+        WHERE d.area_id = ?
+        ORDER BY d.code, d.name
+    ");
+    $result->bind_param("i", $division_id);
+    $result->execute();
+    $dept_result = $result->get_result();
+    
+    $departments = [];
+    if ($dept_result && $dept_result->num_rows > 0) {
+        while($row = $dept_result->fetch_assoc()) {
+            $departments[] = $row;
+        }
+    }
+    $result->close();
+    
+    echo json_encode(['success' => true, 'departments' => $departments]);
+    exit;
+}
+
 // ============================================
 // DISPLAY DATA WITH PAGINATION AND SEARCH
 // ============================================
@@ -268,7 +342,7 @@ $position_filter = isset($_GET['position_filter']) ? sanitize($_GET['position_fi
 // Get departments for dropdown
 $departments_result = $conn->query("SELECT id, name, code FROM departments ORDER BY code, name");
 
-// Get sections for dropdown (will be populated dynamically based on department filter)
+// Get sections for dropdown
 $sections_for_filter = [];
 if ($department_filter) {
     $sections_filter_query = $conn->prepare("SELECT id, name FROM sections WHERE department_id = ? ORDER BY name");
@@ -280,7 +354,7 @@ if ($department_filter) {
     }
     $sections_filter_query->close();
 } else {
-    $sections_filter_result = $conn->query("SELECT id, name, department_id FROM sections ORDER BY name");
+    $sections_filter_result = $conn->query("SELECT id, name FROM sections ORDER BY name");
     if ($sections_filter_result && $sections_filter_result->num_rows > 0) {
         while($sec = $sections_filter_result->fetch_assoc()) {
             $sections_for_filter[] = $sec;
@@ -339,7 +413,7 @@ if (!empty($search)) {
     $types .= "sssss";
 }
 
-// Date range filter (using date_added)
+// Date range filter
 if (!empty($date_from)) {
     if (!empty($where_clause)) $where_clause .= " AND";
     $where_clause .= " DATE(e.date_added) >= ?";
@@ -412,17 +486,19 @@ $count_stmt->close();
 
 $total_pages = ceil($total_rows / $per_page);
 
-// Get employees with search and pagination - ORDER BY lastname, firstname alphabetically
+// Get employees with search and pagination
 $sql = "
     SELECT e.*, 
            d.name as department_name, d.code as department_code,
            s.name as section_name,
+           a.name as area_name, a.code as area_code,
            u.username, u.role as user_role, u.status as user_status,
            CONCAT(u.firstname, ' ', u.lastname) as user_fullname,
            CASE WHEN u.id IS NOT NULL THEN 1 ELSE 0 END as has_user_account
     FROM employees e
     LEFT JOIN departments d ON e.department_id = d.id
     LEFT JOIN sections s ON e.section_id = s.id
+    LEFT JOIN areas a ON d.area_id = a.id
     LEFT JOIN users u ON e.user_id = u.id
     $where_clause
     ORDER BY e.lastname ASC, e.firstname ASC
@@ -446,6 +522,7 @@ include INCLUDE_PATH . '/header.php';
 ?>
 
 <style>
+/* CSS remains the same as your original file */
 * {
     box-sizing: border-box;
 }
@@ -474,7 +551,6 @@ body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
-/* Dashboard Cards */
 .dashboard-cards {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -528,7 +604,6 @@ body {
     font-size: 12px;
 }
 
-/* Table Container */
 .table-container {
     background: var(--white);
     border-radius: 16px;
@@ -566,7 +641,6 @@ body {
     margin: 0;
 }
 
-/* Advanced Search Box */
 .advanced-search-box {
     padding: 0;
     margin-bottom: 20px;
@@ -649,7 +723,6 @@ body {
     background: #7f8c8d;
 }
 
-/* Employee Table */
 .employee-wrapper {
     overflow-x: auto;
     border-radius: 12px;
@@ -689,7 +762,6 @@ body {
     background-color: var(--light);
 }
 
-/* Badges */
 .badge {
     display: inline-block;
     padding: 4px 10px;
@@ -718,7 +790,6 @@ body {
     color: #2563EB;
 }
 
-/* Action Buttons */
 .action-buttons {
     display: flex;
     gap: 6px;
@@ -748,7 +819,6 @@ body {
     filter: brightness(0.95);
 }
 
-/* Pagination */
 .pagination {
     display: flex;
     justify-content: center;
@@ -789,10 +859,7 @@ body {
     cursor: not-allowed;
 }
 
-/* ============================================
-   MODAL STYLES - WITH SCROLL
-   ============================================ */
-
+/* Modal Styles */
 .modal-overlay {
     display: none;
     position: fixed;
@@ -821,7 +888,6 @@ body {
     overflow: hidden;
 }
 
-/* Scrollable content area for modals */
 .modal-scroll-content {
     padding: 0 25px;
     overflow-y: auto;
@@ -834,7 +900,6 @@ body {
     flex: 1;
 }
 
-/* Custom Delete Confirmation Modal */
 .delete-modal-overlay {
     display: none;
     position: fixed;
@@ -998,7 +1063,6 @@ body {
     flex-shrink: 0;
 }
 
-/* Form Sections inside Modal */
 .form-section {
     background: var(--white);
     padding: 20px;
@@ -1024,7 +1088,6 @@ body {
     margin-right: 10px;
 }
 
-/* Form Styles */
 .form-group {
     margin-bottom: 20px;
 }
@@ -1063,7 +1126,6 @@ body {
     margin-bottom: 0;
 }
 
-/* Button Styles */
 .btn {
     display: inline-flex;
     align-items: center;
@@ -1088,7 +1150,6 @@ body {
     color: var(--text-light);
 }
 
-/* Modal Buttons */
 .btn-modal {
     padding: 8px 20px;
     border: none;
@@ -1122,7 +1183,6 @@ body {
     transform: translateY(-2px);
 }
 
-/* Detail Grid for View Modal */
 .detail-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
@@ -1147,7 +1207,6 @@ body {
     font-size: 14px;
 }
 
-/* Alert */
 .alert {
     padding: 14px 18px;
     border-radius: 12px;
@@ -1194,7 +1253,6 @@ body {
     background: var(--secondary);
 }
 
-/* Responsive */
 @media (max-width: 768px) {
     .dashboard-cards {
         grid-template-columns: repeat(2, 1fr);
@@ -1411,52 +1469,6 @@ body {
                 <?php endif; ?>
             </div>
         </div>
-        
-        <!-- Filter Summary -->
-        <?php if ($search || $date_from || $date_to || $department_filter || $section_filter || $status_filter || $position_filter): ?>
-        <div class="filter-summary" style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; padding-top: 15px; border-top: 1px solid var(--border-light);">
-            <span style="font-size: 12px; color: var(--text-muted);"><i class="fas fa-filter"></i> Active Filters:</span>
-            <?php if ($search): ?>
-            <span class="filter-badge" style="background: var(--accent-light); padding: 5px 12px; border-radius: 20px; font-size: 12px;">
-                <i class="fas fa-search"></i> Search: "<?php echo htmlspecialchars($search); ?>"
-            </span>
-            <?php endif; ?>
-            <?php if ($date_from): ?>
-            <span class="filter-badge" style="background: var(--accent-light); padding: 5px 12px; border-radius: 20px; font-size: 12px;">
-                <i class="fas fa-calendar"></i> From: <?php echo htmlspecialchars($date_from); ?>
-            </span>
-            <?php endif; ?>
-            <?php if ($date_to): ?>
-            <span class="filter-badge" style="background: var(--accent-light); padding: 5px 12px; border-radius: 20px; font-size: 12px;">
-                <i class="fas fa-calendar"></i> To: <?php echo htmlspecialchars($date_to); ?>
-            </span>
-            <?php endif; ?>
-            <?php if ($department_filter): 
-                $dept_name = $conn->query("SELECT name FROM departments WHERE id = $department_filter")->fetch_assoc();
-            ?>
-            <span class="filter-badge" style="background: var(--accent-light); padding: 5px 12px; border-radius: 20px; font-size: 12px;">
-                <i class="fas fa-building"></i> Dept: <?php echo htmlspecialchars($dept_name['name'] ?? 'N/A'); ?>
-            </span>
-            <?php endif; ?>
-            <?php if ($section_filter): 
-                $section_name = $conn->query("SELECT name FROM sections WHERE id = $section_filter")->fetch_assoc();
-            ?>
-            <span class="filter-badge" style="background: var(--accent-light); padding: 5px 12px; border-radius: 20px; font-size: 12px;">
-                <i class="fas fa-layer-group"></i> Section: <?php echo htmlspecialchars($section_name['name'] ?? 'N/A'); ?>
-            </span>
-            <?php endif; ?>
-            <?php if ($status_filter): ?>
-            <span class="filter-badge" style="background: var(--accent-light); padding: 5px 12px; border-radius: 20px; font-size: 12px;">
-                <i class="fas fa-flag-checkered"></i> Status: <?php echo htmlspecialchars($status_filter); ?>
-            </span>
-            <?php endif; ?>
-            <?php if ($position_filter): ?>
-            <span class="filter-badge" style="background: var(--accent-light); padding: 5px 12px; border-radius: 20px; font-size: 12px;">
-                <i class="fas fa-briefcase"></i> Position: <?php echo htmlspecialchars($position_filter); ?>
-            </span>
-            <?php endif; ?>
-        </div>
-        <?php endif; ?>
     </form>
 </div>
 
@@ -1476,6 +1488,7 @@ body {
                     <th>CONTACT</th>
                     <th>DEPARTMENT</th>
                     <th>SECTION</th>
+                    <th>AREA/DIVISION</th>
                     <th>POSITION</th>
                     <th>LINKED USER</th>
                     <th>STATUS</th>
@@ -1487,35 +1500,52 @@ body {
                 <?php if ($employees_result && $employees_result->num_rows > 0): ?>
                     <?php while($emp = $employees_result->fetch_assoc()): ?>
                     <tr>
+                        <td style="font-weight: 500;">
+                            <?php 
+                            $full_name = htmlspecialchars($emp['lastname'] . ', ' . $emp['firstname']);
+                            echo $full_name;
+                            if (!empty($emp['middlename'])):
+                                echo '<br><small class="text-muted">' . htmlspecialchars($emp['middlename']) . '</small>';
+                            endif;
+                            ?>
+                        </td>
+                        <td><?php echo !empty($emp['email']) ? htmlspecialchars($emp['email']) : '<span class="text-muted">—</span>'; ?></td>
+                        <td><?php echo !empty($emp['contact']) ? htmlspecialchars($emp['contact']) : '<span class="text-muted">—</span>'; ?></td>
+                        <td><?php echo !empty($emp['department_name']) ? htmlspecialchars($emp['department_name']) : '<span class="text-muted">—</span>'; ?></td>
+                        <td><?php echo !empty($emp['section_name']) ? htmlspecialchars($emp['section_name']) : '<span class="text-muted">—</span>'; ?></td>
                         <td>
-                            <strong><?php echo htmlspecialchars($emp['lastname'] . ', ' . $emp['firstname']); ?></strong>
-                            <?php if (!empty($emp['middlename'])): ?>
-                                <br><small class="text-muted"><?php echo htmlspecialchars($emp['middlename']); ?></small>
+                            <?php if (!empty($emp['area_name'])): ?>
+                                <span class="badge badge-info">
+                                    <i class="fas fa-map-marker-alt"></i> <?php echo htmlspecialchars($emp['area_name']); ?>
+                                </span>
+                                <?php if (!empty($emp['area_code'])): ?>
+                                    <br><small class="text-muted"><?php echo htmlspecialchars($emp['area_code']); ?></small>
+                                <?php endif; ?>
+                            <?php else: ?>
+                                <span class="text-muted">—</span>
                             <?php endif; ?>
-                         </span>
-                        <td><?php echo htmlspecialchars($emp['email'] ?? 'N/A'); ?> </span>
-                        <td><?php echo htmlspecialchars($emp['contact'] ?? 'N/A'); ?> </span>
-                        <td><?php echo htmlspecialchars($emp['department_name'] ?? 'N/A'); ?> </span>
-                        <td><?php echo htmlspecialchars($emp['section_name'] ?? 'N/A'); ?> </span>
-                        <td><?php echo htmlspecialchars($emp['position'] ?? 'N/A'); ?> </span>
+                         </td>
+                        <td><?php echo !empty($emp['position']) ? htmlspecialchars($emp['position']) : '<span class="text-muted">—</span>'; ?></td>
                         <td>
-                            <?php if ($emp['has_user_account']): ?>
+                            <?php if ($emp['has_user_account'] && !empty($emp['username'])): ?>
                                 <span class="badge badge-success"><?php echo htmlspecialchars($emp['username']); ?></span>
-                                <br><small class="text-muted"><?php echo htmlspecialchars($emp['user_role'] ?? ''); ?></small>
+                                <?php if (!empty($emp['user_role'])): ?>
+                                    <br><small class="text-muted"><?php echo htmlspecialchars($emp['user_role']); ?></small>
+                                <?php endif; ?>
                             <?php else: ?>
                                 <span class="badge badge-warning">Not Linked</span>
                             <?php endif; ?>
-                         </span>
+                         </td>
                         <td>
                             <?php if ($emp['status'] == 'Active'): ?>
                                 <span class="badge badge-success">Active</span>
                             <?php else: ?>
                                 <span class="badge badge-danger">Inactive</span>
                             <?php endif; ?>
-                         </span>
+                         </td>
                         <td>
-                            <small><?php echo isset($emp['date_added']) && $emp['date_added'] != '0000-00-00' ? date('Y-m-d', strtotime($emp['date_added'])) : 'N/A'; ?></small>
-                         </span>
+                            <small><?php echo isset($emp['date_added']) && $emp['date_added'] != '0000-00-00' ? date('Y-m-d', strtotime($emp['date_added'])) : '<span class="text-muted">—</span>'; ?></small>
+                         </td>
                         <td>
                             <div class="action-buttons">
                                 <button class="action-btn view" onclick="viewEmployee(<?php echo $emp['id']; ?>)" title="View">
@@ -1528,12 +1558,12 @@ body {
                                     <i class="fas fa-trash"></i>
                                 </button>
                             </div>
-                         </span>
+                        </td>
                     </tr>
                     <?php endwhile; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="10" class="text-center" style="padding: 60px 20px;">
+                        <td colspan="11" class="text-center" style="padding: 60px 20px;">
                             <i class="fas fa-users" style="font-size: 48px; color: var(--text-muted); margin-bottom: 16px; display: block;"></i>
                             <?php if ($search || $date_from || $date_to || $department_filter || $section_filter || $status_filter || $position_filter): ?>
                                 <p style="color: var(--text-muted); margin-bottom: 20px;">No employees found matching your search criteria</p>
@@ -1542,7 +1572,7 @@ body {
                                 <p style="color: var(--text-muted); margin-bottom: 20px;">No employees found</p>
                                 <button class="btn btn-primary" onclick="openEmployeeModal()">Add Your First Employee</button>
                             <?php endif; ?>
-                        </span>
+                        </td>
                     </tr>
                 <?php endif; ?>
             </tbody>
@@ -1696,7 +1726,22 @@ body {
                     <h3><i class="fas fa-briefcase"></i> Work Information</h3>
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="department_id">Department</label>
+                            <label for="division_id">Area / Division</label>
+                            <select class="form-control" id="division_id" name="division_id" onchange="loadDepartmentsByDivision()">
+                                <option value="">-- Select Division --</option>
+                                <?php 
+                                $divisions_list = $conn->query("SELECT id, code, name FROM areas ORDER BY code, name");
+                                if ($divisions_list && $divisions_list->num_rows > 0):
+                                    while($div = $divisions_list->fetch_assoc()): ?>
+                                <option value="<?php echo $div['id']; ?>">
+                                    [<?php echo htmlspecialchars($div['code']); ?>] <?php echo htmlspecialchars($div['name']); ?>
+                                </option>
+                                <?php endwhile; endif; ?>
+                            </select>
+                            <small class="text-muted">Select division/area to filter departments</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="department_id">Department <span class="text-danger">*</span></label>
                             <select class="form-control" id="department_id" name="department_id" onchange="loadSectionsByDepartment()">
                                 <option value="">-- Select Department --</option>
                                 <?php 
@@ -1709,16 +1754,16 @@ body {
                                 <?php endwhile; endif; ?>
                             </select>
                         </div>
-                        <div class="form-group">
-                            <label for="section_id">Section</label>
-                            <select class="form-control" id="section_id" name="section_id">
-                                <option value="">-- First Select Department --</option>
-                            </select>
-                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="section_id">Section</label>
+                        <select class="form-control" id="section_id" name="section_id">
+                            <option value="">-- Select Department first --</option>
+                        </select>
                     </div>
                     <div class="form-group">
                         <label for="position">Position</label>
-                        <input type="text" class="form-control" id="position" name="position">
+                        <input type="text" class="form-control" id="position" name="position" placeholder="e.g., Manager, Staff, Supervisor">
                     </div>
                     <div class="form-group">
                         <label for="status">Employment Status</label>
@@ -1766,7 +1811,56 @@ function closeDeleteEmployeeModal() {
     document.getElementById('deleteEmployeeModal').style.display = 'none';
 }
 
-// Load sections based on selected department using AJAX
+// Load departments based on selected division
+function loadDepartmentsByDivision() {
+    let divisionId = document.getElementById('division_id').value;
+    let departmentSelect = document.getElementById('department_id');
+    let sectionSelect = document.getElementById('section_id');
+    
+    if (!divisionId) {
+        // Reset to all departments
+        fetch('<?php echo SITE_URL; ?>/admin/ajax_get_all_departments.php')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.departments) {
+                    let options = '<option value="">-- Select Department --</option>';
+                    data.departments.forEach(dept => {
+                        options += `<option value="${dept.id}">[${escapeHtml(dept.code)}] ${escapeHtml(dept.name)}</option>`;
+                    });
+                    departmentSelect.innerHTML = options;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                departmentSelect.innerHTML = '<option value="">-- Select Department --</option>';
+            });
+        sectionSelect.innerHTML = '<option value="">-- Select Department first --</option>';
+        return;
+    }
+    
+    departmentSelect.innerHTML = '<option value="">Loading departments...</option>';
+    sectionSelect.innerHTML = '<option value="">-- Select Department first --</option>';
+    
+    fetch('?get_departments_by_division=' + divisionId)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.departments && data.departments.length > 0) {
+                let options = '<option value="">-- Select Department --</option>';
+                data.departments.forEach(dept => {
+                    options += `<option value="${dept.id}">[${escapeHtml(dept.code)}] ${escapeHtml(dept.name)}</option>`;
+                });
+                departmentSelect.innerHTML = options;
+            } else {
+                departmentSelect.innerHTML = '<option value="">-- No departments found for this division --</option>';
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            departmentSelect.innerHTML = '<option value="">-- Error loading departments --</option>';
+        });
+}
+
+// Load sections based on selected department
 function loadSectionsByDepartment() {
     let departmentId = document.getElementById('department_id').value;
     let sectionSelect = document.getElementById('section_id');
@@ -1797,6 +1891,7 @@ function loadSectionsByDepartment() {
         });
 }
 
+// Load user details when a user is selected
 function loadUserDetails() {
     let userId = document.getElementById('user_id').value;
     
@@ -1806,9 +1901,15 @@ function loadUserDetails() {
             .then(data => {
                 if (data.success) {
                     let user = data.user;
-                    document.getElementById('firstname').value = user.firstname || '';
-                    document.getElementById('lastname').value = user.lastname || '';
-                    document.getElementById('email').value = user.email || '';
+                    if (!document.getElementById('firstname').value) {
+                        document.getElementById('firstname').value = user.firstname || '';
+                    }
+                    if (!document.getElementById('lastname').value) {
+                        document.getElementById('lastname').value = user.lastname || '';
+                    }
+                    if (!document.getElementById('email').value) {
+                        document.getElementById('email').value = user.email || '';
+                    }
                 }
             })
             .catch(error => console.error('Error:', error));
@@ -1820,7 +1921,18 @@ function openEmployeeModal() {
     document.getElementById('action').value = 'add';
     document.getElementById('employee_id').value = '';
     document.getElementById('employeeForm').reset();
-    document.getElementById('section_id').innerHTML = '<option value="">-- First Select Department --</option>';
+    
+    // Reset department and section selects
+    let departmentSelect = document.getElementById('department_id');
+    departmentSelect.innerHTML = '<option value="">-- Select Department --</option>';
+    <?php 
+    $dept_dropdown = $conn->query("SELECT id, code, name FROM departments ORDER BY code, name");
+    if ($dept_dropdown && $dept_dropdown->num_rows > 0): 
+        while($dept = $dept_dropdown->fetch_assoc()): ?>
+    departmentSelect.innerHTML += `<option value="<?php echo $dept['id']; ?>"><?php echo htmlspecialchars($dept['code']); ?> - <?php echo htmlspecialchars($dept['name']); ?></option>`;
+    <?php endwhile; endif; ?>
+    
+    document.getElementById('section_id').innerHTML = '<option value="">-- Select Department first --</option>';
     document.getElementById('employeeModal').style.display = 'block';
 }
 
@@ -1842,16 +1954,18 @@ function editEmployee(id) {
                 document.getElementById('middlename').value = emp.middlename || '';
                 document.getElementById('email').value = emp.email || '';
                 document.getElementById('contact').value = emp.contact || '';
-                document.getElementById('department_id').value = emp.department_id || '';
                 document.getElementById('position').value = emp.position || '';
                 document.getElementById('status').value = emp.status || 'Active';
                 document.getElementById('user_id').value = emp.user_id || '';
                 
-                // Load sections after department is set
+                // Set department
                 if (emp.department_id) {
+                    document.getElementById('department_id').value = emp.department_id;
                     loadSectionsByDepartment();
                     setTimeout(() => {
-                        document.getElementById('section_id').value = emp.section_id || '';
+                        if (emp.section_id) {
+                            document.getElementById('section_id').value = emp.section_id;
+                        }
                     }, 500);
                 }
                 
@@ -1868,6 +1982,11 @@ function viewEmployee(id) {
             if (data.success) {
                 let emp = data.employee;
                 let userInfo = '';
+                let areaDisplay = '';
+                
+                if (emp.area_name) {
+                    areaDisplay = `<div class="detail-item"><div class="detail-label">Area/Division</div><div class="detail-value"><span class="badge badge-info">${escapeHtml(emp.area_name)}</span>${emp.area_code ? '<br><small>' + escapeHtml(emp.area_code) + '</small>' : ''}</div></div>`;
+                }
                 
                 if (emp.user_id) {
                     userInfo = `
@@ -1879,8 +1998,8 @@ function viewEmployee(id) {
                     userInfo = `<div class="detail-item"><div class="detail-label">Linked User</div><div class="detail-value"><span class="badge badge-warning">Not linked to any user account</span></div></div>`;
                 }
                 
-                let departmentDisplay = emp.department_name ?? 'N/A';
-                let sectionDisplay = emp.section_name ?? 'N/A';
+                let departmentDisplay = emp.department_name || '—';
+                let sectionDisplay = emp.section_name || '—';
                 
                 let content = `
                     <div style="text-align:center;margin-bottom:20px;">
@@ -1888,13 +2007,15 @@ function viewEmployee(id) {
                             <i class="fas fa-user-tie" style="font-size: 40px; color: var(--primary);"></i>
                         </div>
                         <h3 style="margin:0;color: var(--text-primary);">${escapeHtml(emp.lastname)}, ${escapeHtml(emp.firstname)}</h3>
+                        ${emp.middlename ? `<p style="margin:5px 0 0;color: var(--text-muted);">${escapeHtml(emp.middlename)}</p>` : ''}
                     </div>
                     <div class="detail-grid">
-                        <div class="detail-item"><div class="detail-label">Email</div><div class="detail-value">${escapeHtml(emp.email || 'N/A')}</div></div>
-                        <div class="detail-item"><div class="detail-label">Contact</div><div class="detail-value">${escapeHtml(emp.contact || 'N/A')}</div></div>
+                        <div class="detail-item"><div class="detail-label">Email</div><div class="detail-value">${escapeHtml(emp.email || '—')}</div></div>
+                        <div class="detail-item"><div class="detail-label">Contact</div><div class="detail-value">${escapeHtml(emp.contact || '—')}</div></div>
                         <div class="detail-item"><div class="detail-label">Department</div><div class="detail-value">${escapeHtml(departmentDisplay)}</div></div>
+                        ${areaDisplay}
                         <div class="detail-item"><div class="detail-label">Section</div><div class="detail-value">${escapeHtml(sectionDisplay)}</div></div>
-                        <div class="detail-item"><div class="detail-label">Position</div><div class="detail-value">${escapeHtml(emp.position || 'N/A')}</div></div>
+                        <div class="detail-item"><div class="detail-label">Position</div><div class="detail-value">${escapeHtml(emp.position || '—')}</div></div>
                         <div class="detail-item"><div class="detail-label">Status</div><div class="detail-value"><span class="badge ${emp.status == 'Active' ? 'badge-success' : 'badge-danger'}">${emp.status}</span></div></div>
                         ${userInfo}
                     </div>
@@ -1941,10 +2062,20 @@ window.onclick = function(event) {
     }
 }
 
-// Initialize on page load
-document.addEventListener('DOMContentLoaded', function() {
-    // Any initialization code
-});
+// Auto-hide alerts after 5 seconds
+setTimeout(function() {
+    var alerts = document.querySelectorAll('.alert');
+    alerts.forEach(function(alert) {
+        setTimeout(function() {
+            alert.style.opacity = '0';
+            setTimeout(function() {
+                if (alert.style.display !== 'none') {
+                    alert.style.display = 'none';
+                }
+            }, 300);
+        }, 4700);
+    });
+}, 1000);
 </script>
 
 <?php include INCLUDE_PATH . '/footer.php'; ?>

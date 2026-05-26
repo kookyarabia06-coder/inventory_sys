@@ -96,7 +96,6 @@ $query = "SELECT i.*,
           u.lastname as issued_to_lastname,
           ui.assigned_date,
           ui.status as assignment_status,
-          ei.purpose,
           ei.issued_date as issuance_date,
           CONCAT(issuer.firstname, ' ', issuer.lastname) as issued_by_name,
           -- Get the actual name for allocate_to (not the ID)
@@ -301,9 +300,9 @@ if ($export_type === 'excel') {
     $row += 9;
 
     // Column headers - expanded for detailed report
-    $headers = ['ID', 'Property No', 'Article Name', 'Description', 'Category', 'Section', 'Department', 
-                'Building', 'Condition', 'Qty (PC)', 'Qty (Count)', 'Difference', 'Unit Value', 'Total Value', 
-                'Date Added', 'Issued To', 'Issued Date', 'Purpose', 'Remarks'];
+ $headers = ['ID', 'Property No', 'Article Name', 'Description', 'Category', 'Section', 'Department', 
+            'Building', 'Condition', 'Qty (PC)', 'Qty (Count)', 'Difference', 'Unit Value', 'Total Value', 
+            'Date Added', 'Issued To', 'Issued Date', 'Remarks'];
     $col = 'A';
     foreach ($headers as $header) {
         $sheet->setCellValue($col . $row, $header);
@@ -338,14 +337,14 @@ if ($export_type === 'excel') {
         $sheet->setCellValue('N' . $data_row, $total_value);
         $sheet->setCellValue('O' . $data_row, date('Y-m-d', strtotime($item['date_added'])));
         $sheet->setCellValue('P' . $data_row, $issued_to);
-        $sheet->setCellValue('Q' . $data_row, $item['assigned_date'] ? date('Y-m-d', strtotime($item['assigned_date'])) : '');
-        $sheet->setCellValue('R' . $data_row, $item['purpose'] ?? '');
+$sheet->setCellValue('Q' . $data_row, $item['assigned_date'] ? date('Y-m-d', strtotime($item['assigned_date'])) : '');
+$sheet->setCellValue('R' . $data_row, $item['remarks'] ?? '');
         $sheet->setCellValue('S' . $data_row, $item['remarks'] ?? '');
         $data_row++;
     }
 
     // Auto-size columns
-    foreach (range('A', 'S') as $col) {
+    foreach (range('A', 'R') as $col) {
         $sheet->getColumnDimension($col)->setAutoSize(true);
     }
 
@@ -882,7 +881,7 @@ tr:hover td {
         </div>
         <div class="filter-group">
             <label>&nbsp;</label>
-            <a href="detailed_report.php" class="btn btn-outline"><i class="fas fa-redo"></i> Reset</a>
+            <a href="report.php" class="btn btn-outline"><i class="fas fa-redo"></i> Reset</a>
         </div>
     </form>
 
