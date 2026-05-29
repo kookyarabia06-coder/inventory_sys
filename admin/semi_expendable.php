@@ -20,7 +20,7 @@ use Picqer\Barcode\BarcodeGeneratorPNG;
 
 /// Require admin role
 if (!in_array($_SESSION['user_role'] ?? '', ['admin', 'superadmin', 'supply'])) {
-    requireRole('admin');
+    requireRole('admin' || 'superadmin' || 'supply');
 }
 
 // Generate CSRF token if not exists
@@ -1029,7 +1029,7 @@ $pagination_data = [
 include INCLUDE_PATH . '/header.php';
 ?>
 
-<!-- CSS STYLES -->
+<!-- CSS STYLES (UPDATED: Enhanced View Modal from PPE + Fixed Property Number Radio) -->
 <style>
 :root {
     --primary: #6B8CFF;
@@ -1043,60 +1043,975 @@ include INCLUDE_PATH . '/header.php';
     --text-primary: #3A3A3A;
     --text-secondary: #6B6B6B;
     --text-muted: #9E9E9E;
+    --text-light: #FFFFFF;
     --success: #4CAF50;
     --danger: #f44336;
+    --info: #8FB5FF;
 }
 
-body { background-color: var(--light); color: var(--text-primary); font-family: 'Segoe UI', Arial, sans-serif; }
-.dashboard-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px; }
-.card { background: var(--white); border-radius: 12px; padding: 20px; box-shadow: 0 4px 12px rgba(107, 140, 255, 0.1); border-left: 4px solid var(--primary); }
-.card-icon { width: 50px; height: 50px; background: var(--accent-light); border-radius: 10px; display: flex; align-items: center; justify-content: center; margin-bottom: 15px; }
-.card-icon i { font-size: 24px; color: var(--primary); }
-.card h3 { color: var(--text-secondary); font-size: 14px; margin-bottom: 5px; }
-.card .card-value { color: var(--primary); font-size: 28px; font-weight: bold; }
-.table-container { background: var(--white); border-radius: 12px; padding: 20px; margin-bottom: 30px; box-shadow: 0 4px 12px rgba(107, 140, 255, 0.1); overflow-x: auto; }
-.table-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid var(--accent-light); }
-.table-header h2 { color: var(--primary); font-size: 18px; margin: 0; }
-.search-box { display: flex; gap: 10px; margin-bottom: 20px; }
-.search-box input { padding: 12px 15px; border: 1px solid var(--border-light); border-radius: 8px; flex: 1; }
-.search-box button { padding: 12px 24px; background: var(--primary); color: white; border: none; border-radius: 8px; cursor: pointer; }
-table { width: 100%; border-collapse: collapse; min-width: 1200px; }
-th { padding: 15px 10px; text-align: left; color: var(--primary); font-weight: 600; border-bottom: 2px solid var(--accent-light); }
-td { padding: 15px 10px; border-bottom: 1px solid var(--border-light); color: var(--text-secondary); }
-.action-buttons { display: flex; gap: 5px; }
-.action-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; border: none; color: white; text-decoration: none; cursor: pointer; }
+body {
+    background-color: var(--light);
+    color: var(--text-primary);
+}
+
+.dashboard-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 20px;
+    margin-bottom: 30px;
+}
+
+.card {
+    background: var(--white);
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 4px 12px rgba(107, 140, 255, 0.1);
+    border-left: 4px solid var(--primary);
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 20px rgba(107, 140, 255, 0.15);
+}
+
+.card-icon {
+    width: 50px;
+    height: 50px;
+    background: var(--accent-light);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 15px;
+}
+
+.card-icon i {
+    font-size: 24px;
+    color: var(--primary);
+}
+
+.card h3 {
+    color: var(--text-secondary);
+    font-size: 14px;
+    margin-bottom: 5px;
+    font-weight: 500;
+}
+
+.card .card-value {
+    color: var(--primary);
+    font-size: 28px;
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.card .card-label {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.table-container {
+    background: var(--white);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 30px;
+    box-shadow: 0 4px 12px rgba(107, 140, 255, 0.1);
+}
+
+.table-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--accent-light);
+}
+
+.table-header h2 {
+    color: var(--primary);
+    font-size: 18px;
+    margin: 0;
+}
+
+.table-header h2 i {
+    color: var(--accent);
+    margin-right: 10px;
+}
+
+.table-header p {
+    color: var(--text-muted);
+    font-size: 14px;
+    margin: 0;
+}
+
+/* Add New button in table header */
+.btn-add-new {
+    background-color: var(--accent);
+    color: var(--text-primary);
+    padding: 8px 16px;
+    border-radius: 8px;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s;
+    border: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-add-new:hover {
+    background-color: #e69eb0;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(248, 176, 192, 0.3);
+}
+
+.search-box {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.search-box input[type="text"],
+.search-box select {
+    padding: 12px 15px;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    font-size: 14px;
+    flex: 1;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.search-box input[type="text"]:focus,
+.search-box select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.1);
+}
+
+.search-box button {
+    padding: 12px 24px;
+    background: var(--primary);
+    color: var(--text-light);
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.search-box button:hover {
+    background: #5a7ae6;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(107, 140, 255, 0.3);
+}
+
+.table-wrapper {
+    overflow-x: auto;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 1200px;
+}
+
+thead tr {
+    background: linear-gradient(to right, var(--light), var(--white));
+    border-bottom: 2px solid var(--accent-light);
+}
+
+th {
+    padding: 15px 10px;
+    text-align: left;
+    color: var(--primary);
+    font-weight: 600;
+    font-size: 13px;
+    white-space: nowrap;
+}
+
+td {
+    padding: 15px 10px;
+    border-bottom: 1px solid var(--border-light);
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+tr:hover {
+    background-color: var(--light);
+}
+
+.action-buttons {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+}
+
+.action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    border: none;
+    color: var(--text-light);
+    text-decoration: none;
+    transition: all 0.2s;
+    cursor: pointer;
+    font-size: 14px;
+}
+
 .action-btn.edit { background-color: var(--secondary); }
 .action-btn.view { background-color: var(--primary); }
 .action-btn.delete { background-color: var(--danger); }
 .action-btn.success { background-color: var(--success); }
-.btn { display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; text-decoration: none; }
-.btn-primary { background-color: var(--accent); color: var(--text-primary); }
-.btn-secondary { background-color: var(--secondary); color: white; }
-.btn-xs { padding: 6px 12px; font-size: 11px; border-radius: 4px; background-color: var(--secondary); color: white; cursor: pointer; }
-.badge-warning { background-color: var(--secondary); color: var(--text-primary); padding: 4px 10px; border-radius: 20px; font-size: 11px; display: inline-block; }
-.badge-success { background-color: var(--success-light); color: var(--success); padding: 4px 10px; border-radius: 20px; font-size: 11px; display: inline-block; }
-.modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); }
-.modal-content { background: var(--white); margin: 5% auto; border-radius: 12px; max-width: 800px; position: relative; max-height: 90vh; overflow-y: auto; }
-.modal-header { display: flex; justify-content: space-between; align-items: center; padding: 20px 25px; border-bottom: 2px solid var(--accent-light); }
-.modal-header h2 { color: var(--primary); font-size: 20px; margin: 0; }
-.modal-close { font-size: 28px; font-weight: bold; cursor: pointer; color: var(--text-muted); }
-.modal-body { padding: 25px; }
-.form-section { background: var(--white); padding: 20px; margin-bottom: 25px; border-radius: 10px; border-left: 4px solid var(--primary); }
-.form-section h3 { color: var(--primary); margin-bottom: 20px; font-size: 16px; padding-bottom: 10px; border-bottom: 1px solid var(--accent-light); }
-.form-group { margin-bottom: 20px; }
-.form-group label { display: block; margin-bottom: 8px; color: var(--text-secondary); font-weight: 500; }
-.form-control { width: 100%; padding: 10px 12px; border: 1px solid var(--border-light); border-radius: 8px; }
-.form-row { display: flex; gap: 15px; margin-bottom: 15px; flex-wrap: wrap; }
-.form-row .form-group { flex: 1; min-width: 150px; }
-.form-text { font-size: 12px; color: var(--text-muted); margin-top: 5px; }
-.form-check { margin-bottom: 10px; display: flex; align-items: center; gap: 10px; }
-.alert { padding: 15px 20px; border-radius: 8px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
-.alert-success { background-color: var(--success-light); color: var(--success); }
-.alert-danger { background-color: #ffebee; color: var(--danger); }
-.text-center { text-align: center; }
-.text-muted { color: var(--text-muted); }
-.sticky-scan-button-container { position: sticky; bottom: 30px; display: flex; justify-content: flex-end; z-index: 100; }
-.sticky-scan-button { display: inline-flex; align-items: center; gap: 12px; padding: 16px 32px; background: linear-gradient(135deg, var(--accent) 0%, #e69eb0 100%); color: var(--text-primary); font-weight: bold; border-radius: 60px; text-decoration: none; }
+
+.action-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.badge-warning {
+    background-color: var(--secondary);
+    color: var(--text-primary);
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    display: inline-block;
+}
+
+.badge-success {
+    background-color: var(--success-light);
+    color: var(--success);
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    display: inline-block;
+}
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+}
+
+.btn-primary {
+    background-color: var(--accent);
+    color: var(--text-primary);
+}
+
+.btn-primary:hover {
+    background-color: #e69eb0;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(248, 176, 192, 0.3);
+}
+
+.btn-secondary {
+    background-color: var(--secondary);
+    color: var(--text-light);
+}
+
+.btn-secondary:hover {
+    background-color: #7a9fe6;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(143, 181, 255, 0.3);
+}
+
+.btn-xs {
+    padding: 4px 8px;
+    font-size: 11px;
+    border-radius: 4px;
+    background-color: var(--secondary);
+    color: var(--text-light);
+    border: none;
+    cursor: pointer;
+}
+
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    backdrop-filter: blur(3px);
+}
+
+.modal-content {
+    background: var(--white);
+    margin: 5% auto;
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(107, 140, 255, 0.2);
+    position: relative;
+    animation: modalSlideIn 0.3s;
+    max-width: 900px;
+    width: 90%;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+@keyframes modalSlideIn {
+    from {
+        transform: translateY(-30px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 25px;
+    border-bottom: 2px solid var(--accent-light);
+}
+
+.modal-header h2 {
+    color: var(--primary);
+    font-size: 20px;
+    margin: 0;
+}
+
+.modal-close {
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    color: var(--text-muted);
+    transition: color 0.2s;
+}
+
+.modal-close:hover {
+    color: var(--accent);
+}
+
+.modal-body {
+    padding: 25px;
+}
+
+.modal-footer {
+    padding: 15px 25px;
+    border-top: 1px solid var(--border-light);
+    text-align: right;
+    background: var(--light);
+    border-radius: 0 0 12px 12px;
+}
+
+.form-section {
+    background: var(--white);
+    padding: 20px;
+    margin-bottom: 25px;
+    border-radius: 10px;
+    border-left: 4px solid var(--primary);
+    box-shadow: 0 2px 8px rgba(107, 140, 255, 0.1);
+}
+
+.form-section h3 {
+    color: var(--primary);
+    margin-bottom: 20px;
+    font-size: 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--accent-light);
+}
+
+.form-section h3 i {
+    color: var(--accent);
+    margin-right: 10px;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-size: 14px;
+}
+
+.form-control {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    font-size: 14px;
+    color: var(--text-primary);
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.1);
+}
+
+.form-row {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.form-row .form-group {
+    flex: 1;
+}
+
+.form-text {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 5px;
+}
+
+.alert {
+    padding: 15px 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-left: 4px solid transparent;
+}
+
+.alert i {
+    font-size: 18px;
+}
+
+.alert-success {
+    background-color: var(--success-light);
+    color: var(--success);
+    border-left-color: var(--success);
+}
+
+.alert-danger {
+    background-color: #ffebee;
+    color: var(--danger);
+    border-left-color: var(--danger);
+}
+
+.text-muted {
+    color: var(--text-muted) !important;
+}
+
+.text-danger {
+    color: var(--danger) !important;
+}
+
+.text-center {
+    text-align: center;
+}
+
+.mt-3 {
+    margin-top: 15px;
+}
+
+.pagination {
+    display: flex;
+    justify-content: center;
+    gap: 5px;
+    margin-top: 30px;
+}
+
+.pagination a,
+.pagination span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 35px;
+    height: 35px;
+    padding: 0 8px;
+    border-radius: 6px;
+    background: var(--white);
+    color: var(--text-secondary);
+    text-decoration: none;
+    border: 1px solid var(--border-light);
+    transition: all 0.2s;
+}
+
+.pagination a:hover {
+    background: var(--primary);
+    color: var(--text-light);
+    border-color: var(--primary);
+}
+
+.pagination .active {
+    background: var(--primary);
+    color: var(--text-light);
+    border-color: var(--primary);
+}
+
+.sticky-scan-button-container {
+    position: sticky;
+    bottom: 30px;
+    display: flex;
+    justify-content: flex-end;
+    padding-right: 20px;
+    padding-bottom: 20px;
+    z-index: 100;
+}
+
+.sticky-scan-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 16px 32px;
+    background: linear-gradient(135deg, var(--accent) 0%, #e69eb0 100%);
+    color: var(--text-primary);
+    font-weight: bold;
+    font-size: 16px;
+    border-radius: 60px;
+    text-decoration: none;
+    box-shadow: 0 10px 30px rgba(248, 176, 192, 0.6);
+    transition: all 0.3s ease;
+    letter-spacing: 0.5px;
+}
+
+.sticky-scan-button i {
+    font-size: 20px;
+}
+
+.sticky-scan-button:hover {
+    transform: translateY(-5px) scale(1.05);
+    box-shadow: 0 20px 40px rgba(248, 176, 192, 0.8);
+}
+
+.barcode-preview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 15px;
+    margin: 15px 0;
+    padding: 15px;
+    background: var(--light);
+    border-radius: 8px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+/* ============================================
+   VIEW MODAL ENHANCED STYLES (from PPE)
+   ============================================ */
+
+/* View Modal specific container */
+.view-modal-container {
+    padding: 0;
+}
+
+/* Section cards with shadow and hover effect */
+.view-modal-container .detail-section {
+    background: var(--white);
+    border-radius: 16px;
+    margin-bottom: 24px;
+    box-shadow: 0 2px 8px rgba(107, 140, 255, 0.08);
+    transition: box-shadow 0.2s ease;
+    overflow: hidden;
+}
+
+.view-modal-container .detail-section:hover {
+    box-shadow: 0 4px 16px rgba(107, 140, 255, 0.12);
+}
+
+/* Section headers with gradient accent */
+.view-modal-container .detail-header {
+    background: linear-gradient(135deg, var(--light) 0%, var(--white) 100%);
+    padding: 16px 20px;
+    border-bottom: 2px solid var(--accent-light);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.view-modal-container .detail-header i {
+    font-size: 18px;
+    color: var(--primary);
+    background: rgba(107, 140, 255, 0.1);
+    padding: 8px;
+    border-radius: 12px;
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.view-modal-container .detail-header h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--primary);
+    letter-spacing: 0.3px;
+}
+
+/* Content area padding */
+.view-modal-container .detail-content {
+    padding: 20px;
+}
+
+/* Grid layout for details - 2 columns on desktop */
+.view-modal-container .detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px 24px;
+}
+
+/* Individual detail item styling */
+.view-modal-container .detail-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 0;
+    border-bottom: 1px dashed var(--border-light);
+}
+
+/* Label styling - small, uppercase, muted */
+.view-modal-container .detail-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+
+/* Value styling - clean and readable */
+.view-modal-container .detail-value {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+    word-break: break-word;
+    line-height: 1.4;
+}
+
+/* Status badges inside view modal */
+.view-modal-container .status-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.view-modal-container .status-badge.issued {
+    background: var(--accent-light);
+    color: var(--accent);
+}
+
+.view-modal-container .status-badge.available {
+    background: var(--success-light);
+    color: var(--success);
+}
+
+/* Property number highlight */
+.view-modal-container .property-number {
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    background: var(--light);
+    padding: 4px 10px;
+    border-radius: 6px;
+    display: inline-block;
+    letter-spacing: 0.5px;
+}
+
+/* Value highlight (monetary) */
+.view-modal-container .value-highlight {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--primary);
+}
+
+/* Loading state */
+.view-modal-loading {
+    text-align: center;
+    padding: 60px 20px;
+}
+
+.view-modal-loading i {
+    font-size: 48px;
+    color: var(--primary);
+    margin-bottom: 16px;
+}
+
+.view-modal-loading p {
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
+/* Error state */
+.view-modal-error {
+    text-align: center;
+    padding: 40px 20px;
+    background: #fff5f5;
+    border-radius: 12px;
+    color: var(--danger);
+}
+
+/* Responsive: single column on mobile */
+@media (max-width: 640px) {
+    .view-modal-container .detail-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+    
+    .view-modal-container .detail-content {
+        padding: 16px;
+    }
+}
+
+/* Optional: Print styles for view modal */
+@media print {
+    .view-modal-container .detail-section {
+        break-inside: avoid;
+        page-break-inside: avoid;
+        box-shadow: none;
+        border: 1px solid #ddd;
+    }
+    
+    .view-modal-container .detail-header {
+        background: #f5f5f5;
+    }
+    
+    .modal-footer, .modal-close {
+        display: none;
+    }
+}
+
+/* Additional polish for status/info pills */
+.info-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--light);
+    padding: 6px 12px;
+    border-radius: 30px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.info-pill i {
+    font-size: 12px;
+    color: var(--primary);
+}
+
+/* ============================================
+   FIXED PROPERTY NUMBER RADIO BUTTONS - NO WRAPPING ISSUES
+   ============================================ */
+
+/* Property Number Radio Group */
+.property-radio-group {
+    background: var(--light);
+    padding: 15px;
+    border-radius: 10px;
+    margin-bottom: 15px;
+}
+
+.property-radio-group .form-check {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    transition: background 0.2s;
+}
+
+.property-radio-group .form-check:last-child {
+    margin-bottom: 0;
+}
+
+.property-radio-group .form-check:hover {
+    background: rgba(107, 140, 255, 0.08);
+}
+
+.property-radio-group .form-check-input {
+    width: 18px;
+    height: 18px;
+    margin-top: 2px;
+    flex-shrink: 0;
+    cursor: pointer;
+    accent-color: var(--primary);
+}
+
+.property-radio-group .form-check-label {
+    flex: 1;
+    cursor: pointer;
+    line-height: 1.4;
+}
+
+.property-radio-group .form-check-label strong {
+    display: block;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.property-radio-group .form-check-label small {
+    display: block;
+    font-size: 11px;
+    font-weight: normal;
+    color: var(--text-muted);
+    line-height: 1.3;
+    margin-top: 2px;
+}
+
+/* Auto Generate Section */
+#autoGenerateSection {
+    margin-top: 15px;
+}
+
+.property-preview {
+    background: linear-gradient(135deg, #e8f4f8 0%, #ddecf4 100%);
+    border-left: 4px solid var(--primary);
+    padding: 12px 15px;
+    border-radius: 8px;
+    margin-top: 10px;
+}
+
+.property-preview i {
+    color: var(--primary);
+    margin-right: 8px;
+}
+
+.property-preview strong {
+    color: var(--primary);
+    font-size: 12px;
+    display: block;
+    margin-bottom: 5px;
+}
+
+.property-preview code {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--primary);
+    background: rgba(107, 140, 255, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+/* Custom Property Section */
+#customPropertySection {
+    margin-top: 15px;
+}
+
+.custom-property-input-group {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.custom-property-input-group .form-group {
+    flex: 3;
+    margin-bottom: 0;
+}
+
+.custom-property-input-group .form-group:last-child {
+    flex: 1;
+}
+
+.custom-property-input-group input {
+    background: var(--white);
+    border: 2px solid var(--border-light);
+    padding: 10px 12px;
+    font-family: monospace;
+    font-size: 14px;
+    width: 100%;
+}
+
+.custom-property-input-group input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.1);
+    outline: none;
+}
+
+.custom-property-input-group button {
+    width: 100%;
+    white-space: nowrap;
+    padding: 10px 12px;
+}
+
+#manualPropertyPreview {
+    margin-top: 10px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+#manualPropertyPreview span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+    .custom-property-input-group {
+        flex-direction: column;
+    }
+    
+    .custom-property-input-group .form-group {
+        width: 100%;
+    }
+    
+    .custom-property-input-group button {
+        width: 100%;
+    }
+    
+    .property-radio-group .form-check {
+        padding: 8px 10px;
+    }
+    
+    .property-radio-group .form-check-label strong {
+        font-size: 13px;
+    }
+    
+    .property-radio-group .form-check-label small {
+        font-size: 10px;
+    }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .dashboard-cards {
+        grid-template-columns: 1fr;
+    }
+    
+    .search-box {
+        flex-direction: column;
+    }
+    
+    .form-row {
+        flex-direction: column;
+        gap: 0;
+    }
+    
+    .action-buttons {
+        justify-content: flex-start;
+    }
+    
+    .modal-content {
+        margin: 20px;
+        width: auto;
+    }
+}
 </style>
 
 <!-- Display Success/Error Messages -->
@@ -1127,15 +2042,6 @@ td { padding: 15px 10px; border-bottom: 1px solid var(--border-light); color: va
     </div>
 </div>
 
-<!-- Quick Actions -->
-<div class="table-container">
-    <div class="table-header"><h2><i class="fas fa-bolt"></i> Quick Actions</h2></div>
-    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-        <button class="btn btn-primary" onclick="openAddModal()"><i class="fas fa-plus-circle"></i> Add New</button>
-        <a href="<?php echo SITE_URL; ?>/admin/issue_items.php?category=semi" class="btn btn-primary"><i class="fas fa-hand-holding"></i> Issue Item</a>
-    </div>
-</div>
-
 <!-- Search -->
 <div class="table-container">
     <div class="table-header"><h2><i class="fas fa-search"></i> Search Items</h2></div>
@@ -1146,15 +2052,34 @@ td { padding: 15px 10px; border-bottom: 1px solid var(--border-light); color: va
     </form>
 </div>
 
-<!-- Items Table -->
+<!-- Items Table (with Add New button in header) -->
 <div class="table-container">
-    <div class="table-header"><h2><i class="fas fa-boxes"></i> Semi-Expendable Items List</h2>
-        <p>Showing <?php echo count($semi_items); ?> of <?php echo $total_rows; ?> items</p>
+    <div class="table-header">
+        <h2><i class="fas fa-boxes"></i> Semi-Expendable Items List</h2>
+        <div>
+            <button class="btn-add-new" onclick="openAddModal()">
+                <i class="fas fa-plus-circle"></i> Add New
+            </button>
+        </div>
     </div>
     <div class="table-wrapper">
         <table>
             <thead>
-                <tr><th>Article Name</th><th>Property No.</th><th>Category/Type</th><th>Big Unit</th><th>Small Unit</th><th>Total Qty</th><th>Unit Value</th><th>Total Value</th><th>Supplier</th><th>Fund Cluster</th><th>Status</th><th>Barcode</th><th>Actions</th></tr>
+                <tr>
+                    <th>Article Name</th>
+                    <th>Property No.</th>
+                    <th>Category/Type</th>
+                    <th>Big Unit</th>
+                    <th>Small Unit</th>
+                    <th>Total Qty</th>
+                    <th>Unit Value</th>
+                    <th>Total Value</th>
+                    <th>Supplier</th>
+                    <th>Fund Cluster</th>
+                    <th>Status</th>
+                    <th>Barcode</th>
+                    <th>Actions</th>
+                </tr>
             </thead>
             <tbody>
                 <?php if (count($semi_items) > 0): ?>
@@ -1174,16 +2099,33 @@ td { padding: 15px 10px; border-bottom: 1px solid var(--border-light); color: va
                         <td class="text-center">
                             <?php if (!empty($item['barcode_data'])): ?>
                                 <button class="btn-xs" onclick="showBarcodeModal('<?php echo htmlspecialchars($item['barcode_data']); ?>', '<?php echo htmlspecialchars($item['article_name']); ?>', '<?php echo htmlspecialchars($item['property_no']); ?>')">
-                                    <i class="fas fa-qrcode"></i> View</button>
+                                    <i class="fas fa-qrcode"></i> View
+                                </button>
                             <?php else: ?>
                                 <span class="text-muted">—</span>
                             <?php endif; ?>
                         </td>
-                        <td><div class="action-buttons"><a href="?edit=<?php echo $item['id']; ?>&csrf_token=<?php echo $_SESSION['csrf_token']; ?>" class="action-btn edit"><i class="fas fa-edit"></i></a><button class="action-btn view" onclick="viewItem(<?php echo $item['id']; ?>)"><i class="fas fa-eye"></i></button><?php if ($item['is_issued'] == 0): ?><a href="?delete=<?php echo $item['id']; ?>&csrf_token=<?php echo $_SESSION['csrf_token']; ?>" class="action-btn delete" onclick="return confirm('Are you sure?')"><i class="fas fa-trash"></i></a><?php endif; ?><a href="<?php echo SITE_URL; ?>/admin/issue_items.php?item=<?php echo $item['id']; ?>" class="action-btn success"><i class="fas fa-hand-holding"></i></a></div></td>
+                        <td>
+                            <div class="action-buttons">
+                                <a href="?edit=<?php echo $item['id']; ?>&csrf_token=<?php echo $_SESSION['csrf_token']; ?>" class="action-btn edit"><i class="fas fa-edit"></i></a>
+                                <button class="action-btn view" onclick="viewItem(<?php echo $item['id']; ?>)"><i class="fas fa-eye"></i></button>
+                                <?php if ($item['is_issued'] == 0): ?>
+                                    <a href="?delete=<?php echo $item['id']; ?>&csrf_token=<?php echo $_SESSION['csrf_token']; ?>" class="action-btn delete" onclick="return confirm('Are you sure?')"><i class="fas fa-trash"></i></a>
+                                <?php endif; ?>
+                                <a href="<?php echo SITE_URL; ?>/admin/issue_items.php?item=<?php echo $item['id']; ?>" class="action-btn success"><i class="fas fa-hand-holding"></i></a>
+                            </div>
+                        </td>
                     </tr>
                     <?php endforeach; ?>
                 <?php else: ?>
-                    <tr><td colspan="13" class="text-center">No items found<br><button class="btn btn-primary mt-3" onclick="openAddModal()"><i class="fas fa-plus"></i> Add Your First Item</button></td></tr>
+                    <tr>
+                        <td colspan="13" class="text-center">
+                            No items found<br>
+                            <button class="btn btn-primary mt-3" onclick="openAddModal()">
+                                <i class="fas fa-plus"></i> Add Your First Item
+                            </button>
+                        </td>
+                    </tr>
                 <?php endif; ?>
             </tbody>
         </table>
@@ -1208,28 +2150,49 @@ td { padding: 15px 10px; border-bottom: 1px solid var(--border-light); color: va
                 <div class="form-section">
                     <h3><i class="fas fa-info-circle"></i> Basic Information</h3>
                     <div class="form-group"><label for="article_name">Article Name <span class="text-danger">*</span></label><input type="text" class="form-control" id="article_name" name="article_name" required></div>
-                    
+                     <div class="form-group"><label for="description">Description</label><textarea class="form-control" id="description" name="description" rows="2"></textarea></div>
                     <div class="form-group">
                         <label>Property Number</label>
-                        <div style="margin-bottom: 15px;">
-                            <div class="form-check"><input class="form-check-input" type="radio" name="property_option" id="property_auto" value="auto" checked onchange="togglePropertyOption()"><label class="form-check-label" for="property_auto"><strong>Auto-Generate</strong></label></div>
-                            
-                            <div class="form-check"><input class="form-check-input" type="radio" name="property_option" id="property_custom" value="custom" onchange="togglePropertyOption()"><label class="form-check-label" for="property_custom"><strong>Custom</strong></label></div>
+                        <div class="property-radio-group">
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="property_option" id="property_auto" value="auto" checked onchange="togglePropertyOption()">
+                                <label class="form-check-label" for="property_auto">
+                                    <strong>Auto-Generate</strong>
+                                    <small>YYYY-MM-DD-XXXX format with sequential number</small>
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="property_option" id="property_custom" value="custom" onchange="togglePropertyOption()">
+                                <label class="form-check-label" for="property_custom">
+                                    <strong>Custom</strong>
+                                    <small>Enter your own property number</small>
+                                </label>
+                            </div>
                         </div>
                         
                         <div id="autoGenerateSection">
-                            <div id="propertyPreviewAuto" class="form-text" style="padding: 10px; background: #e8f4f8; border-radius: 5px; margin-bottom: 10px; display: none;"><i class="fas fa-qrcode"></i> <strong>Auto-generated Format:</strong><br><span id="autoPropertyPreviewText"></span></div>
+                            <div class="property-preview">
+                                <i class="fas fa-qrcode"></i>
+                                <strong>Auto-generated Format:</strong>
+                                <code id="autoPropertyPreviewText">-- Select Type and Category first --</code>
+                            </div>
                         </div>
                         <div id="customPropertySection" style="display: none;">
-                            <div class="form-row">
-                                <div class="form-group" style="flex: 3;"><input type="text" class="form-control" id="property_number" name="property_number" placeholder="Enter custom property number"></div>
-                                <div class="form-group" style="flex: 1;"><button type="button" class="btn btn-secondary" onclick="previewManualPropertyNumber()"><i class="fas fa-eye"></i> Check</button></div>
+                            <div class="custom-property-input-group">
+                                <div class="form-group">
+                                    <input type="text" class="form-control" id="property_number" name="property_number" placeholder="e.g., SEMI-2024-001">
+                                </div>
+                                <div class="form-group">
+                                    <button type="button" class="btn btn-secondary" onclick="previewManualPropertyNumber()" style="width: 100%;">
+                                        <i class="fas fa-eye"></i> Check
+                                    </button>
+                                </div>
                             </div>
                             <div id="manualPropertyPreview" class="form-text"></div>
                         </div>
                     </div>
                     
-                    <div class="form-group"><label for="description">Description</label><textarea class="form-control" id="description" name="description" rows="2"></textarea></div>
+                    
                 </div>
                 
                 <div class="form-section">
@@ -1323,10 +2286,26 @@ td { padding: 15px 10px; border-bottom: 1px solid var(--border-light); color: va
     </div>
 </div>
 
-<!-- View Modal -->
-<div id="viewModal" class="modal"><div class="modal-content"><div class="modal-header"><h2>Item Details</h2><span class="modal-close" onclick="closeViewModal()">&times;</span></div><div class="modal-body" id="viewModalContent"></div><div class="modal-footer"><button class="btn btn-secondary" onclick="closeViewModal()">Close</button></div></div></div>
+<!-- View Modal (UPDATED with enhanced styling) -->
+<div id="viewModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Semi-Expendable Item Details</h2>
+            <span class="modal-close" onclick="closeViewModal()">&times;</span>
+        </div>
+        <div class="modal-body" id="viewModalContent">
+            <div class="view-modal-loading">
+                <i class="fas fa-spinner fa-pulse"></i>
+                <p>Loading item details...</p>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeViewModal()">Close</button>
+        </div>
+    </div>
+</div>
 
-<!-- Barcode Modal - Updated for multiple barcodes -->
+<!-- Barcode Modal -->
 <div id="barcodeModal" class="modal">
     <div class="modal-content" style="max-width: 900px; width: 90%;">
         <div class="modal-header">
@@ -1340,8 +2319,8 @@ td { padding: 15px 10px; border-bottom: 1px solid var(--border-light); color: va
         <div class="modal-footer" style="padding: 15px 25px; border-top: 1px solid #e0e0e0; display: flex; gap: 10px; justify-content: flex-end;">
             <button class="btn btn-secondary" onclick="closeBarcodeModal()">Close</button>
            <button class="btn btn-primary" onclick="printCurrentBarcode()" id="printBarcodeBtn">
-    <i class="fas fa-print"></i> Print
-</button>
+                <i class="fas fa-print"></i> Print
+            </button>
         </div>
     </div>
 </div>
@@ -1388,7 +2367,6 @@ function togglePropertyOption() {
     } else {
         autoSection.style.display = 'none';
         customSection.style.display = 'block';
-        document.getElementById('propertyPreviewAuto').style.display = 'none';
         if (!editId) propInput.focus();
     }
 }
@@ -1397,15 +2375,19 @@ function previewPropertyNumber() {
     if (document.getElementById('property_auto').checked) {
         var typeId = document.getElementById('type_equipment_id').value;
         var subTypeId = document.getElementById('equipment_sub_type_id').value;
-        if (!typeId || !subTypeId) { document.getElementById('propertyPreviewAuto').style.display = 'none'; return; }
+        if (!typeId || !subTypeId) { 
+            document.getElementById('autoPropertyPreviewText').innerHTML = '-- Select Type and Category first --';
+            return; 
+        }
         fetch('?ajax=get_property_preview&type_id=' + typeId + '&sub_type_id=' + subTypeId + '&quantity=' + (parseFloat(document.getElementById('quantity').value) || 1))
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
                     document.getElementById('autoPropertyPreviewText').innerHTML = '<code>' + data.property_format + '</code>';
-                    document.getElementById('propertyPreviewAuto').style.display = 'block';
                 }
-            }).catch(() => document.getElementById('propertyPreviewAuto').style.display = 'none');
+            }).catch(() => {
+                document.getElementById('autoPropertyPreviewText').innerHTML = '-- Error generating preview --';
+            });
     }
 }
 
@@ -1416,8 +2398,8 @@ function previewManualPropertyNumber() {
         fetch('?ajax=check_property_number&property_no=' + encodeURIComponent(manual))
             .then(response => response.json())
             .then(data => {
-                if (data.exists) preview.innerHTML = '<span style="color:#f44336;">Already exists!</span>';
-                else preview.innerHTML = '<span style="color:#4CAF50;">Available: ' + escapeHtml(manual) + '</span>';
+                if (data.exists) preview.innerHTML = '<span style="color:#f44336;"><i class="fas fa-times-circle"></i> Already exists!</span>';
+                else preview.innerHTML = '<span style="color:#4CAF50;"><i class="fas fa-check-circle"></i> Available: ' + escapeHtml(manual) + '</span>';
             }).catch(() => preview.innerHTML = '<span>Checking...</span>');
     } else preview.innerHTML = '';
 }
@@ -1507,14 +2489,15 @@ function openAddModal() {
     document.getElementById('semiModal').style.display = 'block';
     document.getElementById('property_auto').checked = true;
     document.getElementById('property_number').value = '';
-    document.getElementById('property_number').style.borderColor = '';
+    document.getElementById('property_number').removeAttribute('readonly');
     document.getElementById('manualPropertyPreview').innerHTML = '';
-    document.getElementById('propertyPreviewAuto').style.display = 'none';
+    document.getElementById('autoPropertyPreviewText').innerHTML = '-- Select Type and Category first --';
     togglePropertyOption();
     document.getElementById('big_quantity').value = 1;
     document.getElementById('pieces_per_big_unit').value = 1;
     document.getElementById('type_equipment_id').value = '';
     document.getElementById('equipment_sub_type_id').innerHTML = '<option value="">-- First select Type --</option>';
+    document.getElementById('barcodePreview').innerHTML = '';
     calculateCompoundTotal();
 }
 
@@ -1542,23 +2525,216 @@ function generateBarcodeForEdit() {
     }).catch(() => preview.innerHTML = '');
 }
 
+// ============================================
+// UPDATED viewItem() function with enhanced styling (from PPE)
+// ============================================
+
 function viewItem(id) {
     let modal = document.getElementById('viewModal');
     let content = document.getElementById('viewModalContent');
     modal.style.display = 'block';
-    content.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i><br>Loading...</div>';
-    fetch('?ajax=get_item&id=' + id).then(r => r.json()).then(data => {
-        if (data.success) {
-            let item = data.data;
-            let bigDisplay = (item.big_quantity && item.big_unit) ? item.big_quantity + ' ' + item.big_unit : 'N/A';
-            let smallDisplay = (item.pieces_per_big_unit && item.small_unit) ? item.pieces_per_big_unit + ' ' + item.small_unit : 'N/A';
-            let html = `<div class="detail-section"><div class="detail-header">Basic Info</div><div class="detail-content"><strong>Article:</strong> ${escapeHtml(item.article_name)}<br><strong>Property No:</strong> ${escapeHtml(item.property_no)}<br><strong>Description:</strong> ${escapeHtml(item.description || 'N/A')}<br><strong>Status:</strong> ${item.is_issued ? 'Issued' : 'Available'}</div></div>
-                        <div class="detail-section"><div class="detail-header">Classification</div><div class="detail-content"><strong>Type:</strong> ${escapeHtml(item.type_equipment_name || 'N/A')}<br><strong>Category:</strong> ${escapeHtml(item.sub_type_name || 'N/A')}<br><strong>Condition:</strong> ${escapeHtml(item.condition_text)}</div></div>
-                        <div class="detail-section"><div class="detail-header">Quantity & Value</div><div class="detail-content"><strong>Big Unit:</strong> ${escapeHtml(bigDisplay)}<br><strong>Small Unit:</strong> ${escapeHtml(smallDisplay)}<br><strong>Quantity:</strong> ${item.qty_physical_count}<br><strong>Unit Value:</strong> ₱${parseFloat(item.unit_value).toFixed(2)}<br><strong>Total Value:</strong> ₱${(item.qty_physical_count * item.unit_value).toFixed(2)}<br><strong>Fund Cluster:</strong> ${escapeHtml(item.fund_cluster || 'N/A')}</div></div>
-                        <div class="detail-section"><div class="detail-header">Supplier</div><div class="detail-content"><strong>Supplier:</strong> ${escapeHtml(item.supplier_name || 'N/A')}<br><strong>PO Number:</strong> ${escapeHtml(item.ref_po_number || 'N/A')}<br><strong>Delivery Date:</strong> ${item.delivery_date || 'N/A'}</div></div>`;
-            content.innerHTML = html;
-        } else content.innerHTML = '<div class="alert alert-danger">Error loading item</div>';
-    }).catch(() => content.innerHTML = '<div class="alert alert-danger">Error loading item</div>');
+    content.innerHTML = '<div class="view-modal-loading"><i class="fas fa-spinner fa-pulse"></i><p>Loading item details...</p></div>';
+    
+    fetch('?ajax=get_item&id=' + id)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                let item = data.data;
+                let bigDisplay = (item.big_quantity && item.big_unit && item.big_unit != '0') 
+                    ? Number(item.big_quantity).toLocaleString() + ' ' + item.big_unit 
+                    : 'N/A';
+                let smallDisplay = (item.pieces_per_big_unit && item.small_unit && item.small_unit != '0') 
+                    ? Number(item.pieces_per_big_unit).toLocaleString() + ' ' + item.small_unit 
+                    : (item.small_unit && item.small_unit != '0' ? item.small_unit : 'N/A');
+                
+                let statusHtml = item.is_issued 
+                    ? '<span class="status-badge issued"><i class="fas fa-hand-holding"></i> Issued</span>'
+                    : '<span class="status-badge available"><i class="fas fa-check-circle"></i> Available</span>';
+                
+                let html = `
+                    <div class="view-modal-container">
+                        <!-- Basic Information -->
+                        <div class="detail-section">
+                            <div class="detail-header">
+                                <i class="fas fa-info-circle"></i>
+                                <h3>Basic Information</h3>
+                            </div>
+                            <div class="detail-content">
+                                <div class="detail-grid">
+                                    <div class="detail-item">
+                                        <div class="detail-label">Article Name</div>
+                                        <div class="detail-value"><strong>${escapeHtml(item.article_name)}</strong></div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Property No.</div>
+                                        <div class="detail-value"><span class="property-number">${escapeHtml(item.property_no)}</span></div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Description</div>
+                                        <div class="detail-value">${escapeHtml(item.description) || '<em class="text-muted">No description</em>'}</div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Status</div>
+                                        <div class="detail-value">${statusHtml}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Classification -->
+                        <div class="detail-section">
+                            <div class="detail-header">
+                                <i class="fas fa-tags"></i>
+                                <h3>Classification</h3>
+                            </div>
+                            <div class="detail-content">
+                                <div class="detail-grid">
+                                    <div class="detail-item">
+                                        <div class="detail-label">Type of Equipment</div>
+                                        <div class="detail-value">${escapeHtml(item.type_equipment_name) || 'N/A'}</div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Equipment Category</div>
+                                        <div class="detail-value">${escapeHtml(item.sub_type_name) || 'N/A'}</div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Condition</div>
+                                        <div class="detail-value">${escapeHtml(item.condition_text) || 'Serviceable'}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Quantity & Value -->
+                        <div class="detail-section">
+                            <div class="detail-header">
+                                <i class="fas fa-calculator"></i>
+                                <h3>Quantity & Value</h3>
+                            </div>
+                            <div class="detail-content">
+                                <div class="detail-grid">
+                                    <div class="detail-item">
+                                        <div class="detail-label">Big Unit</div>
+                                        <div class="detail-value">${escapeHtml(bigDisplay)}</div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Small Unit</div>
+                                        <div class="detail-value">${escapeHtml(smallDisplay)}</div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Total Quantity</div>
+                                        <div class="detail-value"><span class="info-pill"><i class="fas fa-boxes"></i> ${Number(item.qty_physical_count).toLocaleString()} ${escapeHtml(item.small_unit)}</span></div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Unit Value</div>
+                                        <div class="detail-value">₱${Number(item.unit_value).toFixed(2)}</div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Total Value</div>
+                                        <div class="detail-value"><span class="value-highlight">₱${(item.qty_physical_count * item.unit_value).toFixed(2)}</span></div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Fund Cluster</div>
+                                        <div class="detail-value">${escapeHtml(item.fund_cluster) || 'N/A'}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Supplier Information -->
+                        <div class="detail-section">
+                            <div class="detail-header">
+                                <i class="fas fa-truck"></i>
+                                <h3>Supplier Information</h3>
+                            </div>
+                            <div class="detail-content">
+                                <div class="detail-grid">
+                                    <div class="detail-item">
+                                        <div class="detail-label">Supplier</div>
+                                        <div class="detail-value">${escapeHtml(item.supplier_name) || 'N/A'}</div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">PO Number</div>
+                                        <div class="detail-value">${escapeHtml(item.ref_po_number) || 'N/A'}</div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Delivery Date</div>
+                                        <div class="detail-value">${item.delivery_date || 'N/A'}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Personnel -->
+                        <div class="detail-section">
+                            <div class="detail-header">
+                                <i class="fas fa-users"></i>
+                                <h3>Personnel</h3>
+                            </div>
+                            <div class="detail-content">
+                                <div class="detail-grid">
+                                    <div class="detail-item">
+                                        <div class="detail-label">Certified Correct By</div>
+                                        <div class="detail-value">${escapeHtml(item.certified_correct_names) || 'N/A'}</div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Approved By</div>
+                                        <div class="detail-value">${escapeHtml(item.approved_by_names) || 'N/A'}</div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Verified By</div>
+                                        <div class="detail-value">${escapeHtml(item.verified_by_names) || 'N/A'}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Additional Information -->
+                        ${item.remarks ? `
+                        <div class="detail-section">
+                            <div class="detail-header">
+                                <i class="fas fa-sticky-note"></i>
+                                <h3>Remarks</h3>
+                            </div>
+                            <div class="detail-content">
+                                <div class="detail-value">${escapeHtml(item.remarks)}</div>
+                            </div>
+                        </div>
+                        ` : ''}
+                        
+                        <!-- Created Info -->
+                        <div class="detail-section">
+                            <div class="detail-header">
+                                <i class="fas fa-clock"></i>
+                                <h3>System Information</h3>
+                            </div>
+                            <div class="detail-content">
+                                <div class="detail-grid">
+                                    <div class="detail-item">
+                                        <div class="detail-label">Created By</div>
+                                        <div class="detail-value">${escapeHtml(item.created_by_name) || 'N/A'}</div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Date Added</div>
+                                        <div class="detail-value">${item.date_added ? new Date(item.date_added).toLocaleString() : 'N/A'}</div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Year Acquired</div>
+                                        <div class="detail-value">${item.year_acquired || 'N/A'}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                content.innerHTML = html;
+            } else {
+                content.innerHTML = '<div class="view-modal-error"><i class="fas fa-exclamation-triangle"></i><p>Error loading item details</p></div>';
+            }
+        })
+        .catch(() => {
+            content.innerHTML = '<div class="view-modal-error"><i class="fas fa-exclamation-triangle"></i><p>Network error loading item</p></div>';
+        });
 }
 
 //-------------------------------------------------------------------------------------------------------------
@@ -1771,10 +2947,11 @@ window.addEventListener('load', function() {
                 document.getElementById('property_custom').checked = true;
                 document.getElementById('property_number').value = item.property_no;
                 document.getElementById('property_number').setAttribute('readonly', true);
+                togglePropertyOption();
             } else { 
-                document.getElementById('property_auto').checked = true; 
+                document.getElementById('property_auto').checked = true;
+                togglePropertyOption();
             }
-            togglePropertyOption();
             document.getElementById('big_unit').value = item.big_unit || '';
             document.getElementById('big_quantity').value = item.big_quantity || 1;
             document.getElementById('small_unit').value = item.small_unit || '';

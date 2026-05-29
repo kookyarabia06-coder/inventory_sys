@@ -7,7 +7,7 @@ require_once INCLUDE_PATH . '/auth.php';
 require_once INCLUDE_PATH . '/functions.php';
 
 // Role checking
-requireRole('admin');
+requireRole('admin' || 'superadmin' || 'supply');
 
 $page_title = 'Issue Items';
 $page_description = 'Issue inventory items to employees';
@@ -241,6 +241,7 @@ if (isset($_GET['get_employee_issuances']) && is_numeric($_GET['get_employee_iss
 if (isset($_GET['print_grouped']) && is_numeric($_GET['print_grouped'])) {
     $employee_id = (int)$_GET['print_grouped'];
     
+    // Get ALL items issued to this employee (not just inventory, also semi_ppe)
     $result = $conn->query("
         SELECT 
             ei.*, 
@@ -261,7 +262,30 @@ if (isset($_GET['print_grouped']) && is_numeric($_GET['print_grouped'])) {
         JOIN users issuer ON ei.issued_by = issuer.id
         LEFT JOIN departments d ON e.department_id = d.id
         WHERE ei.issued_to = $employee_id AND ei.status = 'issued'
-        ORDER BY ei.issued_date DESC
+        
+        UNION ALL
+        
+        SELECT 
+            ei.*, 
+            s.article_name, 
+            s.description,
+            s.property_no,
+            s.big_unit,
+            s.small_unit,
+            s.unit_value,
+            CONCAT(e.firstname, ' ', e.lastname) as issued_to_name,
+            e.position as issued_to_position,
+            CONCAT(issuer.firstname, ' ', issuer.lastname) as issued_by_name,
+            d.name as department_name,
+            d.code as department_code
+        FROM equipment_issuance ei 
+        JOIN semi_ppe s ON ei.inventory_id = s.id 
+        JOIN employees e ON ei.issued_to = e.id
+        JOIN users issuer ON ei.issued_by = issuer.id
+        LEFT JOIN departments d ON e.department_id = d.id
+        WHERE ei.issued_to = $employee_id AND ei.status = 'issued'
+        
+        ORDER BY issued_date DESC
     ");
     
     if ($result && $result->num_rows > 0) {
@@ -283,6 +307,19 @@ if (isset($_GET['print_grouped']) && is_numeric($_GET['print_grouped'])) {
         }
         
         $current_date = date('F d, Y');
+        
+        // Group items by property number for better display
+        $grouped_items = [];
+        foreach ($items as $item) {
+            $prop_no = !empty($item['issuance_barcode']) ? $item['issuance_barcode'] : $item['property_no'];
+            if (!isset($grouped_items[$prop_no])) {
+                $grouped_items[$prop_no] = $item;
+            } else {
+                // If same property number exists, sum quantities
+                $grouped_items[$prop_no]['quantity_issued'] += $item['quantity_issued'];
+            }
+        }
+        
         ?>
         <!DOCTYPE html>
         <html>
@@ -290,30 +327,49 @@ if (isset($_GET['print_grouped']) && is_numeric($_GET['print_grouped'])) {
             <title>Inventory Custodian Slip - <?php echo htmlspecialchars($employee_name); ?></title>
             <style>
                 * { margin: 0; padding: 0; box-sizing: border-box; }
-                body { font-family: 'Times New Roman', Times, serif; padding: 30px; background: white; }
+                body { font-family: 'Times New Roman', Times, serif; padding: 20px; background: white; }
                 .ics-container { max-width: 1200px; margin: 0 auto; border: 1px solid #000; padding: 20px; }
                 .header { text-align: center; margin-bottom: 20px; }
                 .header h1 { font-size: 18px; font-weight: bold; text-transform: uppercase; }
                 .entity-name { font-size: 12px; margin-top: 5px; }
-                .fund-cluster { text-align: right; font-size: 12px; margin-bottom: 15px; }
+                .employee-details { margin: 15px 0; padding: 10px; background: #f9f9f9; border: 1px solid #ddd; }
+                .employee-details p { margin: 5px 0; font-size: 12px; }
                 table { width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 11px; }
-                th, td { border: 1px solid #000; padding: 6px; vertical-align: top; }
+                th, td { border: 1px solid #000; padding: 8px; vertical-align: top; }
                 th { background: #f0f0f0; font-weight: bold; text-align: center; }
                 .signature-section { margin-top: 30px; display: flex; flex-wrap: wrap; justify-content: space-between; }
                 .signature-box { width: 45%; margin-top: 20px; }
                 .signature-line { margin-top: 40px; border-top: 1px solid #000; width: 100%; padding-top: 5px; }
                 .signature-name { font-weight: bold; }
                 .footer-note { margin-top: 30px; font-size: 10px; font-style: italic; text-align: center; border-top: 1px solid #000; padding-top: 10px; }
-                @media print { body { padding: 0; margin: 0; } .no-print { display: none; } .ics-container { border: none; padding: 0; } }
-                .btn-print { display: inline-block; padding: 10px 20px; margin: 10px; background: #6B8CFF; color: white; border: none; border-radius: 5px; cursor: pointer; }
+                .summary-row { background: #f0f0f0; font-weight: bold; }
+                @media print { 
+                    body { padding: 0; margin: 0; } 
+                    .no-print { display: none; } 
+                    .ics-container { border: none; padding: 0; }
+                    .employee-details { background: none; border: none; }
+                }
+                .btn-print, .btn-close { 
+                    display: inline-block; 
+                    padding: 10px 20px; 
+                    margin: 10px; 
+                    background: #6B8CFF; 
+                    color: white; 
+                    border: none; 
+                    border-radius: 5px; 
+                    cursor: pointer; 
+                    font-size: 14px;
+                }
                 .btn-close { background: #6c757d; }
                 .button-container { text-align: center; margin-bottom: 20px; }
+                .text-center { text-align: center; }
+                .text-right { text-align: right; }
             </style>
         </head>
         <body>
             <div class="button-container no-print">
                 <button class="btn-print" onclick="window.print()"><i class="fas fa-print"></i> Print</button>
-                <button class="btn-print btn-close" onclick="window.close()"><i class="fas fa-times"></i> Close</button>
+                <button class="btn-close" onclick="window.close()"><i class="fas fa-times"></i> Close</button>
             </div>
             <div class="ics-container">
                 <div class="header">
@@ -321,39 +377,54 @@ if (isset($_GET['print_grouped']) && is_numeric($_GET['print_grouped'])) {
                     <div class="entity-name">'AMANG' RODRIGUEZ MEMORIAL MEDICAL CENTER</div>
                 </div>
                 
+                <!-- Employee Information -->
+                <div class="employee-details">
+                    <p><strong>Issued To:</strong> <?php echo htmlspecialchars($employee_name); ?> (<?php echo htmlspecialchars($items[0]['issued_to_position'] ?? 'N/A'); ?>)</p>
+                    <p><strong>Issued By:</strong> <?php echo htmlspecialchars($issued_by); ?></p>
+                    <p><strong>Issued Date:</strong> <?php echo date('F d, Y', strtotime($issued_date)); ?></p>
+                    <p><strong>Total Items:</strong> <?php echo count($items); ?> | <strong>Total Quantity:</strong> <?php echo array_sum(array_column($items, 'quantity_issued')); ?></p>
+                </div>
                 
+                <!-- Items Table - Shows ALL items -->
                 <table>
                     <thead>
                         <tr>
-                            <th>Qty</th>
-                            <th>Unit</th>
-                            <th>Amount</th>
-                            <th>Description</th>
-                            <th>Property No.</th>
-                            <th>Est. Useful Life</th>
+                            <th style="width: 5%">#</th>
+                            <th style="width: 8%">Qty</th>
+                            <th style="width: 10%">Unit</th>
+                            <th style="width: 12%">Amount</th>
+                            <th style="width: 40%">Description</th>
+                            <th style="width: 15%">Property No.</th>
+                            <th style="width: 10%">Est. Useful Life</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach($items as $item): 
+                        <?php 
+                        $counter = 1;
+                        $running_total = 0;
+                        foreach($items as $item): 
                             $unit_display = !empty($item['big_unit']) ? $item['big_unit'] : ($item['small_unit'] ?? 'pcs');
                             $amount = $item['unit_value'] * $item['quantity_issued'];
+                            $running_total += $amount;
+                            $display_property = !empty($item['issuance_barcode']) ? $item['issuance_barcode'] : $item['property_no'];
                         ?>
                         <tr>
-                            <td style="text-align: center;"><?php echo $item['quantity_issued']; ?></td>
-                            <td style="text-align: center;"><?php echo htmlspecialchars($unit_display); ?></td>
-                            <td style="text-align: right;">₱<?php echo number_format($amount, 2); ?></td>
+                            <td class="text-center"><?php echo $counter++; ?></td>
+                            <td class="text-center"><?php echo $item['quantity_issued']; ?></td>
+                            <td class="text-center"><?php echo htmlspecialchars($unit_display); ?></td>
+                            <td class="text-right">₱<?php echo number_format($amount, 2); ?></td>
                             <td>
                                 <strong><?php echo htmlspecialchars($item['article_name']); ?></strong><br>
                                 <small><?php echo nl2br(htmlspecialchars(substr($item['description'] ?? '', 0, 100))); ?></small>
                             </td>
-                            <td style="text-align: center;"><?php echo htmlspecialchars($item['property_no']); ?></td>
-                            <td style="text-align: center;">3 years</td>
+                            <td class="text-center"><code><?php echo htmlspecialchars($display_property); ?></code></td>
+                            <td class="text-center">3 years</td>
                         </tr>
                         <?php endforeach; ?>
-                        <tr style="background: #f9f9f9;">
-                            <td colspan="2" style="text-align: right;"><strong>TOTAL:</strong></td>
-                            <td style="text-align: right;"><strong>₱<?php echo number_format($total_amount, 2); ?></strong></td>
-                            <td colspan="3"></td>
+                        <tr class="summary-row">
+                            <td colspan="3" class="text-right"><strong>TOTAL:</strong> </td>
+                            <td class="text-right"><strong>₱<?php echo number_format($running_total, 2); ?></strong> </td>
+                            <td colspan="3"> </td>
                         </tr>
                     </tbody>
                 </table>
@@ -379,12 +450,37 @@ if (isset($_GET['print_grouped']) && is_numeric($_GET['print_grouped'])) {
                     </div>
                 </div>
                 
+                <div class="signature-section">
+                    <div class="signature-box">
+                        <div class="signature-line"></div>
+                        <div class="signature-name">________________________</div>
+                        <div>Signature Over Printed Name</div>
+                        <div>Chairperson-Anesthesia Dept./Medical</div>
+                        <div>Position/Office</div>
+                        <div><?php echo $current_date; ?></div>
+                        <div>Date</div>
+                    </div>
+                    <div class="signature-box">
+                        <div class="signature-line"></div>
+                        <div class="signature-name">________________________</div>
+                        <div>Signature Over Printed Name</div>
+                        <div>Supply and/or Property Division/Unit</div>
+                        <div>Position/Office</div>
+                        <div><?php echo $current_date; ?></div>
+                        <div>Date</div>
+                    </div>
+                </div>
+                
                 <div class="footer-note">
                     <strong>Original Copy 2</strong> - Supply and/or Property Division/Unit Recipient or end-user of the inventory
                 </div>
             </div>
             <script>
-                window.onload = function() { setTimeout(function() { window.print(); }, 500); }
+                window.onload = function() { 
+                    setTimeout(function() { 
+                        window.print(); 
+                    }, 500); 
+                }
             </script>
         </body>
         </html>
@@ -564,7 +660,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                 
                 $single_qty = 1;  // Each record represents 1 unit
                 
-                $stmt->bind_param("iiiidsss", 
+                $stmt->bind_param("iiiidssss", 
                     $inventory_id, 
                     $issued_to, 
                     $_SESSION['user_id'],
@@ -683,7 +779,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
     exit();
 }
 
-// Return item with condition - Handle both inventory and semi_ppe
+// Return item with condition - Handle partial returns
 if (isset($_POST['action']) && $_POST['action'] == 'return_item') {
     // Disable error display to ensure clean JSON output
     error_reporting(0);
@@ -692,6 +788,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'return_item') {
     
     $issuance_id = (int)$_POST['issuance_id'];
     $condition_on_return = sanitize($_POST['condition_on_return']);
+    $quantity_to_return = isset($_POST['quantity_to_return']) ? floatval($_POST['quantity_to_return']) : null;
     
     $valid_conditions = ['Serviceable', 'Non-Serviceable', 'For Condemn', 'Under Repair'];
     if (!in_array($condition_on_return, $valid_conditions)) {
@@ -719,17 +816,53 @@ if (isset($_POST['action']) && $_POST['action'] == 'return_item') {
         exit();
     }
     
+    // Use quantity_to_return if provided, otherwise use full quantity_issued
+    $return_qty = ($quantity_to_return !== null && $quantity_to_return > 0 && $quantity_to_return <= $issuance['quantity_issued']) 
+        ? $quantity_to_return 
+        : $issuance['quantity_issued'];
+    
+    $remaining_qty = $issuance['quantity_issued'] - $return_qty;
+    
     $conn->begin_transaction();
     try {
-        // Update issuance record
-        $conn->query("UPDATE equipment_issuance SET 
-            status='returned', 
-            actual_return=NOW(), 
-            condition_on_return='$condition_on_return' 
-            WHERE id=$issuance_id");
+        if ($remaining_qty > 0) {
+            // PARTIAL RETURN: Update existing issuance with reduced quantity
+            $conn->query("UPDATE equipment_issuance SET 
+                quantity_issued = $remaining_qty
+                WHERE id=$issuance_id");
+            
+            // Create a new issuance record for the returned portion
+            $stmt = $conn->prepare("
+                INSERT INTO equipment_issuance (
+                    inventory_id, issued_to, issued_by, signatory_id, quantity_issued, 
+                    condition_on_issue, remarks, status, issued_date, actual_return, condition_on_return, issuance_barcode
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'returned', NOW(), NOW(), ?, ?)
+            ");
+            
+            $stmt->bind_param("iiiidsssss", 
+                $issuance['inventory_id'],
+                $issuance['issued_to'],
+                $issuance['issued_by'],
+                $issuance['signatory_id'],
+                $return_qty,
+                $issuance['condition_on_issue'],
+                $issuance['remarks'],
+                $condition_on_return,
+                $issuance['issuance_barcode']
+            );
+            $stmt->execute();
+            $stmt->close();
+        } else {
+            // FULL RETURN: Update existing issuance as returned
+            $conn->query("UPDATE equipment_issuance SET 
+                status='returned', 
+                actual_return=NOW(), 
+                condition_on_return='$condition_on_return' 
+                WHERE id=$issuance_id");
+        }
         
-        // Calculate new quantity
-        $new_quantity = $issuance['qty_physical_count'] + $issuance['quantity_issued'];
+        // Update inventory quantity
+        $new_quantity = $issuance['qty_physical_count'] + $return_qty;
         
         if ($issuance['item_type'] == 'inventory') {
             $property_no_without_dept = removeDepartmentCodeFromPropertyNo($issuance['property_no']);
@@ -746,7 +879,7 @@ if (isset($_POST['action']) && $_POST['action'] == 'return_item') {
         }
         
         $conn->commit();
-        echo json_encode(['success' => true, 'message' => 'Item returned successfully.']);
+        echo json_encode(['success' => true, 'message' => "$return_qty item(s) returned successfully."]);
         
     } catch (Exception $e) {
         $conn->rollback();
@@ -828,16 +961,16 @@ if (isset($_GET['print_par']) && is_numeric($_GET['print_par'])) {
             WHERE ei.id = $issuance_id
         ");
     } else {
-$par_query = $conn->query("
-    SELECT ei.*, s.article_name, s.description, ei.issuance_barcode as property_no, s.big_unit, s.small_unit, s.unit_value,
-           CONCAT(e.firstname, ' ', e.lastname) as issued_to_name,
-           e.position as issued_to_position,
-           CONCAT(issuer.firstname, ' ', issuer.lastname) as issued_by_name,
-           sig.name as signatory_name,
-           d.name as department_name,
-           d.code as department_code
-    FROM equipment_issuance ei
-    JOIN semi_ppe s ON ei.inventory_id = s.id
+        $par_query = $conn->query("
+            SELECT ei.*, s.article_name, s.description, ei.issuance_barcode as property_no, s.big_unit, s.small_unit, s.unit_value,
+                   CONCAT(e.firstname, ' ', e.lastname) as issued_to_name,
+                   e.position as issued_to_position,
+                   CONCAT(issuer.firstname, ' ', issuer.lastname) as issued_by_name,
+                   sig.name as signatory_name,
+                   d.name as department_name,
+                   d.code as department_code
+            FROM equipment_issuance ei
+            JOIN semi_ppe s ON ei.inventory_id = s.id
             JOIN employees e ON ei.issued_to = e.id
             JOIN users issuer ON ei.issued_by = issuer.id
             LEFT JOIN signatories sig ON ei.signatory_id = sig.id
@@ -2038,7 +2171,212 @@ th {
     margin-top: 10px;
 }
 
-/* View Modal */
+/* ============================================
+   ENHANCED VIEW MODAL CSS (from semi_expendable)
+   ============================================ */
+
+/* View Modal specific container */
+.view-modal-container {
+    padding: 0;
+}
+
+/* Section cards with shadow and hover effect */
+.view-modal-container .detail-section {
+    background: var(--white);
+    border-radius: 16px;
+    margin-bottom: 24px;
+    box-shadow: 0 2px 8px rgba(107, 140, 255, 0.08);
+    transition: box-shadow 0.2s ease;
+    overflow: hidden;
+}
+
+.view-modal-container .detail-section:hover {
+    box-shadow: 0 4px 16px rgba(107, 140, 255, 0.12);
+}
+
+/* Section headers with gradient accent */
+.view-modal-container .detail-header {
+    background: linear-gradient(135deg, var(--light) 0%, var(--white) 100%);
+    padding: 16px 20px;
+    border-bottom: 2px solid var(--accent-light);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.view-modal-container .detail-header i {
+    font-size: 18px;
+    color: var(--primary);
+    background: rgba(107, 140, 255, 0.1);
+    padding: 8px;
+    border-radius: 12px;
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.view-modal-container .detail-header h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--primary);
+    letter-spacing: 0.3px;
+}
+
+/* Content area padding */
+.view-modal-container .detail-content {
+    padding: 20px;
+}
+
+/* Grid layout for details - 2 columns on desktop */
+.view-modal-container .detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px 24px;
+}
+
+/* Individual detail item styling */
+.view-modal-container .detail-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 0;
+    border-bottom: 1px dashed var(--border-light);
+}
+
+/* Label styling - small, uppercase, muted */
+.view-modal-container .detail-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+
+/* Value styling - clean and readable */
+.view-modal-container .detail-value {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+    word-break: break-word;
+    line-height: 1.4;
+}
+
+/* Status badges inside view modal */
+.view-modal-container .status-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.view-modal-container .status-badge.issued {
+    background: var(--accent-light);
+    color: var(--accent);
+}
+
+.view-modal-container .status-badge.available {
+    background: var(--success-light);
+    color: var(--success);
+}
+
+/* Property number highlight */
+.view-modal-container .property-number {
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    background: var(--light);
+    padding: 4px 10px;
+    border-radius: 6px;
+    display: inline-block;
+    letter-spacing: 0.5px;
+}
+
+/* Value highlight (monetary) */
+.view-modal-container .value-highlight {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--primary);
+}
+
+/* Loading state */
+.view-modal-loading {
+    text-align: center;
+    padding: 60px 20px;
+}
+
+.view-modal-loading i {
+    font-size: 48px;
+    color: var(--primary);
+    margin-bottom: 16px;
+}
+
+.view-modal-loading p {
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
+/* Error state */
+.view-modal-error {
+    text-align: center;
+    padding: 40px 20px;
+    background: #fff5f5;
+    border-radius: 12px;
+    color: var(--danger);
+}
+
+/* Responsive: single column on mobile */
+@media (max-width: 640px) {
+    .view-modal-container .detail-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+    
+    .view-modal-container .detail-content {
+        padding: 16px;
+    }
+}
+
+/* Optional: Print styles for view modal */
+@media print {
+    .view-modal-container .detail-section {
+        break-inside: avoid;
+        page-break-inside: avoid;
+        box-shadow: none;
+        border: 1px solid #ddd;
+    }
+    
+    .view-modal-container .detail-header {
+        background: #f5f5f5;
+    }
+    
+    .modal-footer, .modal-close {
+        display: none;
+    }
+}
+
+/* Additional polish for status/info pills */
+.info-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--light);
+    padding: 6px 12px;
+    border-radius: 30px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.info-pill i {
+    font-size: 12px;
+    color: var(--primary);
+}
+
+/* View Modal Container */
 .view-modal {
     display: none;
     position: fixed;
@@ -2059,15 +2397,19 @@ th {
 .view-modal-content {
     background: white;
     border-radius: 16px;
-    width: 600px;
+    width: 800px;
     max-width: 90%;
-    max-height: 80vh;
+    max-height: 85vh;
     overflow-y: auto;
 }
 
 .view-modal-header {
+    position: sticky;
+    top: 0;
+    background: white;
+    z-index: 10;
     border-bottom: 2px solid var(--accent-light);
-    padding: 20px;
+    padding: 20px 25px;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -2076,34 +2418,22 @@ th {
 .view-modal-header h3 {
     color: var(--primary);
     margin: 0;
+    font-size: 18px;
 }
 
 .view-modal-close {
     cursor: pointer;
-    font-size: 24px;
+    font-size: 28px;
     color: var(--text-muted);
+    transition: color 0.2s;
+}
+
+.view-modal-close:hover {
+    color: var(--accent);
 }
 
 .view-modal-body {
-    padding: 20px;
-}
-
-.view-detail-row {
-    display: flex;
-    margin-bottom: 12px;
-    border-bottom: 1px solid var(--border-light);
-    padding-bottom: 8px;
-}
-
-.view-detail-label {
-    width: 35%;
-    font-weight: 600;
-    color: var(--text-secondary);
-}
-
-.view-detail-value {
-    width: 65%;
-    color: var(--text-primary);
+    padding: 25px;
 }
 
 /* Barcode Modal */
@@ -2356,7 +2686,6 @@ th {
     }
 }
 
-
 /* Employee Items Table inside Modal */
 .employee-items-table {
     width: 100%;
@@ -2397,7 +2726,6 @@ th {
     border-top: 2px solid var(--primary);
 }
 
-
 .btn-barcode-sm {
     display: inline-flex;
     align-items: center;
@@ -2415,7 +2743,6 @@ th {
 .btn-barcode-sm:hover {
     background: #5a7ae6;
 }
-
 
 .modal-overlay {
     display: none;
@@ -2448,6 +2775,63 @@ th {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+}
+
+.modal-header-settings {
+    background: linear-gradient(135deg, var(--light) 0%, var(--white) 100%);
+    padding: 16px 20px;
+    border-bottom: 2px solid var(--accent-light);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header-settings h3 {
+    color: var(--primary);
+    margin: 0;
+    font-size: 16px;
+}
+
+.modal-scroll-content {
+    padding: 20px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.modal-footer-buttons {
+    padding: 15px 20px;
+    border-top: 1px solid var(--border-light);
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    background: var(--white);
+}
+
+.btn-modal {
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 13px;
+}
+
+.btn-modal-secondary {
+    background: #f5f5f5;
+    color: var(--text-secondary);
+}
+
+/* Animation */
+@keyframes modalSlideIn {
+    from {
+        transform: translateY(-30px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
 }
 </style>
 
@@ -2487,20 +2871,20 @@ th {
                     <div class="search-group" style="flex:0.3;"><label>&nbsp;</label><button type="button" class="btn-clear-employee" onclick="clearReissueEmployeeSearch()">Clear</button></div>
                 </div>
                 <div id="reissue_employee_results_container" style="max-height:300px;overflow-y:auto">
-    <table class="employee-results-table" style="width:100%">
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Position</th>
-                <th>Department</th>
-                <th>Action</th>
-            </tr>
-        </thead>
-        <tbody id="reissue_employee_results_body">
-            <tr><td colspan="4" class="no-results" style="text-align:center;padding:40px">Type to search</td></tr>
-        </tbody>
-    </table>
-</div>
+                    <table class="employee-results-table" style="width:100%">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Position</th>
+                                <th>Department</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="reissue_employee_results_body">
+                            <tr><td colspan="4" class="no-results" style="text-align:center;padding:40px">Type to search</div></div>
+                        </tbody>
+                    </table>
+                </div>
             </div>
             <div id="selected_reissue_employee_display" style="display:none;margin-top:10px;padding:12px;background:var(--success-light);border-radius:8px"><i class="fas fa-user-check"></i> Selected: <strong id="selected_reissue_employee_name"></strong></div>
             <input type="hidden" id="selected_reissue_employee_id" name="reissue_to" value="">
@@ -2544,8 +2928,6 @@ th {
 <div class="issue-form-container">
     <h3><i class="fas fa-hand-holding"></i> Issue New Item</h3>
     
-  
-
     <div class="barcode-search-section">
         <h4>Search by Barcode</h4>
         <div class="barcode-search-box">
@@ -2635,7 +3017,7 @@ th {
                                     <i class="fas fa-search"></i>
                                     <p>Click "Search" to find employees</p>
                                 </div>
-                            </tr>
+                            </div>
                         </tbody>
                     </table>
                 </div>
@@ -2680,7 +3062,7 @@ th {
 <!-- ++++++++++++++++++++++++++++++++++++++++++++++++++++++ -->
 <div class="table-container">
     <div class="table-header">
-        <h2><i class="fas fa-users"></i> Issued Items by Employee (MMulti Item)</h2>
+        <h2><i class="fas fa-users"></i> Issued Items by Employee (Multi Item)</h2>
         <p>Click "View Items" to see all items issued to an employee</p>
     </div>
     <?php
@@ -2703,15 +3085,6 @@ th {
     ");
     ?>
 
-    <?php
-// Debug - Check if there are any issued items
-$check_issued = $conn->query("SELECT COUNT(*) as count FROM equipment_issuance WHERE status = 'issued'");
-$issued_count = $check_issued->fetch_assoc()['count'];
-?>
-<!-- Debug info (remove after testing) -->
-<div style="background: #f0f0f0; padding: 10px; margin: 10px; border-radius: 5px; font-size: 12px;">
-    <strong>Debug:</strong> Total issued items: <?php echo $issued_count; ?>
-</div>
     <?php if($grouped_issuances && $grouped_issuances->num_rows > 0): ?>
     <div style="overflow-x: auto;">
         <table style="width: 100%; min-width: 800px;">
@@ -2737,18 +3110,17 @@ $issued_count = $check_issued->fetch_assoc()['count'];
                     <td><?php echo date('M d, Y', strtotime($group['last_issue_date'])); ?></td>
                     <td class="text-center">
                         <div class="action-buttons" style="justify-content: center;">
-                           <button class="action-btn view" onclick="testEmployeeIssuances(<?php echo $group['issued_to']; ?>, '<?php echo htmlspecialchars(addslashes($group['issued_to_name'])); ?>')" title="View All Items">
-    <i class="fas fa-eye"></i>
-</button>
+                            <button class="action-btn view" onclick="viewEmployeeIssuances(<?php echo $group['issued_to']; ?>, '<?php echo htmlspecialchars(addslashes($group['issued_to_name'])); ?>')" title="View All Items">
+                                <i class="fas fa-eye"></i>
+                            </button>
                             <a href="?print_grouped=<?php echo $group['issued_to']; ?>" class="action-btn print" target="_blank" title="Print All Items">
                                 <i class="fas fa-print"></i>
                             </a>
-                            <!-- RETURN BUTTON -->
-        <button class="action-btn return" onclick="openBatchReturnModal(<?php echo $group['issued_to']; ?>, '<?php echo htmlspecialchars(addslashes($group['issued_to_name'])); ?>')" title="Return Multiple Items" style="background: #FF9800;">
-            <i class="fas fa-undo-alt"></i> Return
-        </button>
+                            <button class="action-btn return" onclick="openBatchReturnModal(<?php echo $group['issued_to']; ?>, '<?php echo htmlspecialchars(addslashes($group['issued_to_name'])); ?>')" title="Return Multiple Items" style="background: #FF9800;">
+                                <i class="fas fa-undo-alt"></i>
+                            </button>
                         </div>
-                    </td>
+                    </div>
                 </tr>
                 <?php endwhile; ?>
             </tbody>
@@ -2763,11 +3135,11 @@ $issued_count = $check_issued->fetch_assoc()['count'];
 </div>
 
 <!-- ============================================ -->
-<!-- ISSUANCE HISTORY -->
+<!-- Recent ISSUANCE -->
 <!-- ============================================ -->
 <div class="table-container">
     <div class="table-header">
-        <h2><i class="fas fa-history"></i> Issuance History</h2>
+        <h2><i class="fas fa-history"></i> Recent Issuance</h2>
     </div>
     <?php
     $history = $conn->query("
@@ -2854,28 +3226,26 @@ $issued_count = $check_issued->fetch_assoc()['count'];
                              style="cursor: pointer;">
                         <br><small><?php echo htmlspecialchars(substr($item['issuance_barcode'], 0, 15)); ?>...</small>
                         <?php else: ?>—<?php endif; ?>
-                    </td>
-                    <td style="white-space: nowrap;"><?php echo date('M d, Y', strtotime($item['issued_date'])); ?></td>
-                    <td><strong><?php echo htmlspecialchars($item['article_name']); ?></strong></td>
-                    <td><code><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></code></td>
-                    <td class="text-center"><?php echo $item['quantity_issued']; ?></td>
-                    <td><?php echo htmlspecialchars($unit_display); ?></td>
-                    <td><?php echo htmlspecialchars($item['issued_by_name']); ?></td>
-                    <td><?php echo htmlspecialchars($reissued_from); ?></td>
-                    <td><?php echo htmlspecialchars($issued_to); ?></td>
-                    <td><span class="condition-badge <?php echo $condition_class; ?>"><?php echo htmlspecialchars($item['condition_on_issue'] ?? 'Serviceable'); ?></span></td>
-                    <td><span class="issue-status-badge <?php echo $status_class; ?>"><?php echo ucfirst($item['status']); ?></span></td>
-                    <td><?php echo $item['actual_return'] ? date('M d, Y', strtotime($item['actual_return'])) : '—'; ?></td>
+                    </div>
+                    <td style="white-space: nowrap;"><?php echo date('M d, Y', strtotime($item['issued_date'])); ?></div>
+                    <td><strong><?php echo htmlspecialchars($item['article_name']); ?></strong></div>
+                    <td><code><?php echo htmlspecialchars($item['property_no'] ?? 'N/A'); ?></code></div>
+                    <td class="text-center"><?php echo $item['quantity_issued']; ?></div>
+                    <td><?php echo htmlspecialchars($unit_display); ?></div>
+                    <td><?php echo htmlspecialchars($item['issued_by_name']); ?></div>
+                    <td><?php echo htmlspecialchars($reissued_from); ?></div>
+                    <td><?php echo htmlspecialchars($issued_to); ?></div>
+                    <td><span class="condition-badge <?php echo $condition_class; ?>"><?php echo htmlspecialchars($item['condition_on_issue'] ?? 'Serviceable'); ?></span></div>
+                    <td><span class="issue-status-badge <?php echo $status_class; ?>"><?php echo ucfirst($item['status']); ?></span></div>
+                    <td><?php echo $item['actual_return'] ? date('M d, Y', strtotime($item['actual_return'])) : '—'; ?></div>
                     <td>
                         <div class="action-buttons">
                             <a href="?print_par=<?php echo $item['id']; ?>" class="action-btn print" target="_blank" title="Print">
                                 <i class="fas fa-print"></i>
                             </a>
-
-                             <button class="return-btn" onclick="openReturnModal(<?php echo $item['id']; ?>, '<?php echo addslashes($item['article_name']); ?>')" title="Return Item">
-            <i class="fas fa-undo-alt"></i> Return
-        </button>
-
+                            <button class="return-btn" onclick="openReturnModal(<?php echo $item['id']; ?>, '<?php echo addslashes($item['article_name']); ?>')" title="Return Item">
+                                <i class="fas fa-undo-alt"></i> Return
+                            </button>
                             <?php if($item['status'] == 'returned'): ?>
                                 <?php 
                                 $non_reissuable_conditions = ['Non-Serviceable', 'For Condemn'];
@@ -2895,7 +3265,7 @@ $issued_count = $check_issued->fetch_assoc()['count'];
                                 <i class="fas fa-eye"></i>
                             </button>
                         </div>
-                    </td>
+                    </div>
                 </tr>
                 <?php endwhile; ?>
             </tbody>
@@ -2939,7 +3309,7 @@ $issued_count = $check_issued->fetch_assoc()['count'];
     </div>
 </div>
 
-<!-- View Modal -->
+<!-- ENHANCED VIEW MODAL (with premium styling from semi_expendable) -->
 <div id="viewModal" class="view-modal">
     <div class="view-modal-content">
         <div class="view-modal-header">
@@ -2947,7 +3317,10 @@ $issued_count = $check_issued->fetch_assoc()['count'];
             <span class="view-modal-close" onclick="closeViewModal()">&times;</span>
         </div>
         <div class="view-modal-body" id="viewModalBody">
-            <div style="text-align:center;padding:20px"><i class="fas fa-spinner fa-spin"></i> Loading...</div>
+            <div class="view-modal-loading">
+                <i class="fas fa-spinner fa-pulse"></i>
+                <p>Loading issuance details...</p>
+            </div>
         </div>
     </div>
 </div>
@@ -2969,9 +3342,10 @@ $issued_count = $check_issued->fetch_assoc()['count'];
         </div>
     </div>
 </div>
-<!-- Employee Items Modal (for grouped view) -->
+
+<!-- Employee Items Modal (for grouped view) - WITH QUANTITY INPUT -->
 <div id="employeeItemsModal" class="modal-overlay">
-    <div class="modal-container" style="max-width: 900px;">
+    <div class="modal-container" style="max-width: 1100px;">
         <div class="modal-header-settings">
             <h3><i class="fas fa-boxes"></i> Items Issued to: <span id="modal_employee_name"></span></h3>
             <span class="modal-close" onclick="closeEmployeeItemsModal()">&times;</span>
@@ -2987,12 +3361,12 @@ $issued_count = $check_issued->fetch_assoc()['count'];
         </div>
     </div>
 </div>
+
 <!-- Confirm Modals -->
 <div id="confirmModal" class="confirm-modal"><div class="confirm-modal-content"><div class="confirm-modal-icon"><i class="fas fa-question-circle"></i></div><h3>Confirm Issuance</h3><p id="confirmModalMessage"></p><div class="confirm-modal-buttons"><button class="confirm-btn-cancel" onclick="closeConfirmModal()">Cancel</button><button class="confirm-btn-confirm" onclick="submitForm()">Confirm</button></div></div></div>
 <div id="confirmReissueModal" class="confirm-modal"><div class="confirm-modal-content"><div class="confirm-modal-icon"><i class="fas fa-redo-alt"></i></div><h3>Confirm Reissue</h3><p id="confirmReissueModalMessage"></p><div class="confirm-modal-buttons"><button class="confirm-btn-cancel" onclick="closeConfirmReissueModal()">Cancel</button><button class="confirm-btn-confirm" onclick="submitReissueForm()">Confirm</button></div></div></div>
 
 <script>
-// Store data
 const inventoryData = <?php echo json_encode($inventory_items); ?>;
 const allEmployees = <?php echo json_encode($all_employees); ?>;
 let cartItems = [];
@@ -3000,201 +3374,24 @@ let selectedEmployeeId = null;
 let selectedReissueEmployeeId = null;
 let currentReturnId = null;
 
+// Store selected items for batch return
+let selectedReturnItemsGlobal = [];
+let currentReturnItemsGlobal = [];
+let currentReturnEmployeeIdGlobal = null;
 
+// ============================================
+// VIEW EMPLOYEE ISSUANCES FUNCTION - WITH QUANTITY INPUT
+// ============================================
 function viewEmployeeIssuances(employeeId, employeeName) {
-    console.log('viewEmployeeIssuances called with:', employeeId, employeeName);
-    
     const modal = document.getElementById('employeeItemsModal');
     const modalEmployeeName = document.getElementById('modal_employee_name');
     const printBtn = document.getElementById('print_all_items_btn');
     const contentDiv = document.getElementById('employee_items_content');
     
-    if (!modal) {
-        console.error('Modal not found!');
-        alert('Modal not found. Please refresh the page.');
-        return;
-    }
+    if (!modal) return;
     
     if (modalEmployeeName) modalEmployeeName.innerHTML = employeeName;
     if (printBtn) printBtn.href = '?print_grouped=' + employeeId;
-    
-    modal.style.display = 'flex';
-    modal.style.visibility = 'visible';
-    
-    if (contentDiv) {
-        contentDiv.innerHTML = '<div style="text-align:center;padding:40px;"><i class="fas fa-spinner fa-spin"></i> Loading items...</div>';
-    }
-    
-    // Store for batch return
-    window.currentReturnEmployeeId = employeeId;
-    window.currentReturnEmployeeName = employeeName;
-    window.currentReturnItems = [];
-    
-    fetch('?get_employee_issuances=' + employeeId)
-        .then(response => response.json())
-        .then(data => {
-            console.log('Data received:', data);
-            
-            if (!contentDiv) return;
-            
-            if (data.success && data.items && data.items.length > 0) {
-                window.currentReturnItems = data.items;
-                
-                let html = `
-                    <div style="margin-bottom: 15px; padding: 10px; background: #f5f5f5; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-                        <label style="display: flex; align-items: center; gap: 8px;">
-                            <input type="checkbox" id="select_all_return_items" onchange="toggleSelectAllReturnItems()">
-                            <strong>Select All Items</strong>
-                        </label>
-                        <button onclick="submitBatchReturn()" id="batchReturnBtn" style="background: #FF9800; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">
-                            <i class="fas fa-undo-alt"></i> Return Selected Items
-                        </button>
-                    </div>
-                    <div style="overflow-x: auto; max-height: 500px; overflow-y: auto;">
-                        <table style="width:100%; border-collapse: collapse; font-size: 13px;">
-                            <thead>
-                                <tr style="background: #f5f5f5; position: sticky; top: 0;">
-                                    <th style="padding: 10px; border-bottom: 2px solid #ddd; width: 40px;">Select</th>
-                                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Item Name</th>
-                                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Property No.</th>
-                                    <th style="padding: 10px; text-align: center; border-bottom: 2px solid #ddd;">Qty</th>
-                                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Unit</th>
-                                    <th style="padding: 10px; text-align: right; border-bottom: 2px solid #ddd;">Unit Value</th>
-                                    <th style="padding: 10px; text-align: right; border-bottom: 2px solid #ddd;">Total</th>
-                                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Return Condition</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                `;
-                
-                let totalValue = 0;
-                data.items.forEach((item, index) => {
-                    const unitDisplay = item.big_unit ? item.big_unit : (item.small_unit || 'pcs');
-                    const itemTotal = parseFloat(item.unit_value) * parseFloat(item.quantity_issued);
-                    totalValue += itemTotal;
-                    
-                    html += `
-                        <tr style="border-bottom: 1px solid #eee;" data-item-id="${item.id}" data-item-index="${index}">
-                            <td style="padding: 8px; text-align: center;">
-                                <input type="checkbox" class="return_item_checkbox" data-id="${item.id}" data-index="${index}" onchange="updateReturnItemSelection(${index}, this.checked)">
-                            </td>
-                            <td style="padding: 8px;"><strong>${escapeHtml(item.article_name)}</strong></td>
-                            <td style="padding: 8px;"><code>${escapeHtml(item.issuance_barcode || item.property_no || 'N/A')}</code></td>
-                            <td style="padding: 8px; text-align: center;">${item.quantity_issued}</td>
-                            <td style="padding: 8px;">${escapeHtml(unitDisplay)}</td>
-                            <td style="padding: 8px; text-align: right;">₱${parseFloat(item.unit_value).toFixed(2)}</td>
-                            <td style="padding: 8px; text-align: right;">₱${itemTotal.toFixed(2)}</td>
-                            <td style="padding: 8px;">
-                                <select class="return_condition_select" data-id="${item.id}" data-index="${index}" disabled style="padding: 6px; border-radius: 4px; border: 1px solid #ddd; width: 100%; font-size: 11px;">
-                                    <option value="">-- Select --</option>
-                                    <option value="Serviceable">Serviceable - Returns to stock</option>
-                                    <option value="Non-Serviceable">Non-Serviceable - Cannot reissue</option>
-                                    <option value="For Condemn">For Condemn - Cannot reissue</option>
-                                    <option value="Under Repair">Under Repair - Can reissue</option>
-                                </select>
-                             </td>
-                        </tr>
-                    `;
-                });
-                
-                html += `
-                                <tr style="background: #FFD8E0; font-weight: bold;">
-                                    <td colspan="6" style="padding: 10px; text-align: right;"><strong>GRAND TOTAL:</strong></td>
-                                    <td style="padding: 10px; text-align: right;"><strong>₱${totalValue.toFixed(2)}</strong></td>
-                                    <td></td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                    <div id="batch_return_warning" style="margin-top: 15px; padding: 10px; background: #FFF3E0; border-left: 4px solid #FF9800; border-radius: 4px; display: none;">
-                        <i class="fas fa-exclamation-triangle"></i> <span id="batch_return_warning_text"></span>
-                    </div>
-                `;
-                contentDiv.innerHTML = html;
-            } else {
-                contentDiv.innerHTML = '<div style="padding:40px;text-align:center;color:#999;">No items found for this employee.</div>';
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            if (contentDiv) {
-                contentDiv.innerHTML = '<div style="padding:40px;text-align:center;color:red;">Error loading items. Please try again.</div>';
-            }
-        });
-}
-
-
-
-
-
-
-
-// Store selected items for batch return
-let selectedReturnItems = [];
-
-function toggleSelectAllReturnItems() {
-    const selectAllCheckbox = document.getElementById('select_all_return_items');
-    const checkboxes = document.querySelectorAll('.return_item_checkbox');
-    const isChecked = selectAllCheckbox.checked;
-    
-    checkboxes.forEach((checkbox, idx) => {
-        checkbox.checked = isChecked;
-        const index = parseInt(checkbox.getAttribute('data-index'));
-        updateReturnItemSelection(index, isChecked);
-    });
-}
-
-function updateReturnItemSelection(index, isSelected) {
-    const conditionSelect = document.querySelector(`.return_condition_select[data-index="${index}"]`);
-    
-    if (conditionSelect) {
-        conditionSelect.disabled = !isSelected;
-        if (!isSelected) {
-            conditionSelect.value = '';
-            // Remove from selected array
-            selectedReturnItems = selectedReturnItems.filter(item => item.index !== index);
-        } else {
-            // Add to selected array
-            const existing = selectedReturnItems.find(item => item.index === index);
-            if (!existing) {
-                selectedReturnItems.push({
-                    index: index,
-                    id: conditionSelect.getAttribute('data-id'),
-                    condition: ''
-                });
-            }
-        }
-    }
-    
-    updateBatchReturnWarning();
-}
-
-
-
-
-
-// Store selected items for batch return - use global variable
-let selectedReturnItemsGlobal = [];
-let currentReturnItemsGlobal = [];
-let currentReturnEmployeeIdGlobal = null;
-
-function openBatchReturnModal(employeeId, employeeName) {
-    // Reset global variables
-    selectedReturnItemsGlobal = [];
-    currentReturnItemsGlobal = [];
-    currentReturnEmployeeIdGlobal = employeeId;
-    
-    const modal = document.getElementById('employeeItemsModal');
-    const modalEmployeeName = document.getElementById('modal_employee_name');
-    const contentDiv = document.getElementById('employee_items_content');
-    
-    if (!modal) {
-        console.error('Modal not found!');
-        alert('Modal not found. Please refresh the page.');
-        return;
-    }
-    
-    if (modalEmployeeName) modalEmployeeName.innerHTML = employeeName;
     
     modal.style.display = 'flex';
     modal.style.visibility = 'visible';
@@ -3213,10 +3410,19 @@ function openBatchReturnModal(employeeId, employeeName) {
                 
                 let html = `
                     <div style="margin-bottom: 15px; padding: 10px; background: #f5f5f5; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-                        <label style="display: flex; align-items: center; gap: 8px;">
-                            <input type="checkbox" id="select_all_return_items" onchange="toggleSelectAllReturnItems()">
-                            <strong>Select All Items</strong>
-                        </label>
+                        <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+                            <label style="display: flex; align-items: center; gap: 8px;">
+                                <input type="checkbox" id="select_all_return_items" onchange="toggleSelectAllReturnItems()">
+                                <strong>Select All Items</strong>
+                            </label>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <label><strong>Return Quantity:</strong></label>
+                                <input type="number" id="global_return_quantity" value="1" min="1" step="1" style="width: 80px; padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; text-align: center;">
+                                <button type="button" onclick="applyGlobalQuantityToSelected()" style="padding: 6px 12px; background: var(--primary); color: white; border: none; border-radius: 6px; cursor: pointer;">
+                                    <i class="fas fa-sync-alt"></i> Apply to Selected
+                                </button>
+                            </div>
+                        </div>
                         <button onclick="submitBatchReturn()" id="batchReturnBtn" style="background: #FF9800; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">
                             <i class="fas fa-undo-alt"></i> Return Selected Items
                         </button>
@@ -3225,15 +3431,16 @@ function openBatchReturnModal(employeeId, employeeName) {
                         <table style="width:100%; border-collapse: collapse; font-size: 13px;">
                             <thead>
                                 <tr style="background: #f5f5f5; position: sticky; top: 0;">
-                                    <th style="padding: 10px; border-bottom: 2px solid #ddd; width: 40px;">Select</th>
-                                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Item Name</th>
-                                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Property No.</th>
-                                    <th style="padding: 10px; text-align: center; border-bottom: 2px solid #ddd;">Qty</th>
-                                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Unit</th>
-                                    <th style="padding: 10px; text-align: right; border-bottom: 2px solid #ddd;">Unit Value</th>
-                                    <th style="padding: 10px; text-align: right; border-bottom: 2px solid #ddd;">Total</th>
-                                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Return Condition</th>
-                                 </table>
+                                    <th style="padding: 10px; width: 40px;">Select</th>
+                                    <th style="padding: 10px; text-align: left;">Item Name</th>
+                                    <th style="padding: 10px; text-align: left;">Property No.</th>
+                                    <th style="padding: 10px; text-align: center;">Available Qty</th>
+                                    <th style="padding: 10px; text-align: center;">Qty to Return</th>
+                                    <th style="padding: 10px; text-align: left;">Unit</th>
+                                    <th style="padding: 10px; text-align: right;">Unit Value</th>
+                                    <th style="padding: 10px; text-align: right;">Total</th>
+                                    <th style="padding: 10px; text-align: left;">Return Condition</th>
+                                <tr>
                             </thead>
                             <tbody>
                 `;
@@ -3241,30 +3448,34 @@ function openBatchReturnModal(employeeId, employeeName) {
                 let totalValue = 0;
                 data.items.forEach((item, index) => {
                     const unitDisplay = item.big_unit ? item.big_unit : (item.small_unit || 'pcs');
-                    const itemTotal = parseFloat(item.unit_value) * parseFloat(item.quantity_issued);
+                    const maxQty = parseFloat(item.quantity_issued);
+                    const itemTotal = maxQty * parseFloat(item.unit_value);
                     totalValue += itemTotal;
                     
                     html += `
                         <tr style="border-bottom: 1px solid #eee;">
                             <td style="padding: 8px; text-align: center;">
-                                <input type="checkbox" class="return_item_checkbox" data-id="${item.id}" data-index="${index}" onchange="updateReturnItemSelection(this, ${index})">
-                              </div>
+                                <input type="checkbox" class="return_item_checkbox" data-id="${item.id}" data-index="${index}" data-max-qty="${maxQty}" onchange="updateReturnItemSelection(this, ${index})">
+                            </div>
                             <td style="padding: 8px;"><strong>${escapeHtml(item.article_name)}</strong></div>
                             <td style="padding: 8px;"><code>${escapeHtml(item.issuance_barcode || item.property_no || 'N/A')}</code></div>
-                            <td style="padding: 8px; text-align: center;">${item.quantity_issued}</div>
+                            <td style="padding: 8px; text-align: center;">${maxQty}</div>
+                            <td style="padding: 8px; text-align: center;">
+                                <input type="number" class="return_qty_input" data-id="${item.id}" data-index="${index}" data-max-qty="${maxQty}" value="${maxQty}" min="1" max="${maxQty}" step="1" style="width: 80px; padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; text-align: center;" disabled onchange="updateReturnItemQuantity(this, ${index})">
+                            </div>
                             <td style="padding: 8px;">${escapeHtml(unitDisplay)}</div>
                             <td style="padding: 8px; text-align: right;">₱${parseFloat(item.unit_value).toFixed(2)}</div>
                             <td style="padding: 8px; text-align: right;">₱${itemTotal.toFixed(2)}</div>
                             <td style="padding: 8px;">
-                                <select class="return_condition_select" data-id="${item.id}" data-index="${index}" disabled style="padding: 6px; border-radius: 4px; border: 1px solid #ddd; width: 100%; font-size: 11px;" onchange="updateReturnCondition(this, ${index})">
+                                <select class="return_condition_select" data-id="${item.id}" data-index="${index}" data-max-qty="${maxQty}" disabled style="padding: 6px; border-radius: 4px; border: 1px solid #ddd; width: 100%;" onchange="updateReturnCondition(this, ${index})">
                                     <option value="">-- Select --</option>
-                                    <option value="Serviceable">Serviceable - Returns to stock</option>
-                                    <option value="Non-Serviceable">Non-Serviceable - Cannot reissue</option>
-                                    <option value="For Condemn">For Condemn - Cannot reissue</option>
-                                    <option value="Under Repair">Under Repair - Can reissue</option>
+                                    <option value="Serviceable">Serviceable</option>
+                                    <option value="Non-Serviceable">Non-Serviceable</option>
+                                    <option value="For Condemn">For Condemn</option>
+                                    <option value="Under Repair">Under Repair</option>
                                 </select>
-                              </div>
-                          </div>
+                            </div>
+                        </tr>
                     `;
                 });
                 
@@ -3272,10 +3483,10 @@ function openBatchReturnModal(employeeId, employeeName) {
                                 <tr style="background: #FFD8E0; font-weight: bold;">
                                     <td colspan="6" style="padding: 10px; text-align: right;"><strong>GRAND TOTAL:</strong></div>
                                     <td style="padding: 10px; text-align: right;"><strong>₱${totalValue.toFixed(2)}</strong></div>
-                                    <td></div>
-                                  </tr>
+                                    <td style="padding: 10px;"></div>
+                                </tr>
                             </tbody>
-                          </table>
+                        </table>
                     </div>
                     <div id="batch_return_warning" style="margin-top: 15px; padding: 10px; background: #FFF3E0; border-left: 4px solid #FF9800; border-radius: 4px; display: none;">
                         <i class="fas fa-exclamation-triangle"></i> <span id="batch_return_warning_text"></span>
@@ -3287,36 +3498,80 @@ function openBatchReturnModal(employeeId, employeeName) {
             }
         })
         .catch(error => {
-            console.error('Error:', error);
-            if (contentDiv) {
-                contentDiv.innerHTML = '<div style="padding:40px;text-align:center;color:red;">Error loading items. Please try again.</div>';
-            }
+            contentDiv.innerHTML = '<div style="padding:40px;text-align:center;color:red;">Error loading items. Please try again.</div>';
         });
+}
+
+// Apply global quantity to all selected items
+function applyGlobalQuantityToSelected() {
+    const globalQty = parseInt(document.getElementById('global_return_quantity').value) || 1;
+    const checkboxes = document.querySelectorAll('.return_item_checkbox:checked');
+    
+    checkboxes.forEach((checkbox) => {
+        const index = parseInt(checkbox.getAttribute('data-index'));
+        const maxQty = parseFloat(checkbox.getAttribute('data-max-qty'));
+        const qtyInput = document.querySelector(`.return_qty_input[data-index="${index}"]`);
+        
+        if (qtyInput) {
+            let newQty = Math.min(globalQty, maxQty);
+            newQty = Math.max(1, newQty);
+            qtyInput.value = newQty;
+            updateReturnItemQuantity(qtyInput, index);
+        }
+    });
+}
+
+// Update return item quantity and store in selectedReturnItemsGlobal
+function updateReturnItemQuantity(input, index) {
+    const id = input.getAttribute('data-id');
+    const maxQty = parseFloat(input.getAttribute('data-max-qty'));
+    let qty = parseFloat(input.value);
+    
+    if (isNaN(qty) || qty < 1) qty = 1;
+    if (qty > maxQty) qty = maxQty;
+    input.value = qty;
+    
+    const itemIndex = selectedReturnItemsGlobal.findIndex(item => item.index === index);
+    if (itemIndex !== -1) {
+        selectedReturnItemsGlobal[itemIndex].quantity = qty;
+    }
+    
+    updateBatchReturnWarning();
+}
+
+function openBatchReturnModal(employeeId, employeeName) {
+    viewEmployeeIssuances(employeeId, employeeName);
 }
 
 function toggleSelectAllReturnItems() {
     const selectAllCheckbox = document.getElementById('select_all_return_items');
+    if (!selectAllCheckbox) return;
+    
     const checkboxes = document.querySelectorAll('.return_item_checkbox');
     const isChecked = selectAllCheckbox.checked;
     
     checkboxes.forEach((checkbox) => {
         checkbox.checked = isChecked;
         const index = parseInt(checkbox.getAttribute('data-index'));
+        const qtyInput = document.querySelector(`.return_qty_input[data-index="${index}"]`);
         const conditionSelect = document.querySelector(`.return_condition_select[data-index="${index}"]`);
         
+        if (qtyInput) {
+            qtyInput.disabled = !isChecked;
+        }
         if (conditionSelect) {
             conditionSelect.disabled = !isChecked;
             if (!isChecked) {
                 conditionSelect.value = '';
-                // Remove from selected array
                 selectedReturnItemsGlobal = selectedReturnItemsGlobal.filter(item => item.index !== index);
             } else {
-                // Add to selected array if not already there
                 const existing = selectedReturnItemsGlobal.find(item => item.index === index);
                 if (!existing) {
+                    const maxQty = parseFloat(checkbox.getAttribute('data-max-qty'));
                     selectedReturnItemsGlobal.push({
                         index: index,
                         id: conditionSelect.getAttribute('data-id'),
+                        quantity: maxQty,
                         condition: ''
                     });
                 }
@@ -3329,21 +3584,25 @@ function toggleSelectAllReturnItems() {
 
 function updateReturnItemSelection(checkbox, index) {
     const isSelected = checkbox.checked;
+    const qtyInput = document.querySelector(`.return_qty_input[data-index="${index}"]`);
     const conditionSelect = document.querySelector(`.return_condition_select[data-index="${index}"]`);
     
+    if (qtyInput) {
+        qtyInput.disabled = !isSelected;
+    }
     if (conditionSelect) {
         conditionSelect.disabled = !isSelected;
         if (!isSelected) {
             conditionSelect.value = '';
-            // Remove from selected array
             selectedReturnItemsGlobal = selectedReturnItemsGlobal.filter(item => item.index !== index);
         } else {
-            // Add to selected array
             const existing = selectedReturnItemsGlobal.find(item => item.index === index);
             if (!existing) {
+                const maxQty = parseFloat(checkbox.getAttribute('data-max-qty'));
                 selectedReturnItemsGlobal.push({
                     index: index,
                     id: conditionSelect.getAttribute('data-id'),
+                    quantity: maxQty,
                     condition: ''
                 });
             }
@@ -3360,9 +3619,11 @@ function updateReturnCondition(select, index) {
     if (itemIndex !== -1) {
         selectedReturnItemsGlobal[itemIndex].condition = condition;
     } else {
+        const maxQty = parseFloat(select.getAttribute('data-max-qty') || 1);
         selectedReturnItemsGlobal.push({
             index: index,
             id: select.getAttribute('data-id'),
+            quantity: maxQty,
             condition: condition
         });
     }
@@ -3377,8 +3638,8 @@ function updateBatchReturnWarning() {
     if (!warningDiv) return;
     
     const selectedCount = selectedReturnItemsGlobal.length;
-    const missingCondition = selectedReturnItemsGlobal.filter(item => !item.condition);
-    const nonReissuable = selectedReturnItemsGlobal.filter(item => item.condition === 'Non-Serviceable' || item.condition === 'For Condemn');
+    const missingCondition = selectedReturnItemsGlobal.filter(item => !item.condition || item.condition === '');
+    const invalidQuantity = selectedReturnItemsGlobal.filter(item => !item.quantity || item.quantity <= 0);
     
     if (selectedCount === 0) {
         warningDiv.style.display = 'none';
@@ -3389,38 +3650,36 @@ function updateBatchReturnWarning() {
         warningText.innerHTML = `⚠️ Please select return condition for ${missingCondition.length} item(s).`;
         const btn = document.getElementById('batchReturnBtn');
         if (btn) btn.disabled = true;
+    } else if (invalidQuantity.length > 0) {
+        warningDiv.style.display = 'block';
+        warningText.innerHTML = `⚠️ Invalid quantity for ${invalidQuantity.length} item(s).`;
+        const btn = document.getElementById('batchReturnBtn');
+        if (btn) btn.disabled = true;
     } else {
         warningDiv.style.display = 'block';
-        if (nonReissuable.length > 0) {
-            warningText.innerHTML = `⚠️ ${nonReissuable.length} item(s) marked as "${nonReissuable.map(i => i.condition).join(', ')}" will NOT be available for reissue.`;
-        } else {
-            warningText.innerHTML = `✅ ${selectedCount} item(s) ready to return.`;
-        }
+        warningText.innerHTML = `✅ ${selectedCount} item(s) ready to return.`;
         const btn = document.getElementById('batchReturnBtn');
         if (btn) btn.disabled = false;
     }
 }
 
 function submitBatchReturn() {
-    const itemsToReturn = selectedReturnItemsGlobal.filter(item => item.condition);
+    const itemsToReturn = selectedReturnItemsGlobal.filter(item => item.condition && item.condition !== '' && item.quantity && item.quantity > 0);
     
     if (itemsToReturn.length === 0) {
         alert('Please select at least one item and set its return condition.');
         return;
     }
     
-    // Get item details for confirmation message
     let confirmMessage = `Return the following ${itemsToReturn.length} item(s)?\n\n`;
     itemsToReturn.forEach(item => {
         const itemData = currentReturnItemsGlobal.find(i => i.id == item.id);
         if (itemData) {
-            confirmMessage += `- ${itemData.article_name} (${item.condition})\n`;
+            confirmMessage += `- ${itemData.article_name}: ${item.quantity} of ${itemData.quantity_issued} (${item.condition})\n`;
         }
     });
     
-    if (!confirm(confirmMessage)) {
-        return;
-    }
+    if (!confirm(confirmMessage)) return;
     
     const batchReturnBtn = document.getElementById('batchReturnBtn');
     batchReturnBtn.disabled = true;
@@ -3434,31 +3693,23 @@ function submitBatchReturn() {
         fetch(window.location.href, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'action=return_item&issuance_id=' + item.id + '&condition_on_return=' + encodeURIComponent(item.condition)
+            body: 'action=return_item&issuance_id=' + item.id + '&condition_on_return=' + encodeURIComponent(item.condition) + '&quantity_to_return=' + encodeURIComponent(item.quantity)
         })
         .then(response => response.json())
         .then(data => {
             processed++;
-            if (data.success) {
-                successCount++;
-            } else {
-                const itemData = currentReturnItemsGlobal.find(i => i.id == item.id);
-                errors.push(`${itemData ? itemData.article_name : item.id}: ${data.message}`);
-            }
+            if (data.success) successCount++;
+            else errors.push(`${item.id}: ${data.message}`);
             
             if (processed === itemsToReturn.length) {
-                if (errors.length > 0) {
-                    alert(`Returned ${successCount} of ${itemsToReturn.length} items.\nErrors:\n${errors.join('\n')}`);
-                } else {
-                    alert(`Successfully returned ${successCount} item(s).`);
-                }
+                if (errors.length > 0) alert(`Returned ${successCount} of ${itemsToReturn.length} items.\nErrors:\n${errors.join('\n')}`);
+                else alert(`Successfully returned ${successCount} item(s).`);
                 location.reload();
             }
         })
         .catch(error => {
             processed++;
-            const itemData = currentReturnItemsGlobal.find(i => i.id == item.id);
-            errors.push(`${itemData ? itemData.article_name : item.id}: Network error`);
+            errors.push(`${item.id}: Network error`);
             if (processed === itemsToReturn.length) {
                 alert(`Returned ${successCount} of ${itemsToReturn.length} items.\nErrors:\n${errors.join('\n')}`);
                 location.reload();
@@ -3466,164 +3717,249 @@ function submitBatchReturn() {
         });
     });
 }
-
-
-
-
-
-
-
-
-
-
-
-function updateBatchReturnCondition(index, condition) {
-    const itemIndex = selectedReturnItems.findIndex(item => item.index === index);
-    if (itemIndex !== -1) {
-        selectedReturnItems[itemIndex].condition = condition;
-    } else {
-        selectedReturnItems.push({
-            index: index,
-            id: document.querySelector(`.return_condition_select[data-index="${index}"]`).getAttribute('data-id'),
-            condition: condition
-        });
-    }
-    updateBatchReturnWarning();
-}
-
-function updateBatchReturnWarning() {
-    const warningDiv = document.getElementById('batch_return_warning');
-    const warningText = document.getElementById('batch_return_warning_text');
-    
-    if (!warningDiv) return;
-    
-    const selectedCount = selectedReturnItems.length;
-    const missingCondition = selectedReturnItems.filter(item => !item.condition);
-    const nonReissuable = selectedReturnItems.filter(item => item.condition === 'Non-Serviceable' || item.condition === 'For Condemn');
-    
-    if (selectedCount === 0) {
-        warningDiv.style.display = 'none';
-        document.getElementById('batchReturnBtn').disabled = false;
-    } else if (missingCondition.length > 0) {
-        warningDiv.style.display = 'block';
-        warningText.innerHTML = `⚠️ Please select return condition for ${missingCondition.length} item(s).`;
-        document.getElementById('batchReturnBtn').disabled = true;
-    } else {
-        warningDiv.style.display = 'block';
-        if (nonReissuable.length > 0) {
-            warningText.innerHTML = `⚠️ ${nonReissuable.length} item(s) marked as "${nonReissuable.map(i => i.condition).join(', ')}" will NOT be available for reissue.`;
-        } else {
-            warningText.innerHTML = `✅ ${selectedCount} item(s) ready to return.`;
-        }
-        document.getElementById('batchReturnBtn').disabled = false;
-    }
-}
-
-// Add event listener for condition change
-function attachConditionChangeListeners() {
-    document.querySelectorAll('.return_condition_select').forEach(select => {
-        select.removeEventListener('change', handleConditionChange);
-        select.addEventListener('change', handleConditionChange);
-    });
-}
-
-function handleConditionChange(e) {
-    const index = parseInt(e.target.getAttribute('data-index'));
-    const condition = e.target.value;
-    updateBatchReturnCondition(index, condition);
-}
-
-function submitBatchReturn() {
-    const itemsToReturn = selectedReturnItems.filter(item => item.condition);
-    
-    if (itemsToReturn.length === 0) {
-        alert('Please select at least one item and set its return condition.');
-        return;
-    }
-    
-    // Get item details for confirmation message
-    let confirmMessage = `Return the following ${itemsToReturn.length} item(s)?\n\n`;
-    itemsToReturn.forEach(item => {
-        const itemData = window.currentReturnItems.find(i => i.id == item.id);
-        if (itemData) {
-            confirmMessage += `- ${itemData.article_name} (${item.condition})\n`;
-        }
-    });
-    
-    if (!confirm(confirmMessage)) {
-        return;
-    }
-    
-    const batchReturnBtn = document.getElementById('batchReturnBtn');
-    batchReturnBtn.disabled = true;
-    batchReturnBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
-    
-    let processed = 0;
-    let successCount = 0;
-    let errors = [];
-    
-    itemsToReturn.forEach(item => {
-        fetch(window.location.href, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'action=return_item&issuance_id=' + item.id + '&condition_on_return=' + encodeURIComponent(item.condition)
-        })
-        .then(response => response.text())
-        .then(text => {
-            try {
-                const data = JSON.parse(text);
-                processed++;
-                if (data.success) {
-                    successCount++;
-                } else {
-                    const itemData = window.currentReturnItems.find(i => i.id == item.id);
-                    errors.push(`${itemData ? itemData.article_name : item.id}: ${data.message}`);
-                }
-            } catch(e) {
-                processed++;
-                const itemData = window.currentReturnItems.find(i => i.id == item.id);
-                errors.push(`${itemData ? itemData.article_name : item.id}: Invalid server response`);
-            }
-            
-            if (processed === itemsToReturn.length) {
-                if (errors.length > 0) {
-                    alert(`Returned ${successCount} of ${itemsToReturn.length} items.\nErrors:\n${errors.join('\n')}`);
-                } else {
-                    alert(`Successfully returned ${successCount} item(s).`);
-                }
-                location.reload();
-            }
-        })
-        .catch(error => {
-            processed++;
-            const itemData = window.currentReturnItems.find(i => i.id == item.id);
-            errors.push(`${itemData ? itemData.article_name : item.id}: Network error`);
-            if (processed === itemsToReturn.length) {
-                alert(`Returned ${successCount} of ${itemsToReturn.length} items.\nErrors:\n${errors.join('\n')}`);
-                location.reload();
-            }
-        });
-    });
-}
-
 
 function closeEmployeeItemsModal() {
     document.getElementById('employeeItemsModal').style.display = 'none';
-    selectedReturnItems = [];
-    window.currentReturnItems = [];
+    selectedReturnItemsGlobal = [];
+    currentReturnItemsGlobal = [];
 }
 
-
-
-
-
-// Test function to check if button click is working
 function testEmployeeIssuances(employeeId, employeeName) {
-    alert('Button clicked! Employee ID: ' + employeeId + ', Name: ' + employeeName);
     viewEmployeeIssuances(employeeId, employeeName);
 }
 
+// ============================================
+// ENHANCED VIEW ISSUANCE DETAILS FUNCTION - with premium styling
+// ============================================
+function viewIssuanceDetails(id) {
+    const modal = document.getElementById('viewModal');
+    const body = document.getElementById('viewModalBody');
+    
+    if (!modal || !body) {
+        console.error('Modal elements not found');
+        return;
+    }
+    
+    modal.classList.add('show');
+    body.innerHTML = '<div class="view-modal-loading"><i class="fas fa-spinner fa-pulse"></i><p>Loading issuance details...</p></div>';
+    
+    fetch('?ajax=get_issuance&id=' + id)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const item = data.data;
+                const unitDisplay = item.big_unit ? item.big_unit : (item.small_unit || 'pcs');
+                const conditionClass = 'condition-' + (item.condition_on_issue || 'Serviceable').replace(/ /g, '');
+                const statusClass = 'issue-status-' + item.status;
+                const displayPropertyNo = item.issuance_barcode || item.property_no || 'N/A';
+                
+                let statusBadgeHtml = '';
+                if (item.status === 'issued') {
+                    statusBadgeHtml = '<span class="status-badge issued"><i class="fas fa-hand-holding"></i> Issued</span>';
+                } else if (item.status === 'returned') {
+                    statusBadgeHtml = '<span class="status-badge available"><i class="fas fa-check-circle"></i> Returned</span>';
+                } else {
+                    statusBadgeHtml = '<span class="status-badge"><i class="fas fa-redo-alt"></i> Reissued</span>';
+                }
+                
+                let returnInfo = '';
+                if (item.actual_return) {
+                    returnInfo = `
+                        <div class="detail-section">
+                            <div class="detail-header">
+                                <i class="fas fa-undo-alt"></i>
+                                <h3>Return Information</h3>
+                            </div>
+                            <div class="detail-content">
+                                <div class="detail-grid">
+                                    <div class="detail-item">
+                                        <div class="detail-label">Return Date</div>
+                                        <div class="detail-value">${new Date(item.actual_return).toLocaleString()}</div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Condition on Return</div>
+                                        <div class="detail-value">${escapeHtml(item.condition_on_return || '—')}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                let reissueInfo = '';
+                if (item.reissued_from_name || item.reissued_to_name) {
+                    reissueInfo = `
+                        <div class="detail-section">
+                            <div class="detail-header">
+                                <i class="fas fa-redo-alt"></i>
+                                <h3>Reissue Information</h3>
+                            </div>
+                            <div class="detail-content">
+                                <div class="detail-grid">
+                                    ${item.reissued_from_name ? `<div class="detail-item"><div class="detail-label">Reissued From</div><div class="detail-value">${escapeHtml(item.reissued_from_name)}</div></div>` : ''}
+                                    ${item.reissued_to_name ? `<div class="detail-item"><div class="detail-label">Reissued To</div><div class="detail-value">${escapeHtml(item.reissued_to_name)}</div></div>` : ''}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                let remarksHtml = '';
+                if (item.remarks) {
+                    remarksHtml = `
+                        <div class="detail-section">
+                            <div class="detail-header">
+                                <i class="fas fa-sticky-note"></i>
+                                <h3>Remarks</h3>
+                            </div>
+                            <div class="detail-content">
+                                <div class="detail-value">${escapeHtml(item.remarks)}</div>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                let html = `
+                    <div class="view-modal-container">
+                        <div class="detail-section">
+                            <div class="detail-header">
+                                <i class="fas fa-info-circle"></i>
+                                <h3>Basic Information</h3>
+                            </div>
+                            <div class="detail-content">
+                                <div class="detail-grid">
+                                    <div class="detail-item">
+                                        <div class="detail-label">Item Name</div>
+                                        <div class="detail-value"><strong>${escapeHtml(item.article_name)}</strong></div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Property No.</div>
+                                        <div class="detail-value"><span class="property-number">${escapeHtml(displayPropertyNo)}</span></div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Description</div>
+                                        <div class="detail-value">${escapeHtml(item.description || 'N/A')}</div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Status</div>
+                                        <div class="detail-value">${statusBadgeHtml}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="detail-section">
+                            <div class="detail-header">
+                                <i class="fas fa-calculator"></i>
+                                <h3>Quantity & Value</h3>
+                            </div>
+                            <div class="detail-content">
+                                <div class="detail-grid">
+                                    <div class="detail-item">
+                                        <div class="detail-label">Quantity Issued</div>
+                                        <div class="detail-value"><span class="info-pill"><i class="fas fa-boxes"></i> ${item.quantity_issued} ${escapeHtml(unitDisplay)}</span></div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Unit Value</div>
+                                        <div class="detail-value">₱${parseFloat(item.unit_value).toFixed(2)}</div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Total Value</div>
+                                        <div class="detail-value"><span class="value-highlight">₱${(item.quantity_issued * item.unit_value).toFixed(2)}</span></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="detail-section">
+                            <div class="detail-header">
+                                <i class="fas fa-users"></i>
+                                <h3>Personnel Information</h3>
+                            </div>
+                            <div class="detail-content">
+                                <div class="detail-grid">
+                                    <div class="detail-item">
+                                        <div class="detail-label">Issued To</div>
+                                        <div class="detail-value">${escapeHtml(item.issued_to_name)}${item.issued_to_position ? ' - ' + escapeHtml(item.issued_to_position) : ''}</div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Issued By</div>
+                                        <div class="detail-value">${escapeHtml(item.issued_by_name)}</div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Signatory</div>
+                                        <div class="detail-value">${escapeHtml(item.signatory_name || 'N/A')}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="detail-section">
+                            <div class="detail-header">
+                                <i class="fas fa-calendar-alt"></i>
+                                <h3>Issuance Details</h3>
+                            </div>
+                            <div class="detail-content">
+                                <div class="detail-grid">
+                                    <div class="detail-item">
+                                        <div class="detail-label">Issued Date</div>
+                                        <div class="detail-value">${new Date(item.issued_date).toLocaleString()}</div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Condition on Issue</div>
+                                        <div class="detail-value"><span class="condition-badge ${conditionClass}">${escapeHtml(item.condition_on_issue || 'Serviceable')}</span></div>
+                                    </div>
+                                    <div class="detail-item">
+                                        <div class="detail-label">Issuance Barcode</div>
+                                        <div class="detail-value"><code>${escapeHtml(item.issuance_barcode || 'N/A')}</code></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        ${returnInfo}
+                        ${reissueInfo}
+                        ${remarksHtml}
+                    </div>
+                `;
+                body.innerHTML = html;
+            } else {
+                body.innerHTML = '<div class="view-modal-error"><i class="fas fa-exclamation-triangle"></i><p>Error: ' + escapeHtml(data.message || 'Failed to load issuance details') + '</p></div>';
+            }
+        })
+        .catch(error => {
+            body.innerHTML = '<div class="view-modal-error"><i class="fas fa-exclamation-triangle"></i><p>Error loading issuance details. Please try again.</p></div>';
+        });
+}
 
+function closeViewModal() {
+    const modal = document.getElementById('viewModal');
+    if (modal) modal.classList.remove('show');
+}
+
+function closeReturnModal() {
+    const modal = document.getElementById('returnModal');
+    if (modal) modal.classList.remove('show');
+}
+
+function closeBarcodeModal() {
+    const modal = document.getElementById('barcodeModal');
+    if (modal) modal.classList.remove('show');
+}
+
+function closeConfirmModal() {
+    const modal = document.getElementById('confirmModal');
+    if (modal) modal.classList.remove('show');
+}
+
+function closeConfirmReissueModal() {
+    const modal = document.getElementById('confirmReissueModal');
+    if (modal) modal.classList.remove('show');
+}
+
+// ============================================
+// SEARCH FUNCTIONS
+// ============================================
 function searchEmployees() {
     const name = document.getElementById('search_employee_name').value.toLowerCase().trim();
     const department = document.getElementById('search_department').value;
@@ -3633,18 +3969,30 @@ function searchEmployees() {
     let filtered = allEmployees.filter(emp => {
         const fullName = (emp.firstname + ' ' + emp.lastname).toLowerCase();
         if (name && !fullName.includes(name)) return false;
-        if (department && emp.department_name !== department) return false;
-        if (section && emp.section_name !== section) return false;
-        if (position && emp.position !== position) return false;
+        if (department && department !== "") {
+            const empDept = emp.department_name || '';
+            if (empDept.toLowerCase() !== department.toLowerCase()) return false;
+        }
+        if (section && section !== "") {
+            const empSection = emp.section_name || '';
+            if (empSection.toLowerCase() !== section.toLowerCase()) return false;
+        }
+        if (position && position !== "") {
+            const empPosition = emp.position || '';
+            if (empPosition.toLowerCase() !== position.toLowerCase()) return false;
+        }
         return true;
     });
+    
     displayEmployeeResults(filtered);
 }
 
 function displayEmployeeResults(employees) {
     const tbody = document.getElementById('employee_results_body');
+    if (!tbody) return;
+    
     if (employees.length === 0) {
-        tbody.innerHTML = '</table><td colspan="4" class="no-results">No employees found</div></div>';
+        tbody.innerHTML = '<tr><td colspan="4" class="no-results">No employees found</td></tr>';
         return;
     }
     let html = '';
@@ -3652,10 +4000,10 @@ function displayEmployeeResults(employees) {
         const isSelected = (selectedEmployeeId == emp.id);
         const deptDisplay = emp.department_name && emp.department_name !== '—' ? emp.department_name : '—';
         html += `<tr class="employee-result-row ${isSelected ? 'selected' : ''}" onclick="selectEmployee(${emp.id}, '${escapeHtml(emp.firstname + ' ' + emp.lastname)}', '${escapeHtml(emp.position || '')}', '${escapeHtml(deptDisplay)}')">
-            <td>${escapeHtml(emp.lastname + ', ' + emp.firstname)}</div>
-            <td>${escapeHtml(emp.position || '—')}</div>
-            <td>${escapeHtml(deptDisplay)}</div>
-            <td><button class="select-employee-btn" onclick="event.stopPropagation();selectEmployee(${emp.id}, '${escapeHtml(emp.firstname + ' ' + emp.lastname)}', '${escapeHtml(emp.position || '')}', '${escapeHtml(deptDisplay)}')">Select</button></div>
+            <td>${escapeHtml(emp.lastname + ', ' + emp.firstname)}</td>
+            <td>${escapeHtml(emp.position || '—')}</td>
+            <td>${escapeHtml(deptDisplay)}</td>
+            <td><button class="select-employee-btn" onclick="event.stopPropagation();selectEmployee(${emp.id}, '${escapeHtml(emp.firstname + ' ' + emp.lastname)}', '${escapeHtml(emp.position || '')}', '${escapeHtml(deptDisplay)}')">Select</button></td>
         </tr>`;
     });
     tbody.innerHTML = html;
@@ -3669,11 +4017,6 @@ function selectEmployee(id, name, position, department) {
     if (department && department !== '—') displayText += ` (${department})`;
     document.getElementById('selected_employee_name').innerHTML = displayText;
     document.getElementById('selected_employee_display').style.display = 'flex';
-    document.querySelectorAll('#employee_results_body .employee-result-row').forEach(row => row.classList.remove('selected'));
-    if (event && event.target) {
-        const row = event.target.closest('.employee-result-row');
-        if (row) row.classList.add('selected');
-    }
 }
 
 function clearEmployeeSearch() {
@@ -3681,12 +4024,8 @@ function clearEmployeeSearch() {
     document.getElementById('search_department').value = '';
     document.getElementById('search_section').value = '';
     document.getElementById('search_position').value = '';
-    document.getElementById('employee_results_body').innerHTML = '<tr><td colspan="4" class="no-results">Type to search</div></div>';
+    document.getElementById('employee_results_body').innerHTML = '<tr><td colspan="4" class="no-results">Type to search</td></tr>';
 }
-
-// ============================================
-// REISSUE EMPLOYEE SEARCH
-// ============================================
 
 function searchReissueEmployees() {
     const name = document.getElementById('reissue_search_employee_name').value.toLowerCase().trim();
@@ -3707,8 +4046,10 @@ function searchReissueEmployees() {
 
 function displayReissueEmployeeResults(employees) {
     const tbody = document.getElementById('reissue_employee_results_body');
+    if (!tbody) return;
+    
     if (employees.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" class="no-results" style="text-align:center;padding:40px">No employees found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" class="no-results">No employees found</td></tr>';
         return;
     }
     let html = '';
@@ -3733,11 +4074,6 @@ function selectReissueEmployee(id, name, position, department) {
     if (department && department !== '—') displayText += ` (${department})`;
     document.getElementById('selected_reissue_employee_name').innerHTML = displayText;
     document.getElementById('selected_reissue_employee_display').style.display = 'flex';
-    document.querySelectorAll('#reissue_employee_results_body .employee-result-row').forEach(row => row.classList.remove('selected'));
-    if (event && event.target) {
-        const row = event.target.closest('.employee-result-row');
-        if (row) row.classList.add('selected');
-    }
 }
 
 function clearReissueEmployeeSearch() {
@@ -3745,279 +4081,8 @@ function clearReissueEmployeeSearch() {
     document.getElementById('reissue_search_department').value = '';
     document.getElementById('reissue_search_section').value = '';
     document.getElementById('reissue_search_position').value = '';
-    document.getElementById('reissue_employee_results_body').innerHTML = '<tr><td colspan="4" class="no-results">Type to search</div></div>';
+    document.getElementById('reissue_employee_results_body').innerHTML = '<tr><td colspan="4" class="no-results">Type to search</td></tr>';
 }
-
-// ============================================
-// SEARCH & CART FUNCTIONS
-// ============================================
-
-function searchByProperty() {
-    const searchTerm = document.getElementById('property_search_input').value.toLowerCase().trim();
-    const itemTypeFilter = document.getElementById('item_type_filter')?.value || 'all';
-    const resultDiv = document.getElementById('property_search_result');
-    
-    if (!searchTerm) { 
-        resultDiv.innerHTML = '<div class="alert-warning">Please enter search term</div>'; 
-        resultDiv.classList.add('show'); 
-        return; 
-    }
-    
-    let found = inventoryData.filter(item => {
-        // Apply item type filter first
-        if (itemTypeFilter !== 'all' && item.item_type !== itemTypeFilter) {
-            return false;
-        }
-        
-        const propertyNo = (item.property_no || '').toLowerCase();
-        const articleName = (item.article_name || '').toLowerCase();
-        
-        // Search both property number and article name
-        return propertyNo.includes(searchTerm) || articleName.includes(searchTerm);
-    });
-    
-    // Also try partial matches if no results found
-    if (found.length === 0 && searchTerm.length > 2) {
-        found = inventoryData.filter(item => {
-            if (itemTypeFilter !== 'all' && item.item_type !== itemTypeFilter) {
-                return false;
-            }
-            const propertyNo = (item.property_no || '').toLowerCase();
-            const articleName = (item.article_name || '').toLowerCase();
-            return propertyNo.includes(searchTerm) || articleName.includes(searchTerm);
-        });
-    }
-    
-    if (found.length > 0) {
-        let html = `<div style="padding: 8px; background: var(--accent-light); margin-bottom: 10px; border-radius: 8px;">
-                        <strong>Found ${found.length} item(s)</strong>
-                    </div>`;
-        found.forEach(item => {
-            const isInCart = cartItems.some(cartItem => cartItem.id == item.id);
-            const unitDisplay = item.big_unit ? item.big_unit : (item.small_unit || 'pcs');
-            const itemTypeLabel = item.item_type === 'semi_ppe' ? 'Semi-Expendable' : 'Inventory';
-            html += `<div class="result-property-card">
-                <div class="result-property-info">
-                    <h5>${escapeHtml(item.article_name)}</h5>
-                    <p>Property: <strong>${escapeHtml(item.property_no || 'N/A')}</strong> | Available: ${item.qty_physical_count} ${escapeHtml(unitDisplay)}</p>
-                    <small class="text-muted">Type: ${itemTypeLabel}</small>
-                </div>
-                <div>${isInCart ? '<button disabled style="background:#ccc">In Cart</button>' : `<button class="btn-add-property" onclick="addToCart(${item.id}, 1)">Issue Item</button>`}</div>
-            </div>`;
-        });
-        resultDiv.innerHTML = html;
-        resultDiv.classList.add('show');
-    } else {
-        resultDiv.innerHTML = `<div class="result-property-card">
-            <div class="result-property-info">
-                <h5>No items found for: "${escapeHtml(searchTerm)}"</h5>
-                <p>Try searching by property number or article name</p>
-            </div>
-        </div>`;
-        resultDiv.classList.add('show');
-    }
-}
-
-function clearPropertySearch() {
-    document.getElementById('property_search_input').value = '';
-    document.getElementById('property_search_result').innerHTML = '';
-    document.getElementById('property_search_result').classList.remove('show');
-}
-function searchBarcode() {
-    const barcode = document.getElementById('barcode_input').value.trim();
-    const resultDiv = document.getElementById('barcode_result');
-    
-    if (!barcode) {
-        resultDiv.innerHTML = '<div class="alert-warning">Please enter or scan barcode</div>';
-        resultDiv.classList.add('show');
-        return;
-    }
-    
-    // Search on barcode_data OR property_no (exact match on either)
-    const found = inventoryData.filter(item => {
-        const itemBarcode = (item.barcode_data || '').toLowerCase();
-        const itemPropertyNo = (item.property_no || '').toLowerCase();
-        const searchTerm = barcode.toLowerCase();
-        
-        // Check both barcode_data AND property_no
-        return itemBarcode === searchTerm || itemPropertyNo === searchTerm;
-    });
-    
-    if (found.length > 0) {
-        let html = '';
-        found.forEach(item => {
-            const isInCart = cartItems.some(cartItem => cartItem.id == item.id);
-            
-            // Calculate correct display values
-            const bigQuantity = item.big_quantity || 1;
-            const piecesPerBig = item.pieces_per_big_unit || 1;
-            const totalQuantity = bigQuantity * piecesPerBig;
-            const bigUnitDisplay = `${bigQuantity} ${item.big_unit || 'Unit'}`;
-            const smallUnitDisplay = `${piecesPerBig} ${item.small_unit || 'Piece'}`;
-            const itemTypeLabel = item.item_type === 'semi_ppe' ? 'Semi-Expendable' : 'Inventory';
-            const displayBarcode = item.barcode_data || item.property_no || 'N/A';
-            
-            html += `<div class="result-item" style="background: rgba(255,255,255,0.15); border-radius: 12px; margin-bottom: 15px;">
-                <div class="result-info" style="flex: 2;">
-                    <h5 style="margin: 0 0 10px 0; font-size: 16px;">${escapeHtml(item.article_name)}</h5>
-                    <table style="width: 100%; font-size: 13px;">
-                        <tr>
-                            <td style="padding: 4px 0;"><strong>Property No:</strong></td>
-                            <td style="padding: 4px 0;"><code>${escapeHtml(item.property_no || 'N/A')}</code></td>
-                            <td style="padding: 4px 0;"><strong>Barcode:</strong></td>
-                            <td style="padding: 4px 0;"><code>${escapeHtml(displayBarcode)}</code></td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 4px 0;"><strong>Big Unit:</strong></td>
-                            <td style="padding: 4px 0;">${escapeHtml(bigUnitDisplay)}</td>
-                            <td style="padding: 4px 0;"><strong>Small Unit:</strong></td>
-                            <td style="padding: 4px 0;">${escapeHtml(smallUnitDisplay)}</td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 4px 0;"><strong>Total Quantity:</strong></td>
-                            <td style="padding: 4px 0;"><strong style="color: #4CAF50;">${totalQuantity} ${escapeHtml(item.small_unit || 'pieces')}</strong></td>
-                            <td style="padding: 4px 0;"><strong>Unit Value:</strong></td>
-                            <td style="padding: 4px 0;">₱${parseFloat(item.unit_value).toFixed(2)}</td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 4px 0;"><strong>Total Value:</strong></td>
-                            <td style="padding: 4px 0;">₱${(totalQuantity * parseFloat(item.unit_value)).toFixed(2)}</td>
-                            <td style="padding: 4px 0;"><strong>Type:</strong></td>
-                            <td style="padding: 4px 0;">${itemTypeLabel}</td>
-                        </tr>
-                    </table>
-                </div>
-                <div style="margin-top: 10px;">
-                    ${isInCart ? 
-                        '<button disabled style="background:#ccc; padding:8px 16px; border:none; border-radius:6px;">In Cart</button>' : 
-                        `<button class="btn-add-item" onclick="addToCart(${item.id}, 1)" style="background:#4CAF50; color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer;">
-                            <i class="fas fa-cart-plus"></i> Issue me asdgbasdgaksd
-                        </button>`
-                    }
-                </div>
-            </div>`;
-        });
-        resultDiv.innerHTML = html;
-        resultDiv.classList.add('show');
-        document.getElementById('barcode_input').value = '';
-    } else {
-        resultDiv.innerHTML = `<div class="result-item" style="background: rgba(0,0,0,0.2); border-radius: 12px; padding: 20px; text-align: center;">
-            <div class="result-info">
-                <h5><i class="fas fa-exclamation-triangle"></i> Item Not Found</h5>
-                <p>No item found with barcode: <strong>"${escapeHtml(barcode)}"</strong></p>
-                <p>Please check the barcode and try again.</p>
-            </div>
-        </div>`;
-        resultDiv.classList.add('show');
-    }
-}
-function addToCart(id, qty) {
-    const item = inventoryData.find(i => i.id == id);
-    if (!item) return;
-    const existing = cartItems.find(i => i.id == id);
-    if (existing) {
-        const newQty = existing.quantity + (qty || 1);
-        if (newQty <= item.qty_physical_count) existing.quantity = newQty;
-        else alert('Max available: ' + item.qty_physical_count);
-    } else {
-        cartItems.push({
-            id: item.id, 
-            name: item.article_name, 
-            property_no: item.property_no,
-            barcode_data: item.barcode_data,  // ADD THIS LINE
-            big_unit: item.big_unit, 
-            small_unit: item.small_unit,
-            available_qty: item.qty_physical_count, 
-            unit_value: item.unit_value, 
-            quantity: (qty || 1),
-            item_type: item.item_type 
-        });
-    }
-    updateCartDisplay();
-    clearPropertySearch();
-    document.getElementById('barcode_result').innerHTML = '';
-    document.getElementById('barcode_result').classList.remove('show');
-}
-
-function removeFromCart(id) {
-    cartItems = cartItems.filter(i => i.id != id);
-    updateCartDisplay();
-}
-
-function updateCartQuantity(id, newQty) {
-    const item = cartItems.find(i => i.id == id);
-    if (item) {
-        newQty = parseInt(newQty) || 1;
-        if (newQty > item.available_qty) newQty = item.available_qty;
-        item.quantity = newQty;
-        updateCartDisplay();
-    }
-}
-
-function updateCartDisplay() {
-    const container = document.getElementById('selectedItemsList');
-    const emptyMsg = document.getElementById('emptyCartMessage');
-    const countSpan = document.getElementById('selectedCount');
-    const summary = document.getElementById('cartSummary');
-    
-    if (cartItems.length === 0) {
-        emptyMsg.style.display = 'block';
-        container.innerHTML = '';
-        countSpan.innerText = '0';
-        summary.style.display = 'none';
-        return;
-    }
-    emptyMsg.style.display = 'none';
-    let html = '', totalQty = 0, totalValue = 0;
-    cartItems.forEach(item => {
-        const unitDisplay = item.big_unit ? item.big_unit : (item.small_unit || 'pcs');
-        const itemTotal = item.unit_value * item.quantity;
-        totalQty += item.quantity;
-        totalValue += itemTotal;
-        html += `<div class="selected-item-card">
-            <div class="selected-item-info">
-                <div class="item-name">${escapeHtml(item.name)}</div>
-                <div class="item-property">Property: ${escapeHtml(item.property_no || 'N/A')}</div>
-            </div>
-            <div class="selected-item-qty">
-                <input type="number" value="${item.quantity}" min="1" max="${item.available_qty}" onchange="updateCartQuantity(${item.id}, this.value)">
-                <span>${escapeHtml(unitDisplay)}</span>
-                <span>₱${itemTotal.toFixed(2)}</span>
-            </div>
-            <button class="btn-remove-item" onclick="removeFromCart(${item.id})"><i class="fas fa-trash"></i></button>
-        </div>`;
-    });
-    container.innerHTML = html;
-    countSpan.innerText = cartItems.length;
-    summary.style.display = 'block';
-    summary.innerHTML = `<strong>Total Items: ${totalQty}</strong> | <strong>Total Value: ₱${totalValue.toFixed(2)}</strong>`;
-    updateFormInputs();
-}
-
-function updateFormInputs() {
-    document.querySelectorAll('input[name="inventory_ids[]"]').forEach(e => e.remove());
-    document.querySelectorAll('input[name="quantities[]"]').forEach(e => e.remove());
-    document.querySelectorAll('input[name="item_type[]"]').forEach(e => e.remove());
-    
-    const form = document.getElementById('issueForm');
-    cartItems.forEach(item => {
-        let ii = document.createElement('input');
-        ii.type = 'hidden'; ii.name = 'inventory_ids[]'; ii.value = item.id;
-        form.appendChild(ii);
-        
-        let qi = document.createElement('input');
-        qi.type = 'hidden'; qi.name = 'quantities[]'; qi.value = item.quantity;
-        form.appendChild(qi);
-        
-        let ti = document.createElement('input');
-        ti.type = 'hidden'; ti.name = 'item_type[]'; ti.value = item.item_type;
-        form.appendChild(ti);
-    });
-}
-
-// ============================================
-// CONFIRMATION FUNCTIONS
-// ============================================
 
 function showConfirmModal() {
     if (!selectedEmployeeId) { alert('Please select an employee'); return; }
@@ -4028,8 +4093,10 @@ function showConfirmModal() {
     document.getElementById('confirmModal').classList.add('show');
 }
 
-function closeConfirmModal() { document.getElementById('confirmModal').classList.remove('show'); }
-function submitForm() { closeConfirmModal(); document.getElementById('issueForm').submit(); }
+function submitForm() {
+    closeConfirmModal();
+    document.getElementById('issueForm').submit();
+}
 
 function confirmReissueSubmit() {
     if (!selectedReissueEmployeeId) { alert('Please select an employee'); return; }
@@ -4039,18 +4106,16 @@ function confirmReissueSubmit() {
     document.getElementById('confirmReissueModal').classList.add('show');
 }
 
-function closeConfirmReissueModal() { document.getElementById('confirmReissueModal').classList.remove('show'); }
-function submitReissueForm() { closeConfirmReissueModal(); document.getElementById('reissueForm').submit(); }
+function submitReissueForm() {
+    closeConfirmReissueModal();
+    document.getElementById('reissueForm').submit();
+}
 
 function confirmReissueReturned(event, element) {
     event.preventDefault();
     if (confirm('Reissue this returned item?')) window.location.href = element.getAttribute('href');
     return false;
 }
-
-// ============================================
-// RETURN MODAL FUNCTIONS
-// ============================================
 
 function openReturnModal(issuanceId, itemName) {
     currentReturnId = issuanceId;
@@ -4059,330 +4124,67 @@ function openReturnModal(issuanceId, itemName) {
     document.getElementById('returnModal').classList.add('show');
 }
 
-function closeReturnModal() { document.getElementById('returnModal').classList.remove('show'); }
-
 function submitReturn() {
     const condition = document.getElementById('return_condition').value;
-    if (!condition) { 
-        alert('Please select a condition'); 
-        return; 
-    }
-    
-    // Show loading state
-    const confirmBtn = document.querySelector('#returnModal .confirm-btn-confirm');
-    const originalText = confirmBtn.innerHTML;
-    confirmBtn.disabled = true;
-    confirmBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+    if (!condition) { alert('Please select a condition'); return; }
     
     fetch(window.location.href, {
         method: 'POST',
-        headers: { 
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'X-Requested-With': 'XMLHttpRequest'
-        },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: 'action=return_item&issuance_id=' + currentReturnId + '&condition_on_return=' + encodeURIComponent(condition)
     })
-    .then(response => response.text())  // First get as text to debug
-    .then(text => {
-        console.log('Raw response:', text);  // Debug: see what's returned
-        
-        try {
-            const data = JSON.parse(text);
-            alert(data.message);
-            if (data.success) {
-                location.reload();
-            } else {
-                confirmBtn.disabled = false;
-                confirmBtn.innerHTML = originalText;
-            }
-        } catch(e) {
-            console.error('JSON parse error:', e);
-            alert('Error: Invalid response from server. Check console for details.');
-            confirmBtn.disabled = false;
-            confirmBtn.innerHTML = originalText;
-        }
+    .then(response => response.json())
+    .then(data => {
+        alert(data.message);
+        if (data.success) location.reload();
     })
-    .catch(error => {
-        console.error('Fetch error:', error);
-        alert('Error: ' + error);
-        confirmBtn.disabled = false;
-        confirmBtn.innerHTML = originalText;
-    });
+    .catch(error => alert('Error: ' + error));
     
     closeReturnModal();
 }
 
-// ============================================
-// VIEW MODAL FUNCTIONS
-// ============================================
-
-function viewIssuanceDetails(id) {
-    const modal = document.getElementById('viewModal');
-    const body = document.getElementById('viewModalBody');
-    modal.classList.add('show');
-    body.innerHTML = '<div style="text-align:center;padding:20px"><i class="fas fa-spinner fa-spin"></i> Loading...</div>';
-    
-    fetch('?ajax=get_issuance&id=' + id)
-        .then(response => response.json())
-        .then(data => {
-            console.log('Response:', data);
-            
-            if (data.success) {
-                const item = data.data;
-                const unitDisplay = item.big_unit ? item.big_unit : (item.small_unit || 'pcs');
-                const conditionClass = 'condition-' + (item.condition_on_issue || 'Serviceable').replace(/ /g, '');
-                const statusClass = 'issue-status-' + item.status;
-                // Use issuance_barcode for property number display
-                const displayPropertyNo = item.issuance_barcode || item.property_no || 'N/A';
-                
-                body.innerHTML = `
-                    <div class="view-detail-row">
-                        <div class="view-detail-label">Item Name:</div>
-                        <div class="view-detail-value"><strong>${escapeHtml(item.article_name)}</strong></div>
-                    </div>
-                    <div class="view-detail-row">
-                        <div class="view-detail-label">Property No.:</div>
-                        <div class="view-detail-value"><code>${escapeHtml(displayPropertyNo)}</code></div>
-                    </div>
-                    <div class="view-detail-row">
-                        <div class="view-detail-label">Description:</div>
-                        <div class="view-detail-value">${escapeHtml(item.description || 'N/A')}</div>
-                    </div>
-                    <div class="view-detail-row">
-                        <div class="view-detail-label">Quantity:</div>
-                        <div class="view-detail-value">${item.quantity_issued} ${escapeHtml(unitDisplay)}</div>
-                    </div>
-                    <div class="view-detail-row">
-                        <div class="view-detail-label">Unit Value:</div>
-                        <div class="view-detail-value">₱${parseFloat(item.unit_value).toFixed(2)}</div>
-                    </div>
-                    <div class="view-detail-row">
-                        <div class="view-detail-label">Total Value:</div>
-                        <div class="view-detail-value">₱${(item.quantity_issued * item.unit_value).toFixed(2)}</div>
-                    </div>
-                    <div class="view-detail-row">
-                        <div class="view-detail-label">Issued To:</div>
-                        <div class="view-detail-value">${escapeHtml(item.issued_to_name)}${item.issued_to_position ? ' - ' + escapeHtml(item.issued_to_position) : ''}</div>
-                    </div>
-                    <div class="view-detail-row">
-                        <div class="view-detail-label">Condition on Issue:</div>
-                        <div class="view-detail-value"><span class="condition-badge ${conditionClass}">${escapeHtml(item.condition_on_issue || 'Serviceable')}</span></div>
-                    </div>
-                    <div class="view-detail-row">
-                        <div class="view-detail-label">Issued By:</div>
-                        <div class="view-detail-value">${escapeHtml(item.issued_by_name)}</div>
-                    </div>
-                    <div class="view-detail-row">
-                        <div class="view-detail-label">Issued Date:</div>
-                        <div class="view-detail-value">${new Date(item.issued_date).toLocaleString()}</div>
-                    </div>
-                    <div class="view-detail-row">
-                        <div class="view-detail-label">Issuance Barcode:</div>
-                        <div class="view-detail-value"><code>${escapeHtml(item.issuance_barcode || 'N/A')}</code></div>
-                    </div>
-                    <div class="view-detail-row">
-                        <div class="view-detail-label">Signatory:</div>
-                        <div class="view-detail-value">${escapeHtml(item.signatory_name || 'N/A')}</div>
-                    </div>
-                    <div class="view-detail-row">
-                        <div class="view-detail-label">Status:</div>
-                        <div class="view-detail-value"><span class="issue-status-badge ${statusClass}">${escapeHtml(item.status)}</span></div>
-                    </div>
-                    ${item.actual_return ? `<div class="view-detail-row">
-                        <div class="view-detail-label">Return Date:</div>
-                        <div class="view-detail-value">${new Date(item.actual_return).toLocaleString()}</div>
-                    </div>` : ''}
-                    ${item.condition_on_return ? `<div class="view-detail-row">
-                        <div class="view-detail-label">Condition on Return:</div>
-                        <div class="view-detail-value">${escapeHtml(item.condition_on_return)}</div>
-                    </div>` : ''}
-                    ${item.reissued_from_name ? `<div class="view-detail-row">
-                        <div class="view-detail-label">Reissued From:</div>
-                        <div class="view-detail-value">${escapeHtml(item.reissued_from_name)}</div>
-                    </div>` : ''}
-                    ${item.reissued_to_name ? `<div class="view-detail-row">
-                        <div class="view-detail-label">Reissued To:</div>
-                        <div class="view-detail-value">${escapeHtml(item.reissued_to_name)}</div>
-                    </div>` : ''}
-                    ${item.remarks ? `<div class="view-detail-row">
-                        <div class="view-detail-label">Remarks:</div>
-                        <div class="view-detail-value">${escapeHtml(item.remarks)}</div>
-                    </div>` : ''}
-                `;
-            } else {
-                body.innerHTML = '<div style="color:red;text-align:center;padding:20px">' + (data.message || 'Error loading details') + '</div>';
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            body.innerHTML = '<div style="color:red;text-align:center;padding:20px">Error loading details: ' + error.message + '</div>';
-        });
-}
-
-// ============================================
-// BARCODE MODAL FUNCTIONS - FIXED
-// ============================================
-
 function showBarcodeModal(barcode, itemName) {
     document.getElementById('barcodeModalTitle').innerHTML = itemName;
-    document.getElementById('barcodeModalImage').innerHTML = `<img src="<?php echo SITE_URL; ?>/admin/barcode_generator_issued.php?code=${encodeURIComponent(barcode)}&width=200&height=50&t=${Date.now()}" style="border:1px solid #ddd;padding:8px;border-radius:5px;max-width:100%">`;
+    document.getElementById('barcodeModalImage').innerHTML = `<img src="<?php echo SITE_URL; ?>/admin/barcode_generator_issued.php?code=${encodeURIComponent(barcode)}&width=200&height=50" style="max-width:100%">`;
     document.getElementById('barcodeModalValue').innerHTML = barcode;
     document.getElementById('barcodeModal').classList.add('show');
-}
-
-function closeBarcodeModal() {
-    document.getElementById('barcodeModal').classList.remove('show');
 }
 
 function printBarcodeFromModal() {
     const barcode = document.getElementById('barcodeModalValue').innerText;
     const itemName = document.getElementById('barcodeModalTitle').innerText;
+    window.open(`<?php echo SITE_URL; ?>/admin/barcode_generator_issued.php?code=${encodeURIComponent(barcode)}&print=1`, '_blank');
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Close modals when clicking outside
+document.addEventListener('click', function(e) {
+    const viewModal = document.getElementById('viewModal');
+    if (viewModal && e.target === viewModal) closeViewModal();
     
-    // Create a print window with the barcode
-    const printWindow = window.open('', '_blank');
-    printWindow.document.write(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Print Barcode</title>
-            <style>
-                * { margin: 0; padding: 0; box-sizing: border-box; }
-                body { 
-                    font-family: 'Segoe UI', Arial, sans-serif; 
-                    text-align: center; 
-                    padding: 40px; 
-                    background: white;
-                }
-                .barcode-container { 
-                    max-width: 500px; 
-                    margin: 0 auto; 
-                    padding: 30px;
-                    border: 1px dashed #6B8CFF;
-                    border-radius: 16px;
-                }
-                .barcode-img { 
-                    max-width: 100%; 
-                    height: auto; 
-                    margin: 20px 0;
-                }
-                .item-name { 
-                    font-size: 18px; 
-                    font-weight: bold; 
-                    color: #2C3E50;
-                    margin-bottom: 10px;
-                }
-                .barcode-number { 
-                    font-family: monospace; 
-                    font-size: 14px; 
-                    margin-top: 15px; 
-                    color: #6B8CFF;
-                    word-break: break-all;
-                }
-                .buttons {
-                    margin-top: 30px;
-                    display: flex;
-                    gap: 15px;
-                    justify-content: center;
-                }
-                button {
-                    padding: 10px 20px;
-                    border: none;
-                    border-radius: 8px;
-                    cursor: pointer;
-                    font-size: 14px;
-                }
-                .btn-print {
-                    background: #6B8CFF;
-                    color: white;
-                }
-                .btn-close {
-                    background: #6c757d;
-                    color: white;
-                }
-                @media print {
-                    .buttons { display: none; }
-                    body { padding: 20px; }
-                    .barcode-container { border: none; padding: 0; }
-                }
-            </style>
-        </head>
-        <body>
-            <div class="barcode-container">
-                <div class="item-name">${escapeHtml(itemName)}</div>
-                <img src="<?php echo SITE_URL; ?>/admin/barcode_generator_issued.php?code=${encodeURIComponent(barcode)}&width=400&height=100&t=${Date.now()}" class="barcode-img" alt="Barcode">
-                <div class="barcode-number">${escapeHtml(barcode)}</div>
-            </div>
-            <div class="buttons">
-                <button class="btn-print" onclick="window.print()">🖨️ Print</button>
-                <button class="btn-close" onclick="window.close()">Close</button>
-            </div>
-            <script>
-                // Auto print when window loads
-                window.onload = function() {
-                    setTimeout(function() {
-                        window.print();
-                    }, 500);
-                }
-            <\/script>
-        </body>
-        </html>
-    `);
-    printWindow.document.close();
-}
-
-// ============================================
-// OTHER FUNCTIONS
-// ============================================
-
-function escapeHtml(s) { 
-    if (!s) return ''; 
-    return String(s).replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m])); 
-}
-
-// ============================================
-// EVENT LISTENERS
-// ============================================
+    const returnModal = document.getElementById('returnModal');
+    if (returnModal && e.target === returnModal) closeReturnModal();
+    
+    const barcodeModal = document.getElementById('barcodeModal');
+    if (barcodeModal && e.target === barcodeModal) closeBarcodeModal();
+    
+    const employeeModal = document.getElementById('employeeItemsModal');
+    if (employeeModal && e.target === employeeModal) closeEmployeeItemsModal();
+    
+    const confirmModal = document.getElementById('confirmModal');
+    if (confirmModal && e.target === confirmModal) closeConfirmModal();
+    
+    const confirmReissueModal = document.getElementById('confirmReissueModal');
+    if (confirmReissueModal && e.target === confirmReissueModal) closeConfirmReissueModal();
+});
 
 document.addEventListener('DOMContentLoaded', function() {
-    document.getElementById('property_search_input')?.addEventListener('keypress', e => { 
-        if (e.key === 'Enter') { e.preventDefault(); searchByProperty(); } 
-    });
-    
-    document.getElementById('barcode_input')?.addEventListener('keypress', e => { 
-        if (e.key === 'Enter') { e.preventDefault(); searchBarcode(); } 
-    });
-    
-    document.addEventListener('keydown', e => { 
-        if (e.key === 'Escape') { 
-            closeReturnModal();
-            closeViewModal();
-            closeBarcodeModal();
-        } 
-    });
-    
-    document.getElementById('viewModal')?.addEventListener('click', function(e) {
-        if (e.target === this) closeViewModal();
-    });
-    document.getElementById('barcodeModal')?.addEventListener('click', function(e) {
-        if (e.target === this) closeBarcodeModal();
-    });
-    document.getElementById('returnModal')?.addEventListener('click', function(e) {
-        if (e.target === this) closeReturnModal();
-    });
-
-    // Close modals when clicking outside
-document.getElementById('viewModal')?.addEventListener('click', function(e) {
-    if (e.target === this) closeViewModal();
-});
-
-document.getElementById('barcodeModal')?.addEventListener('click', function(e) {
-    if (e.target === this) closeBarcodeModal();
-});
-
-document.getElementById('returnModal')?.addEventListener('click', function(e) {
-    if (e.target === this) closeReturnModal();
-});
-    
     searchEmployees();
     <?php if($reissue_item): ?>
     searchReissueEmployees();
@@ -4391,7 +4193,7 @@ document.getElementById('returnModal')?.addEventListener('click', function(e) {
             searchReissueEmployees();
         }
     }, 100);
-<?php endif; ?>
+    <?php endif; ?>
 });
 </script>
 

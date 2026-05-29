@@ -10,6 +10,124 @@ $page_description = 'Complete history of all system changes and user activities'
 require_once '../includes/auth.php';
 requireRole('super_admin');
 
+// ============================================
+// AJAX HANDLERS FOR USER AUDIT
+// ============================================
+
+// Get user details for modal
+if (isset($_GET['get_user_details_ajax']) && is_numeric($_GET['get_user_details_ajax'])) {
+    header('Content-Type: application/json');
+    
+    $user_id = (int)$_GET['get_user_details_ajax'];
+    
+    $query = "
+        SELECT u.*, 
+               CONCAT(u.firstname, ' ', u.lastname) as fullname,
+               (SELECT CONCAT(e.firstname, ' ', e.lastname) FROM employees e WHERE e.user_id = u.id LIMIT 1) as employee_name,
+               (SELECT e.position FROM employees e WHERE e.user_id = u.id LIMIT 1) as employee_position,
+               (SELECT s.name FROM sections s WHERE s.id = (SELECT e.section_id FROM employees e WHERE e.user_id = u.id LIMIT 1)) as employee_section
+        FROM users u
+        WHERE u.id = ?
+    ";
+    
+    $stmt = $conn->prepare($query);
+    $stmt->bind_param("i", $user_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    if ($result && $row = $result->fetch_assoc()) {
+        echo json_encode([
+            'success' => true,
+            'user' => [
+                'id' => $row['id'],
+                'username' => $row['username'],
+                'firstname' => $row['firstname'],
+                'lastname' => $row['lastname'],
+                'fullname' => $row['fullname'],
+                'email' => $row['email'],
+                'role' => $row['role'],
+                'status' => $row['status'],
+                'created_at' => $row['created_at'],
+                'last_login' => $row['last_login'] ?? '—',
+                'employee_info' => [
+                    'employee_name' => $row['employee_name'],
+                    'position' => $row['employee_position'],
+                    'section_name' => $row['employee_section']
+                ]
+            ]
+        ]);
+    } else {
+        echo json_encode(['success' => false, 'message' => 'User not found']);
+    }
+    exit;
+}
+
+// Get user audit history
+if (isset($_GET['get_user_audit_history']) && is_numeric($_GET['get_user_audit_history'])) {
+    header('Content-Type: application/json');
+    
+    $user_id = (int)$_GET['get_user_audit_history'];
+    
+    $query = "
+        SELECT at.*, 
+               CONCAT(actor.firstname, ' ', actor.lastname) as actor_name
+        FROM audit_trail at
+        LEFT JOIN users actor ON at.user_id = actor.id
+        WHERE at.record_id = ? AND at.table_name = 'users'
+        ORDER BY at.created_at DESC
+        LIMIT 100
+    ";
+    
+    $stmt = $conn->prepare($query);
+    $stmt->bind_param("i", $user_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    $history = [];
+    if ($result) {
+        while($row = $result->fetch_assoc()) {
+            $history[] = $row;
+        }
+    }
+    
+    echo json_encode(['success' => true, 'history' => $history]);
+    exit;
+}
+// Get user audit history
+if (isset($_GET['get_user_audit_history']) && is_numeric($_GET['get_user_audit_history'])) {
+    header('Content-Type: application/json');
+    
+    $user_id = (int)$_GET['get_user_audit_history'];
+    
+    $query = "
+        SELECT at.*, 
+               CONCAT(actor.firstname, ' ', actor.lastname) as actor_name
+        FROM audit_trail at
+        LEFT JOIN users actor ON at.user_id = actor.id
+        WHERE at.record_id = ? AND at.table_name = 'users'
+        ORDER BY at.created_at DESC
+        LIMIT 100
+    ";
+    
+    $stmt = $conn->prepare($query);
+    $stmt->bind_param("i", $user_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    $history = [];
+    if ($result) {
+        while($row = $result->fetch_assoc()) {
+            $history[] = $row;
+        }
+    }
+    
+    echo json_encode(['success' => true, 'history' => $history]);
+    exit;
+}
+
+
+
+
 // Check if audit_trail table exists, if not create it
 $table_check = $conn->query("SHOW TABLES LIKE 'audit_trail'");
 if (!$table_check || $table_check->num_rows == 0) {
@@ -931,6 +1049,473 @@ pre {
         </form>
     </div>
 </div>
+
+<!-- ============================================ -->
+<!-- USER ACCOUNT AUDIT TABLE -->
+<!-- ============================================ -->
+<div class="table-container">
+    <div class="table-header">
+        <h2><i class="fas fa-users-cog"></i> User Account Audit Log</h2>
+        <div class="table-actions">
+            <div style="position: relative;">
+                <input type="text" id="userAuditSearch" class="form-control" placeholder="🔍 Search by name, username, email, department..." style="width: 320px; padding-right: 35px;">
+                <i class="fas fa-search" style="position: absolute; right: 12px; top: 12px; color: var(--text-muted);"></i>
+            </div>
+        </div>
+    </div>
+    
+    <?php
+    // Get user account audit logs (NEW_USER, UPDATE_USER, DELETE_USER, status changes)
+    $user_audit_query = "
+        SELECT at.*, 
+               CONCAT(u.firstname, ' ', u.lastname) as user_name,
+               u.username,
+               u.email,
+               u.role,
+               u.status as user_current_status,
+               -- For actions performed BY users
+               CONCAT(actor.firstname, ' ', actor.lastname) as actor_name,
+               actor.username as actor_username,
+               actor.role as actor_role
+        FROM audit_trail at
+        LEFT JOIN users u ON at.record_id = u.id AND at.table_name = 'users'
+        LEFT JOIN users actor ON at.user_id = actor.id
+        WHERE at.table_name = 'users' 
+           OR at.action IN ('NEW_USER', 'UPDATE_USER', 'DELETE_USER', 'USER_STATUS_CHANGE', 'ACCOUNT_LOCKED', 'PASSWORD_CHANGE', 'LOGIN', 'LOGOUT', 'FAILED_LOGIN')
+        ORDER BY at.created_at DESC
+        LIMIT 500
+    ";
+    
+    $user_audit_result = $conn->query($user_audit_query);
+    $user_audit_logs = [];
+    if ($user_audit_result && $user_audit_result->num_rows > 0) {
+        while($row = $user_audit_result->fetch_assoc()) {
+            $user_audit_logs[] = $row;
+        }
+    }
+    
+    // Get unique users for the table (group by user_id)
+    $unique_users = [];
+    foreach ($user_audit_logs as $log) {
+        if ($log['record_id'] && !isset($unique_users[$log['record_id']])) {
+            $unique_users[$log['record_id']] = [
+                'id' => $log['record_id'],
+                'name' => $log['user_name'],
+                'username' => $log['username'],
+                'email' => $log['email'],
+                'role' => $log['role'],
+                'status' => $log['user_current_status']
+            ];
+        }
+    }
+    ?>
+    
+    <div style="overflow-x: auto;">
+        <table class="user-audit-table" id="userAuditTable" style="width: 100%; min-width: 900px;">
+            <thead>
+                <tr>
+                    <th>User</th>
+                    <th>Username</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Last Activity</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="userAuditTableBody">
+                <?php if (!empty($unique_users)): ?>
+                    <?php foreach ($unique_users as $user_id => $user): 
+                        // Get latest activity for this user
+                        $latest_log = null;
+                        $latest_action = '';
+                        $latest_date = '';
+                        foreach ($user_audit_logs as $log) {
+                            if ($log['record_id'] == $user_id) {
+                                if (!$latest_log || strtotime($log['created_at']) > strtotime($latest_log['created_at'])) {
+                                    $latest_log = $log;
+                                    $latest_action = $log['action'];
+                                    $latest_date = $log['created_at'];
+                                }
+                            }
+                        }
+                        
+                        $status_class = ($user['status'] == 'Active') ? 'badge-success' : 'badge-danger';
+                        $status_text = $user['status'] ?? 'Unknown';
+                        $role_class = '';
+                        if ($user['role'] == 'superadmin') $role_class = 'badge-warning';
+                        elseif ($user['role'] == 'admin') $role_class = 'badge-primary';
+                        else $role_class = 'badge-secondary';
+                        
+                        // Get action icon
+                        $action_icon = '📋';
+                        if ($latest_action == 'NEW_USER') $action_icon = '➕';
+                        elseif ($latest_action == 'UPDATE_USER') $action_icon = '✏️';
+                        elseif ($latest_action == 'DELETE_USER') $action_icon = '🗑️';
+                        elseif ($latest_action == 'ACCOUNT_LOCKED') $action_icon = '🔒';
+                        elseif ($latest_action == 'PASSWORD_CHANGE') $action_icon = '🔑';
+                        elseif ($latest_action == 'LOGIN') $action_icon = '🔐';
+                        elseif ($latest_action == 'LOGOUT') $action_icon = '🚪';
+                        elseif ($latest_action == 'FAILED_LOGIN') $action_icon = '❌';
+                    ?>
+                    <tr data-user-id="<?php echo $user_id; ?>" data-user-name="<?php echo htmlspecialchars($user['name'] ?? ''); ?>">
+                        <td>
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <div style="width: 32px; height: 32px; background: var(--accent-light); border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                                    <i class="fas fa-user" style="font-size: 14px; color: var(--primary);"></i>
+                                </div>
+                                <div>
+                                    <strong><?php echo htmlspecialchars($user['name'] ?? 'Unknown'); ?></strong>
+                                    <?php if ($latest_action): ?>
+                                        <br><small class="text-muted"><?php echo $action_icon; ?> <?php echo ucfirst(str_replace('_', ' ', $latest_action)); ?></small>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        </div>
+                        <td><code><?php echo htmlspecialchars($user['username'] ?? '—'); ?></code></div>
+                        <td><?php echo !empty($user['email']) ? htmlspecialchars($user['email']) : '<span class="text-muted">—</span>'; ?></div>
+                        <td><span class="badge <?php echo $role_class; ?>"><?php echo htmlspecialchars($user['role'] ?? 'user'); ?></span></div>
+                        <td><span class="badge <?php echo $status_class; ?>"><?php echo $status_text; ?></span></div>
+                        <td style="white-space: nowrap;">
+                            <?php if ($latest_date): ?>
+                                <?php echo date('Y-m-d H:i:s', strtotime($latest_date)); ?>
+                                <br><small class="text-muted"><?php echo time_ago(strtotime($latest_date)); ?></small>
+                            <?php else: ?>—<?php endif; ?>
+                        </div>
+                        <td>
+                            <button class="view-details-btn" onclick="viewUserDetails(<?php echo $user_id; ?>, '<?php echo htmlspecialchars(addslashes($user['name'] ?? '')); ?>')">
+                                <i class="fas fa-eye"></i> View
+                            </button>
+                            <button class="view-details-btn" onclick="viewUserAuditHistory(<?php echo $user_id; ?>, '<?php echo htmlspecialchars(addslashes($user['name'] ?? '')); ?>')" style="margin-left: 5px;">
+                                <i class="fas fa-history"></i> History
+                            </button>
+                        </div>
+                    </div>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <tr>
+                        <td colspan="7" class="text-center" style="padding: 60px;">
+                            <i class="fas fa-users" style="font-size: 48px; color: var(--text-muted); margin-bottom: 16px; display: block;"></i>
+                            <p style="color: var(--text-muted);">No user account audit logs found</p>
+                            <small>User account activities will appear here when users are created, updated, or deleted.</small>
+                        </td>
+                    </tr>
+                <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- User Details Mini Modal -->
+<div id="userDetailsModal" class="modal-overlay">
+    <div class="modal-container" style="max-width: 500px;">
+        <div class="modal-header-settings">
+            <h3><i class="fas fa-user-circle"></i> User Account Details</h3>
+            <span class="modal-close" onclick="closeUserDetailsModal()">&times;</span>
+        </div>
+        <div class="modal-body-scroll" id="userDetailsContent">
+            <div class="text-center" style="padding: 40px;">
+                <i class="fas fa-spinner fa-spin" style="font-size: 32px;"></i>
+                <p style="margin-top: 16px;">Loading user details...</p>
+            </div>
+        </div>
+        <div class="modal-footer-buttons">
+            <button class="btn-modal btn-modal-secondary" onclick="closeUserDetailsModal()">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- User Audit History Modal -->
+<div id="userAuditHistoryModal" class="modal-overlay">
+    <div class="modal-container" style="max-width: 700px;">
+        <div class="modal-header-settings">
+            <h3><i class="fas fa-history"></i> User Audit History: <span id="historyUserName"></span></h3>
+            <span class="modal-close" onclick="closeUserAuditHistoryModal()">&times;</span>
+        </div>
+        <div class="modal-body-scroll" id="userAuditHistoryContent">
+            <div class="text-center" style="padding: 40px;">
+                <i class="fas fa-spinner fa-spin" style="font-size: 32px;"></i>
+                <p style="margin-top: 16px;">Loading audit history...</p>
+            </div>
+        </div>
+        <div class="modal-footer-buttons">
+            <button class="btn-modal btn-modal-secondary" onclick="closeUserAuditHistoryModal()">Close</button>
+        </div>
+    </div>
+</div>
+
+<style>
+.user-audit-table tbody tr {
+    transition: background 0.2s;
+}
+.user-audit-table tbody tr:hover {
+    background-color: rgba(107, 140, 255, 0.04);
+}
+#userAuditSearch {
+    padding: 10px 35px 10px 15px;
+    border-radius: 10px;
+    border: 1px solid var(--border-light);
+    font-size: 13px;
+    width: 100%;
+}
+#userAuditSearch:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.1);
+}
+.user-detail-row {
+    display: flex;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border-light);
+}
+.user-detail-label {
+    width: 35%;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+.user-detail-value {
+    width: 65%;
+    color: var(--text-primary);
+}
+.audit-history-item {
+    padding: 12px;
+    border-bottom: 1px solid var(--border-light);
+    display: flex;
+    gap: 15px;
+    align-items: flex-start;
+}
+.audit-history-icon {
+    width: 36px;
+    height: 36px;
+    background: var(--light);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.audit-history-content {
+    flex: 1;
+}
+.audit-history-action {
+    font-weight: 600;
+    margin-bottom: 5px;
+}
+.audit-history-date {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 5px;
+}
+.audit-history-desc {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+</style>
+
+<script>
+// User Audit Table Search Functionality
+const searchInput = document.getElementById('userAuditSearch');
+if (searchInput) {
+    searchInput.addEventListener('keyup', function() {
+        const searchTerm = this.value.toLowerCase();
+        const table = document.getElementById('userAuditTable');
+        if (!table) return;
+        const tbody = table.getElementsByTagName('tbody')[0];
+        if (!tbody) return;
+        const rows = tbody.getElementsByTagName('tr');
+        
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            const cells = row.getElementsByTagName('td');
+            if (cells.length === 0) continue;
+            
+            const userName = (cells[0]?.innerText || '').toLowerCase();
+            const username = (cells[1]?.innerText || '').toLowerCase();
+            const email = (cells[2]?.innerText || '').toLowerCase();
+            
+            if (userName.includes(searchTerm) || username.includes(searchTerm) || email.includes(searchTerm)) {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+            }
+        }
+    });
+}
+
+// View User Details (Mini Modal)
+function viewUserDetails(userId, userName) {
+    const modal = document.getElementById('userDetailsModal');
+    const content = document.getElementById('userDetailsContent');
+    
+    if (!modal || !content) return;
+    
+    modal.style.display = 'block';
+    content.innerHTML = '<div class="text-center" style="padding: 40px;"><i class="fas fa-spinner fa-spin" style="font-size: 32px;"></i><p style="margin-top: 16px;">Loading user details...</p></div>';
+    
+    fetch('?get_user_details_ajax=' + userId)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const user = data.user;
+                const statusClass = user.status === 'Active' ? 'badge-success' : 'badge-danger';
+                const roleClass = user.role === 'superadmin' ? 'badge-warning' : (user.role === 'admin' ? 'badge-primary' : 'badge-secondary');
+                
+                let html = `
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <div style="width: 70px; height: 70px; background: var(--accent-light); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 15px;">
+                            <i class="fas fa-user" style="font-size: 32px; color: var(--primary);"></i>
+                        </div>
+                        <h3 style="margin: 0;">${escapeHtml(user.fullname)}</h3>
+                        <p style="color: var(--text-muted); margin-top: 5px;">@${escapeHtml(user.username)}</p>
+                    </div>
+                    <div class="detail-section">
+                        <div class="detail-header"><i class="fas fa-info-circle"></i> Account Information</div>
+                        <div class="detail-content">
+                            <div class="user-detail-row">
+                                <div class="user-detail-label">Full Name:</div>
+                                <div class="user-detail-value">${escapeHtml(user.fullname)}</div>
+                            </div>
+                            <div class="user-detail-row">
+                                <div class="user-detail-label">Username:</div>
+                                <div class="user-detail-value"><code>${escapeHtml(user.username)}</code></div>
+                            </div>
+                            <div class="user-detail-row">
+                                <div class="user-detail-label">Email:</div>
+                                <div class="user-detail-value">${escapeHtml(user.email || '—')}</div>
+                            </div>
+                            <div class="user-detail-row">
+                                <div class="user-detail-label">Role:</div>
+                                <div class="user-detail-value"><span class="badge ${roleClass}">${escapeHtml(user.role)}</span></div>
+                            </div>
+                            <div class="user-detail-row">
+                                <div class="user-detail-label">Status:</div>
+                                <div class="user-detail-value"><span class="badge ${statusClass}">${escapeHtml(user.status)}</span></div>
+                            </div>
+                            <div class="user-detail-row">
+                                <div class="user-detail-label">Date Created:</div>
+                                <div class="user-detail-value">${escapeHtml(user.created_at || '—')}</div>
+                            </div>
+                            <div class="user-detail-row">
+                                <div class="user-detail-label">Last Login:</div>
+                                <div class="user-detail-value">${escapeHtml(user.last_login || '—')}</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                if (user.employee_info && user.employee_info.employee_name) {
+                    html += `
+                        <div class="detail-section">
+                            <div class="detail-header"><i class="fas fa-briefcase"></i> Employee Information</div>
+                            <div class="detail-content">
+                                <div class="user-detail-row">
+                                    <div class="user-detail-label">Employee Name:</div>
+                                    <div class="user-detail-value">${escapeHtml(user.employee_info.employee_name)}</div>
+                                </div>
+                                <div class="user-detail-row">
+                                    <div class="user-detail-label">Position:</div>
+                                    <div class="user-detail-value">${escapeHtml(user.employee_info.position || '—')}</div>
+                                </div>
+                                <div class="user-detail-row">
+                                    <div class="user-detail-label">Section:</div>
+                                    <div class="user-detail-value">${escapeHtml(user.employee_info.section_name || '—')}</div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                content.innerHTML = html;
+            } else {
+                content.innerHTML = `<div class="text-center" style="padding: 40px; color: var(--danger);"><i class="fas fa-exclamation-triangle" style="font-size: 32px;"></i><p style="margin-top: 16px;">Error: ${escapeHtml(data.message)}</p></div>`;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            content.innerHTML = `<div class="text-center" style="padding: 40px; color: var(--danger);"><i class="fas fa-exclamation-triangle" style="font-size: 32px;"></i><p style="margin-top: 16px;">Error loading user details</p></div>`;
+        });
+}
+
+// View User Audit History
+function viewUserAuditHistory(userId, userName) {
+    const modal = document.getElementById('userAuditHistoryModal');
+    const content = document.getElementById('userAuditHistoryContent');
+    const userNameSpan = document.getElementById('historyUserName');
+    
+    if (!modal || !content || !userNameSpan) return;
+    
+    userNameSpan.innerHTML = escapeHtml(userName);
+    modal.style.display = 'block';
+    content.innerHTML = '<div class="text-center" style="padding: 40px;"><i class="fas fa-spinner fa-spin" style="font-size: 32px;"></i><p style="margin-top: 16px;">Loading audit history...</p></div>';
+    
+    fetch('?get_user_audit_history=' + userId)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.history.length > 0) {
+                let html = '';
+                data.history.forEach(item => {
+                    let icon = '📋';
+                    let actionText = item.action;
+                    if (item.action === 'NEW_USER') { icon = '➕'; actionText = 'Account Created'; }
+                    else if (item.action === 'UPDATE_USER') { icon = '✏️'; actionText = 'Account Updated'; }
+                    else if (item.action === 'DELETE_USER') { icon = '🗑️'; actionText = 'Account Deleted'; }
+                    else if (item.action === 'ACCOUNT_LOCKED') { icon = '🔒'; actionText = 'Account Locked'; }
+                    else if (item.action === 'PASSWORD_CHANGE') { icon = '🔑'; actionText = 'Password Changed'; }
+                    else if (item.action === 'LOGIN') { icon = '🔐'; actionText = 'Logged In'; }
+                    else if (item.action === 'LOGOUT') { icon = '🚪'; actionText = 'Logged Out'; }
+                    else if (item.action === 'FAILED_LOGIN') { icon = '❌'; actionText = 'Failed Login Attempt'; }
+                    
+                    html += `
+                        <div class="audit-history-item">
+                            <div class="audit-history-icon">
+                                <span style="font-size: 18px;">${icon}</span>
+                            </div>
+                            <div class="audit-history-content">
+                                <div class="audit-history-action">${escapeHtml(actionText)}</div>
+                                <div class="audit-history-date">${escapeHtml(item.created_at)} | IP: ${escapeHtml(item.ip_address || '—')}</div>
+                                <div class="audit-history-desc">${escapeHtml(item.description || 'No description')}</div>
+                                ${item.actor_name ? `<div class="audit-history-desc" style="margin-top: 5px;"><small>By: ${escapeHtml(item.actor_name)}</small></div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                });
+                content.innerHTML = html;
+            } else {
+                content.innerHTML = `<div class="text-center" style="padding: 40px;"><i class="fas fa-inbox" style="font-size: 48px; color: var(--text-muted);"></i><p style="margin-top: 16px;">No audit history found for this user.</p></div>`;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            content.innerHTML = `<div class="text-center" style="padding: 40px; color: var(--danger);"><i class="fas fa-exclamation-triangle" style="font-size: 32px;"></i><p style="margin-top: 16px;">Error loading audit history</p></div>`;
+        });
+}
+
+function closeUserDetailsModal() {
+    const modal = document.getElementById('userDetailsModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function closeUserAuditHistoryModal() {
+    const modal = document.getElementById('userAuditHistoryModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+</script>
+
+
+
+
+
+
+
+
+
 
 <!-- Audit Trail Table -->
 <div class="table-container">

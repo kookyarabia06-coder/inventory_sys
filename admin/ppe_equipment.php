@@ -18,7 +18,7 @@ require_once $root_path . '/vendor/autoload.php';
 use Picqer\Barcode\BarcodeGeneratorPNG;
 
 /// Require admin role
-requireRole('admin');
+requireRole('admin' || 'superadmin' || 'supply');
 
 // Generate CSRF token if not exists
 if (empty($_SESSION['csrf_token'])) {
@@ -413,7 +413,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == 'get_all_barcodes' && isset($_GET['
             'article_name' => $row['article_name'],
             'barcode_data' => $row['barcode_data'] ?: $row['property_no'],
             'big_quantity' => (int)$row['big_quantity'],
-            'pieces_per_big_unit' => (int)$row['pieces_per_big_unit'],  // ADD THIS
+            'pieces_per_big_unit' => (int)$row['pieces_per_big_unit'],
             'small_unit' => $row['small_unit'],
             'big_unit' => $row['big_unit']
         ];
@@ -1151,6 +1151,29 @@ body {
     margin: 0;
 }
 
+/* Add New button in table header */
+.btn-add-new {
+    background-color: var(--accent);
+    color: var(--text-primary);
+    padding: 8px 16px;
+    border-radius: 8px;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s;
+    border: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-add-new:hover {
+    background-color: #e69eb0;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(248, 176, 192, 0.3);
+}
+
 .search-box {
     display: flex;
     gap: 10px;
@@ -1653,6 +1676,183 @@ tr:hover {
     word-break: break-word;
 }
 
+/* ============================================
+   FIXED PROPERTY NUMBER RADIO BUTTONS - MATCH SEMI
+   ============================================ */
+
+/* Property Number Radio Group */
+.property-radio-group {
+    background: var(--light);
+    padding: 15px;
+    border-radius: 10px;
+    margin-bottom: 15px;
+}
+
+.property-radio-group .form-check {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    transition: background 0.2s;
+}
+
+.property-radio-group .form-check:last-child {
+    margin-bottom: 0;
+}
+
+.property-radio-group .form-check:hover {
+    background: rgba(107, 140, 255, 0.08);
+}
+
+.property-radio-group .form-check-input {
+    width: 18px;
+    height: 18px;
+    margin-top: 2px;
+    flex-shrink: 0;
+    cursor: pointer;
+    accent-color: var(--primary);
+}
+
+.property-radio-group .form-check-label {
+    flex: 1;
+    cursor: pointer;
+    line-height: 1.4;
+}
+
+.property-radio-group .form-check-label strong {
+    display: block;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.property-radio-group .form-check-label small {
+    display: block;
+    font-size: 11px;
+    font-weight: normal;
+    color: var(--text-muted);
+    line-height: 1.3;
+    margin-top: 2px;
+}
+
+/* Auto Generate Section */
+#autoGenerateSection {
+    margin-top: 15px;
+}
+
+.property-preview {
+    background: linear-gradient(135deg, #e8f4f8 0%, #ddecf4 100%);
+    border-left: 4px solid var(--primary);
+    padding: 12px 15px;
+    border-radius: 8px;
+    margin-top: 10px;
+}
+
+.property-preview i {
+    color: var(--primary);
+    margin-right: 8px;
+}
+
+.property-preview strong {
+    color: var(--primary);
+    font-size: 12px;
+    display: block;
+    margin-bottom: 5px;
+}
+
+.property-preview code {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--primary);
+    background: rgba(107, 140, 255, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+/* Custom Property Section */
+#customPropertySection {
+    margin-top: 15px;
+}
+
+.custom-property-input-group {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.custom-property-input-group .form-group {
+    flex: 3;
+    margin-bottom: 0;
+}
+
+.custom-property-input-group .form-group:last-child {
+    flex: 1;
+}
+
+.custom-property-input-group input {
+    background: var(--white);
+    border: 2px solid var(--border-light);
+    padding: 10px 12px;
+    font-family: monospace;
+    font-size: 14px;
+    width: 100%;
+}
+
+.custom-property-input-group input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.1);
+    outline: none;
+}
+
+.custom-property-input-group button {
+    width: 100%;
+    white-space: nowrap;
+    padding: 10px 12px;
+}
+
+#manualPropertyPreview {
+    margin-top: 10px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+#manualPropertyPreview span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+    .custom-property-input-group {
+        flex-direction: column;
+    }
+    
+    .custom-property-input-group .form-group {
+        width: 100%;
+    }
+    
+    .custom-property-input-group button {
+        width: 100%;
+    }
+    
+    .property-radio-group .form-check {
+        padding: 8px 10px;
+    }
+    
+    .property-radio-group .form-check-label strong {
+        font-size: 13px;
+    }
+    
+    .property-radio-group .form-check-label small {
+        font-size: 10px;
+    }
+}
+
 @media (max-width: 768px) {
     .dashboard-cards {
         grid-template-columns: 1fr;
@@ -1759,21 +1959,6 @@ tr:hover {
     </div>
 </div>
 
-<!-- Quick Actions -->
-<div class="table-container">
-    <div class="table-header">
-        <h2><i class="fas fa-bolt"></i> PPE Quick Actions</h2>
-    </div>
-    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-        <button class="btn btn-primary" onclick="openAddModal()">
-            <i class="fas fa-plus-circle"></i> Add New PPE
-        </button>
-        <a href="<?php echo SITE_URL; ?>/admin/issue_items.php?category=ppe" class="btn btn-primary">
-            <i class="fas fa-hand-holding"></i> Issue PPE
-        </a>
-    </div>
-</div>
-
 <!-- Search and Filter -->
 <div class="table-container">
     <div class="table-header">
@@ -1793,11 +1978,15 @@ tr:hover {
     </form>
 </div>
 
-<!-- PPE Items Table -->
+<!-- PPE Items Table (with Add New button in header) -->
 <div class="table-container">
     <div class="table-header">
         <h2><i class="fas fa-shield-alt"></i> PPE Equipment List</h2>
-        <p>Showing <?php echo count($ppe_items); ?> of <?php echo $total_rows; ?> items</p>
+        <div>
+            <button class="btn-add-new" onclick="openAddModal()">
+                <i class="fas fa-plus-circle"></i> Add New PPE
+            </button>
+        </div>
     </div>
     
     <div style="overflow-x: auto;">
@@ -1933,30 +2122,37 @@ tr:hover {
                     <!-- Property Number Options -->
                     <div class="form-group">
                         <label>Property Number</label>
-                        <div style="margin-bottom: 15px;">
+                        <div class="property-radio-group">
                             <div class="form-check">
                                 <input class="form-check-input" type="radio" name="property_option" id="property_auto" value="auto" checked onchange="togglePropertyOption()">
-                                <label class="form-check-label" for="property_auto"><strong>Auto-Generate (YYYY-MM-DD-XXXX)</strong></label>
+                                <label class="form-check-label" for="property_auto">
+                                    <strong>Auto-Generate</strong>
+                                    <small>YYYY-MM-DD-XXXX format with sequential number</small>
+                                </label>
                             </div>
                             <div class="form-check">
                                 <input class="form-check-input" type="radio" name="property_option" id="property_custom" value="custom" onchange="togglePropertyOption()">
-                                <label class="form-check-label" for="property_custom"><strong>Custom</strong></label>
+                                <label class="form-check-label" for="property_custom">
+                                    <strong>Custom</strong>
+                                    <small>Enter your own property number</small>
+                                </label>
                             </div>
                         </div>
                         
                         <div id="autoGenerateSection">
-                            <div id="propertyPreviewAuto" class="form-text" style="padding: 10px; background: #e8f4f8; border-radius: 5px; margin-bottom: 10px; display: none;">
-                                <i class="fas fa-qrcode"></i> <strong>Auto-generated Format:</strong><br>
-                                <span id="autoPropertyPreviewText"></span>
+                            <div class="property-preview">
+                                <i class="fas fa-qrcode"></i>
+                                <strong>Auto-generated Format:</strong>
+                                <code id="autoPropertyPreviewText">-- Select Type and Category first --</code>
                             </div>
                         </div>
                         <div id="customPropertySection" style="display: none;">
-                            <div class="form-row">
-                                <div class="form-group" style="flex: 3;">
-                                    <input type="text" class="form-control" id="property_number" name="property_number" placeholder="Enter custom property number">
+                            <div class="custom-property-input-group">
+                                <div class="form-group">
+                                    <input type="text" class="form-control" id="property_number" name="property_number" placeholder="e.g., PPE-2024-001">
                                 </div>
-                                <div class="form-group" style="flex: 1;">
-                                    <button type="button" class="btn btn-secondary" onclick="previewManualPropertyNumber()">
+                                <div class="form-group">
+                                    <button type="button" class="btn btn-secondary" onclick="previewManualPropertyNumber()" style="width: 100%;">
                                         <i class="fas fa-eye"></i> Check
                                     </button>
                                 </div>
@@ -1993,38 +2189,38 @@ tr:hover {
                     </div>
                 </div>
                 
-<!-- Supplier Information -->
-<div class="form-section">
-    <h3><i class="fas fa-truck"></i> Supplier Information</h3>
-    <div class="form-row">
-        <div class="form-group">
-            <label for="supplier">Supplier</label>
-            <select class="form-control" id="supplier" name="supplier">
-                <option value="">-- Select Supplier --</option>
-                <?php 
-                if ($suppliers_list && $suppliers_list->num_rows > 0):
-                    $suppliers_list->data_seek(0);
-                    while($supp = $suppliers_list->fetch_assoc()): 
-                ?>
-                <option value="<?php echo htmlspecialchars($supp['supplier_name']); ?>">
-                    <?php echo htmlspecialchars($supp['supplier_name']); ?>
-                </option>
-                <?php 
-                    endwhile; 
-                endif; 
-                ?>
-            </select>
-        </div>
-        <div class="form-group">
-            <label for="ref_po_number">Reference PO Number</label>
-            <input type="text" class="form-control" id="ref_po_number" name="ref_po_number">
-        </div>
-    </div>
-    <div class="form-group">
-        <label for="delivery_date">Delivery Date</label>
-        <input type="date" class="form-control" id="delivery_date" name="delivery_date">
-    </div>
-</div>
+                <!-- Supplier Information -->
+                <div class="form-section">
+                    <h3><i class="fas fa-truck"></i> Supplier Information</h3>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="supplier">Supplier</label>
+                            <select class="form-control" id="supplier" name="supplier">
+                                <option value="">-- Select Supplier --</option>
+                                <?php 
+                                if ($suppliers_list && $suppliers_list->num_rows > 0):
+                                    $suppliers_list->data_seek(0);
+                                    while($supp = $suppliers_list->fetch_assoc()): 
+                                ?>
+                                <option value="<?php echo htmlspecialchars($supp['supplier_name']); ?>">
+                                    <?php echo htmlspecialchars($supp['supplier_name']); ?>
+                                </option>
+                                <?php 
+                                    endwhile; 
+                                endif; 
+                                ?>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="ref_po_number">Reference PO Number</label>
+                            <input type="text" class="form-control" id="ref_po_number" name="ref_po_number">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="delivery_date">Delivery Date</label>
+                        <input type="date" class="form-control" id="delivery_date" name="delivery_date">
+                    </div>
+                </div>
                 
                 <!-- Quantity and Unit of Measure -->
                 <div class="form-section">
@@ -2204,7 +2400,6 @@ tr:hover {
 </div>
 
 <!-- Barcode Modal -->
-<!--- proto -->
 <div id="barcodeModal" class="modal">
     <div class="modal-content" style="max-width: 700px; width: 90%;">
         <div class="modal-header">
@@ -2223,7 +2418,6 @@ tr:hover {
         </div>
     </div>
 </div>
-
 
 <script>
 var equipmentSubTypes = <?php echo json_encode($equipment_sub_type_options); ?>;
@@ -2270,23 +2464,29 @@ function togglePropertyOption() {
     } else {
         autoSection.style.display = 'none';
         customSection.style.display = 'block';
-        document.getElementById('propertyPreviewAuto').style.display = 'none';
         if (!editId) propInput.focus();
     }
 }
 
 function previewAutoPropertyNumber() {
     if (document.getElementById('property_auto').checked) {
-        var bigQty = parseFloat(document.getElementById('big_quantity').value) || 1;
+        var typeId = document.getElementById('type_equipment_id').value;
+        var subTypeId = document.getElementById('equipment_sub_type_id').value;
         
-        fetch('?ajax=get_property_preview&type_id=0&sub_type_id=0&quantity=' + bigQty)
+        if (!typeId || !subTypeId) { 
+            document.getElementById('autoPropertyPreviewText').innerHTML = '-- Select Type and Category first --';
+            return; 
+        }
+        
+        fetch('?ajax=get_property_preview&type_id=' + typeId + '&sub_type_id=' + subTypeId + '&quantity=' + (parseFloat(document.getElementById('big_quantity').value) || 1))
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
                     document.getElementById('autoPropertyPreviewText').innerHTML = '<code>' + data.property_format + '</code>';
-                    document.getElementById('propertyPreviewAuto').style.display = 'block';
                 }
-            }).catch(() => document.getElementById('propertyPreviewAuto').style.display = 'none');
+            }).catch(() => {
+                document.getElementById('autoPropertyPreviewText').innerHTML = '-- Error generating preview --';
+            });
     }
 }
 
@@ -2297,8 +2497,8 @@ function previewManualPropertyNumber() {
         fetch('?ajax=check_property_number&property_no=' + encodeURIComponent(manual))
             .then(response => response.json())
             .then(data => {
-                if (data.exists) preview.innerHTML = '<span style="color:#f44336;">Already exists!</span>';
-                else preview.innerHTML = '<span style="color:#4CAF50;">Available: ' + escapeHtml(manual) + '</span>';
+                if (data.exists) preview.innerHTML = '<span style="color:#f44336;"><i class="fas fa-times-circle"></i> Already exists!</span>';
+                else preview.innerHTML = '<span style="color:#4CAF50;"><i class="fas fa-check-circle"></i> Available: ' + escapeHtml(manual) + '</span>';
             }).catch(() => preview.innerHTML = '<span>Checking...</span>');
     } else preview.innerHTML = '';
 }
@@ -2393,12 +2593,13 @@ function openAddModal() {
     document.getElementById('property_auto').checked = true;
     document.getElementById('property_number').value = '';
     document.getElementById('manualPropertyPreview').innerHTML = '';
-    document.getElementById('propertyPreviewAuto').style.display = 'none';
+    document.getElementById('autoPropertyPreviewText').innerHTML = '-- Select Type and Category first --';
     togglePropertyOption();
     document.getElementById('big_quantity').value = 1;
     document.getElementById('pieces_per_big_unit').value = 1;
     document.getElementById('type_equipment_id').value = '';
     document.getElementById('equipment_sub_type_id').innerHTML = '<option value="">-- First select Type --</option>';
+    document.getElementById('barcodePreview').innerHTML = '';
     calculateCompoundTotal();
 }
 
@@ -2446,10 +2647,10 @@ function openEditModal(id) {
                 document.getElementById('unit_value').value = item.unit_value || 0;
                 document.getElementById('fund_cluster').value = item.fund_cluster_id || '';
                 
-var supplierSelect = document.getElementById('supplier');
-if (supplierSelect) {
-    supplierSelect.value = item.supplier || '';
-}
+                var supplierSelect = document.getElementById('supplier');
+                if (supplierSelect) {
+                    supplierSelect.value = item.supplier || '';
+                }
                 document.getElementById('ref_po_number').value = item.ref_po_number || '';
                 document.getElementById('delivery_date').value = item.delivery_date || '';
                 document.getElementById('condition_text').value = item.condition_text || 'Serviceable';
@@ -2625,7 +2826,7 @@ function showBarcodeModal(barcode, name, propertyNo) {
                     
                     let content = '<div style="max-height: 500px; overflow-y: auto;">';
                     data.items.forEach(function(item, index) {
-                        let printCopies = item.pieces_per_big_unit || 1;  // CHANGED: use pieces_per_big_unit
+                        let printCopies = item.pieces_per_big_unit || 1;
                         let copiesText = printCopies > 1 ? ` (${printCopies} copies - one per ${item.small_unit})` : '';
                         
                         content += `
@@ -2656,7 +2857,7 @@ function showBarcodeModal(barcode, name, propertyNo) {
                     document.getElementById('barcodeModal').style.display = 'block';
                 } else if (data.success && data.count === 1) {
                     let item = data.items[0];
-                    showSingleBarcode(item.barcode_data, item.article_name, item.pieces_per_big_unit);  // CHANGED
+                    showSingleBarcode(item.barcode_data, item.article_name, item.pieces_per_big_unit);
                 } else {
                     showSingleBarcode(barcode, name, 1);
                 }
@@ -2694,7 +2895,6 @@ function printSingleBarcode(barcode, name, copies = 1) {
     htmlContent += '@media print{.barcode-card{break-inside:avoid}body{padding:0}}';
     htmlContent += '</style></head><body>';
     
-    // Generate copies based on pieces_per_big_unit (Small Unit quantity)
     for (let i = 1; i <= copies; i++) {
         htmlContent += `
             <div class="barcode-card">
@@ -2733,9 +2933,8 @@ function printAllBarcodesInModal() {
     htmlContent += '</style></head><body>';
     htmlContent += '<h2 style="text-align:center;">PPE Barcodes</h2>';
     
-    // Generate barcodes for each item, with copies based on pieces_per_big_unit
     items.forEach(function(item, itemIndex) {
-        let copies = item.pieces_per_big_unit || 1;  // CHANGED: use pieces_per_big_unit
+        let copies = item.pieces_per_big_unit || 1;
         
         for (let copy = 1; copy <= copies; copy++) {
             htmlContent += `

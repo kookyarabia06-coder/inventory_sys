@@ -10,11 +10,9 @@ require_once INCLUDE_PATH . '/functions.php';
 if (!isLoggedIn()) {
     header('Location: login.php');
     exit;
-}
+}   
 
 // Handle export requests - BEFORE including header to send headers
-$issued_to = isset($_GET['issued_to']) ? sanitize($_GET['issued_to']) : '';
-$issued_by = isset($_GET['issued_by']) ? sanitize($_GET['issued_by']) : '';
 $export_type = isset($_GET['export']) ? sanitize($_GET['export']) : '';
 $date_from = isset($_GET['date_from']) ? sanitize($_GET['date_from']) : '';
 $date_to = isset($_GET['date_to']) ? sanitize($_GET['date_to']) : '';
@@ -58,22 +56,6 @@ if ($status_filter === 'condemned') {
     $where_clause .= " AND i.condition_text = 'Under Repair'";
 }
 
-// NEW: Filter by Issued To (matches either assigned user OR allocated user)
-if ($issued_to) {
-    $where_clause .= " AND (CONCAT(u.firstname, ' ', u.lastname) LIKE ? OR CONCAT(alloc.firstname, ' ', alloc.lastname) LIKE ?)";
-    $search_term = "%$issued_to%";
-    $params[] = $search_term;
-    $params[] = $search_term;
-    $types .= "ss";
-}
-
-// NEW: Filter by Issued From (who issued the equipment)
-if ($issued_by) {
-    $where_clause .= " AND CONCAT(issuer.firstname, ' ', issuer.lastname) LIKE ?";
-    $params[] = "%$issued_by%";
-    $types .= "s";
-}
-
 // Get total count for pagination
 $count_sql = "SELECT COUNT(*) as total FROM inventory i WHERE $where_clause";
 $count_stmt = $conn->prepare($count_sql);
@@ -96,6 +78,7 @@ $query = "SELECT i.*,
           u.lastname as issued_to_lastname,
           ui.assigned_date,
           ui.status as assignment_status,
+          ei.purpose,
           ei.issued_date as issuance_date,
           CONCAT(issuer.firstname, ' ', issuer.lastname) as issued_by_name,
           -- Get the actual name for allocate_to (not the ID)
@@ -172,16 +155,26 @@ $summary = $summary_stmt->get_result()->fetch_assoc();
 if ($export_type === 'pdf') {
     require_once $root_path . '/vendor/autoload.php';
     
+    // DYNAMIC REPORT TITLE based on category filter
+    $report_title = 'DETAILED INVENTORY REPORT';
+    if ($category === 'PPE') {
+        $report_title = 'PPE INVENTORY REPORT';
+    } elseif ($category === 'Semi-Expendable') {
+        $report_title = 'SEMI-EXPENDABLE INVENTORY REPORT';
+    } elseif ($category) {
+        $report_title = strtoupper($category) . ' INVENTORY REPORT';
+    }
+    
     $pdf = new TCPDF('L', 'mm', 'A4');
     $pdf->SetCreator('Inventory System');
     $pdf->SetAuthor('System Admin');
-    $pdf->SetTitle('Detailed Inventory Report');
+    $pdf->SetTitle($report_title);
     $pdf->SetMargins(8, 8, 8);
     $pdf->AddPage();
     
     // Header
     $pdf->SetFont('helvetica', 'B', 16);
-    $pdf->Cell(0, 10, 'DETAILED INVENTORY REPORT', 0, 1, 'C');
+    $pdf->Cell(0, 10, $report_title, 0, 1, 'C');  // Dynamic title
     $pdf->SetFont('helvetica', '', 10);
     $pdf->Cell(0, 5, 'Generated: ' . date('Y-m-d H:i:s'), 0, 1, 'R');
     
@@ -260,7 +253,17 @@ if ($export_type === 'excel') {
     $sheet->setTitle('Detailed Inventory Report');
 
     // Title
-    $sheet->setCellValue('A1', 'DETAILED INVENTORY REPORT');
+        // DYNAMIC REPORT TITLE
+    $report_title = 'DETAILED INVENTORY REPORT';
+    if ($category === 'PPE') {
+        $report_title = 'PPE INVENTORY REPORT';
+    } elseif ($category === 'Semi-Expendable') {
+        $report_title = 'SEMI-EXPENDABLE INVENTORY REPORT';
+    } elseif ($category) {
+        $report_title = strtoupper($category) . ' INVENTORY REPORT';
+    }
+    
+    $sheet->setCellValue('A1', $report_title);
     $sheet->mergeCells('A1:O1');
     $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
     
@@ -300,9 +303,9 @@ if ($export_type === 'excel') {
     $row += 9;
 
     // Column headers - expanded for detailed report
- $headers = ['ID', 'Property No', 'Article Name', 'Description', 'Category', 'Section', 'Department', 
-            'Building', 'Condition', 'Qty (PC)', 'Qty (Count)', 'Difference', 'Unit Value', 'Total Value', 
-            'Date Added', 'Issued To', 'Issued Date', 'Remarks'];
+    $headers = ['ID', 'Property No', 'Article Name', 'Description', 'Category', 'Section', 'Department', 
+                'Building', 'Condition', 'Qty (PC)', 'Qty (Count)', 'Difference', 'Unit Value', 'Total Value', 
+                'Date Added', 'Issued To', 'Issued Date', 'Purpose', 'Remarks'];
     $col = 'A';
     foreach ($headers as $header) {
         $sheet->setCellValue($col . $row, $header);
@@ -337,14 +340,14 @@ if ($export_type === 'excel') {
         $sheet->setCellValue('N' . $data_row, $total_value);
         $sheet->setCellValue('O' . $data_row, date('Y-m-d', strtotime($item['date_added'])));
         $sheet->setCellValue('P' . $data_row, $issued_to);
-$sheet->setCellValue('Q' . $data_row, $item['assigned_date'] ? date('Y-m-d', strtotime($item['assigned_date'])) : '');
-$sheet->setCellValue('R' . $data_row, $item['remarks'] ?? '');
+        $sheet->setCellValue('Q' . $data_row, $item['assigned_date'] ? date('Y-m-d', strtotime($item['assigned_date'])) : '');
+        $sheet->setCellValue('R' . $data_row, $item['purpose'] ?? '');
         $sheet->setCellValue('S' . $data_row, $item['remarks'] ?? '');
         $data_row++;
     }
 
     // Auto-size columns
-    foreach (range('A', 'R') as $col) {
+    foreach (range('A', 'S') as $col) {
         $sheet->getColumnDimension($col)->setAutoSize(true);
     }
 
@@ -363,13 +366,23 @@ $conditions_result = $conn->query("SELECT DISTINCT condition_text FROM inventory
 $conditions = $conditions_result ? $conditions_result->fetch_all(MYSQLI_ASSOC) : [];
 
 // Now include header
-$page_title = 'Detailed Reports';
+// Dynamic page title based on category filter
+if ($category === 'PPE') {
+    $page_title = 'PPE Inventory Report';
+} elseif ($category === 'Semi-Expendable') {
+    $page_title = 'Semi-Expendable Inventory Report';
+} elseif ($category) {
+    $page_title = ucfirst($category) . ' Inventory Report';
+} else {
+    $page_title = 'Detailed Inventory Report';
+}
 $page_description = 'View detailed inventory data with issuance information';
 
 include INCLUDE_PATH . '/header.php';
 ?>
 
 <style>
+    /* Table Column Alignment Classes */
 .inventory-table {
     width: 100%;
     border-collapse: collapse;
@@ -794,49 +807,51 @@ tr:hover td {
 <div class="summary-cards">
     <div class="summary-card">
         <div class="icon"><i class="fas fa-boxes"></i></div>
-        <div class="value"><?= number_format((float)($summary['total_items'] ?? 0)) ?></div>
+        <div class="value"><?= number_format($summary['total_items']) ?></div>
         <div class="label">Total Items</div>
     </div>
     <div class="summary-card">
         <div class="icon"><i class="fas fa-cubes"></i></div>
-        <div class="value"><?= number_format((float)($summary['total_quantity'] ?? 0)) ?></div>
+        <div class="value"><?= number_format($summary['total_quantity']) ?></div>
         <div class="label">Total Quantity</div>
     </div>
     <div class="summary-card">
         <div class="icon"><i class="fas fa-chart-line"></i></div>
-        <div class="value">₱<?= number_format((float)($summary['total_value'] ?? 0), 2) ?></div>
+        <div class="value">₱<?= number_format($summary['total_value'], 2) ?></div>
         <div class="label">Total Value</div>
     </div>
     <div class="summary-card">
         <div class="icon"><i class="fas fa-trash-alt"></i></div>
-        <div class="value"><?= number_format((float)($summary['condemned_count'] ?? 0)) ?></div>
+        <div class="value"><?= number_format($summary['condemned_count']) ?></div>
         <div class="label">Condemned Items</div>
     </div>
     <div class="summary-card">
         <div class="icon"><i class="fas fa-user-check"></i></div>
-        <div class="value"><?= number_format((float)($summary['issued_count'] ?? 0)) ?></div>
+        <div class="value"><?= number_format($summary['issued_count']) ?></div>
         <div class="label">Issued Items</div>
     </div>
 </div>
 
 <div class="table-container">
     <div class="table-header">
-        <h2><i class="fas fa-file-alt"></i> Detailed Inventory Report</h2>
+        <h2><i class="fas fa-file-alt"></i> 
+    <?php 
+    if ($category === 'PPE') {
+        echo 'PPE Inventory Report';
+    } elseif ($category === 'Semi-Expendable') {
+        echo 'Semi-Expendable Inventory Report';
+    } elseif ($category) {
+        echo htmlspecialchars(ucfirst($category)) . ' Inventory Report';
+    } else {
+        echo 'Detailed Inventory Report';
+    }
+    ?>
+</h2>
     </div>
 
     <!-- Filters -->
     <form method="GET" class="filter-section">
         <div class="filter-group">
-            <div class="filter-group">
-    <label>Issued To (Person)</label>
-    <input type="text" name="issued_to" value="<?= htmlspecialchars($issued_to) ?>" 
-           placeholder="Search by name" style="min-width: 180px;">
-</div>
-<div class="filter-group">
-    <label>Issued By (From)</label>
-    <input type="text" name="issued_by" value="<?= htmlspecialchars($issued_by) ?>" 
-           placeholder="Search by name" style="min-width: 180px;">
-</div>
             <label>From Date</label>
             <input type="date" name="date_from" value="<?= htmlspecialchars($date_from) ?>">
         </div>
@@ -881,27 +896,25 @@ tr:hover td {
         </div>
         <div class="filter-group">
             <label>&nbsp;</label>
-            <a href="report.php" class="btn btn-outline"><i class="fas fa-redo"></i> Reset</a>
+            <a href="detailed_report.php" class="btn btn-outline"><i class="fas fa-redo"></i> Reset</a>
         </div>
     </form>
 
     <!-- Export Buttons -->
     <div class="export-buttons">
-      <form method="GET" style="display: inline;">
-    <?php if ($date_from): ?><input type="hidden" name="date_from" value="<?= htmlspecialchars($date_from) ?>"><?php endif; ?>
-    <?php if ($date_to): ?><input type="hidden" name="date_to" value="<?= htmlspecialchars($date_to) ?>"><?php endif; ?>
-    <?php if ($category): ?><input type="hidden" name="category" value="<?= htmlspecialchars($category) ?>"><?php endif; ?>
-    <?php if ($condition): ?><input type="hidden" name="condition" value="<?= htmlspecialchars($condition) ?>"><?php endif; ?>
-    <?php if ($status_filter): ?><input type="hidden" name="status" value="<?= htmlspecialchars($status_filter) ?>"><?php endif; ?>
-    <?php if ($issued_to): ?><input type="hidden" name="issued_to" value="<?= htmlspecialchars($issued_to) ?>"><?php endif; ?>
-    <?php if ($issued_by): ?><input type="hidden" name="issued_by" value="<?= htmlspecialchars($issued_by) ?>"><?php endif; ?>
-    <button type="submit" name="export" value="pdf" class="btn btn-danger">
-        <i class="fas fa-file-pdf"></i> Export to PDF
-    </button>
-    <button type="submit" name="export" value="excel" class="btn btn-success">
-        <i class="fas fa-file-excel"></i> Export to Excel
-    </button>
-</form>
+        <form method="GET" style="display: inline;">
+            <?php if ($date_from): ?><input type="hidden" name="date_from" value="<?= htmlspecialchars($date_from) ?>"><?php endif; ?>
+            <?php if ($date_to): ?><input type="hidden" name="date_to" value="<?= htmlspecialchars($date_to) ?>"><?php endif; ?>
+            <?php if ($category): ?><input type="hidden" name="category" value="<?= htmlspecialchars($category) ?>"><?php endif; ?>
+            <?php if ($condition): ?><input type="hidden" name="condition" value="<?= htmlspecialchars($condition) ?>"><?php endif; ?>
+            <?php if ($status_filter): ?><input type="hidden" name="status" value="<?= htmlspecialchars($status_filter) ?>"><?php endif; ?>
+            <button type="submit" name="export" value="pdf" class="btn btn-danger">
+                <i class="fas fa-file-pdf"></i> Export to PDF
+            </button>
+            <button type="submit" name="export" value="excel" class="btn btn-success">
+                <i class="fas fa-file-excel"></i> Export to Excel
+            </button>
+        </form>
     </div>
 
       <!-- Report Table -->
@@ -921,7 +934,7 @@ tr:hover td {
                         <th class="col-category">Category</th>
                         <th class="col-condition">Condition</th>
                         <th class="col-qty">Qty (PC)</th>
-                        <th class="col-qty">Qty (Remaining)</th>
+                        <th class="col-qty">Qty (Count)</th>
                         <th class="col-diff">Diff</th>
                         <th class="col-value">Unit Value</th>
                         <th class="col-value">Total Value</th>
@@ -931,59 +944,54 @@ tr:hover td {
                     </tr>
                 </thead>
                 <tbody>
-            <?php $counter = $offset + 1; ?>
-<?php foreach ($inventory_items as $item): ?>
-<?php
-    // Cast all numeric values to float to prevent null errors
-    $qty_pc = (float)($item['qty_property_card'] ?? 0);
-    $qty_count = (float)($item['qty_physical_count'] ?? 0);
-    $unit_val = (float)($item['unit_value'] ?? 0);
-    
-    $diff = $qty_count - $qty_pc;
-    if ($diff > 0) {
-        $diff_badge = 'badge-success';
-        $diff_text = '+' . number_format($diff, 0);
-    } elseif ($diff < 0) {
-        $diff_badge = 'badge-danger';
-        $diff_text = number_format($diff, 0);
-    } else {
-        $diff_badge = 'badge-secondary';
-        $diff_text = number_format($diff, 0);
-    }
-    $total_value = $unit_val * $qty_count;
-    
-    // Condition badge class
-    $condition_class = 'badge-secondary';
-    $condition_lower = strtolower($item['condition_text'] ?? '');
-    if (in_array($condition_lower, ['good', 'serviceable'])) {
-        $condition_class = 'badge-good';
-    } elseif (in_array($condition_lower, ['fair'])) {
-        $condition_class = 'badge-fair';
-    } elseif (in_array($condition_lower, ['poor', 'for condemn', 'for disposal', 'non-serviceable'])) {
-        $condition_class = 'badge-poor';
-    } elseif ($condition_lower === 'under repair') {
-        $condition_class = 'badge-under-repair';
-    }
-    
-    // Get issued to name
-    $issued_to = getIssuedToName($item);
-?>
-<tr>
-    <td class="text-center"><?= $counter++ ?></td>
-    <td class="text-left"><code><?= htmlspecialchars($item['property_no'] ?? 'N/A') ?></code></td>
-    <td class="text-left"><?= htmlspecialchars(substr($item['article_name'] ?? '', 0, 50)) ?></td>
-    <td class="text-center"><span class="badge badge-info"><?= htmlspecialchars($item['category'] ?? 'N/A') ?></span></td>
-    <td class="text-center"><span class="badge <?= $condition_class ?>"><?= htmlspecialchars($item['condition_text'] ?? 'N/A') ?></span></td>
-    <td class="text-right"><?= number_format($qty_pc, 0) ?></td>
-    <td class="text-right"><?= number_format($qty_count, 0) ?></td>
-    <td class="text-center"><span class="badge <?= $diff_badge ?>"><?= $diff_text ?></span></td>
-    <td class="text-right">₱<?= number_format($unit_val, 2) ?></td>
-    <td class="text-right"><strong>₱<?= number_format($total_value, 2) ?></strong></td>
-    <td class="text-center"><?= date('Y-m-d', strtotime($item['date_added'] ?? 'now')) ?></td>
-    <td class="text-left"><?= htmlspecialchars($issued_to) ?></td>
-    <td class="text-left"><?= htmlspecialchars(substr($item['remarks'] ?? '', 0, 30)) ?></td>
-</tr>
-<?php endforeach; ?>
+                    <?php $counter = $offset + 1; ?>
+                    <?php foreach ($inventory_items as $item): ?>
+                    <?php
+                        $diff = $item['qty_physical_count'] - $item['qty_property_card'];
+                        if ($diff > 0) {
+                            $diff_badge = 'badge-success';
+                            $diff_text = '+' . number_format($diff, 0);
+                        } elseif ($diff < 0) {
+                            $diff_badge = 'badge-danger';
+                            $diff_text = number_format($diff, 0);
+                        } else {
+                            $diff_badge = 'badge-secondary';
+                            $diff_text = number_format($diff, 0);
+                        }
+                        $total_value = $item['unit_value'] * $item['qty_physical_count'];
+                        
+                        // Condition badge class
+                        $condition_class = 'badge-secondary';
+                        $condition_lower = strtolower($item['condition_text'] ?? '');
+                        if (in_array($condition_lower, ['good', 'serviceable'])) {
+                            $condition_class = 'badge-good';
+                        } elseif (in_array($condition_lower, ['fair'])) {
+                            $condition_class = 'badge-fair';
+                        } elseif (in_array($condition_lower, ['poor', 'for condemn', 'for disposal', 'non-serviceable'])) {
+                            $condition_class = 'badge-poor';
+                        } elseif ($condition_lower === 'under repair') {
+                            $condition_class = 'badge-under-repair';
+                        }
+                        
+                        // FIXED: Use the helper function for HTML table
+                        $issued_to = getIssuedToName($item);
+                    ?>
+                    <tr>
+                        <td class="text-center"><?= $counter++ ?></td>
+                        <td class="text-left"><code><?= htmlspecialchars($item['property_no'] ?? 'N/A') ?></code></td>
+                        <td class="text-left"><?= htmlspecialchars(substr($item['article_name'], 0, 50)) ?></td>
+                        <td class="text-center"><span class="badge badge-info"><?= htmlspecialchars($item['category'] ?? 'N/A') ?></span></td>
+                        <td class="text-center"><span class="badge <?= $condition_class ?>"><?= htmlspecialchars($item['condition_text'] ?? 'N/A') ?></span></td>
+                        <td class="text-right"><?= number_format($item['qty_property_card'], 0) ?></td>
+                        <td class="text-right"><?= number_format($item['qty_physical_count'], 0) ?></td>
+                        <td class="text-center"><span class="badge <?= $diff_badge ?>"><?= $diff_text ?></span></td>
+                        <td class="text-right">₱<?= number_format($item['unit_value'], 2) ?></td>
+                        <td class="text-right"><strong>₱<?= number_format($total_value, 2) ?></strong></td>
+                        <td class="text-center"><?= date('Y-m-d', strtotime($item['date_added'])) ?></td>
+                        <td class="text-left"><?= htmlspecialchars($issued_to) ?></td>
+                        <td class="text-left"><?= htmlspecialchars(substr($item['remarks'] ?? '', 0, 30)) ?></td>
+                    </tr>
+                    <?php endforeach; ?>
                 </tbody>
             </table>
         </div>

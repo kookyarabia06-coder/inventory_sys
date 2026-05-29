@@ -13,7 +13,7 @@ require_once INCLUDE_PATH . '/auth.php';
 require_once INCLUDE_PATH . '/functions.php';
 
 // Role checking
-requireRole('admin', 'superadmin');
+requireRole('admin' || 'superadmin' );
 
 $page_title = 'Employees';
 $page_description = 'Manage employees linked to user accounts';
